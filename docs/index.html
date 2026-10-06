@@ -62,10 +62,10 @@
 
   <section>
     <h2>Measured, not claimed</h2>
-    <p>The Scorecard grades every engine against an answer key of planted problems. The challenge generator makes fresh fictional months; hard mode hides three problems from the fixed rules on purpose, so it shows whether the AI adds anything.</p>
+    <p>The Scorecard grades every engine against an answer key of planted problems and planted traps, and the build fails if a rule flags a trap. The challenge generator makes fresh fictional months; hard mode hides three problems from the fixed rules on purpose, so it shows whether the AI adds anything.</p>
     <div class="grid">
-      <div class="card"><div class="num">100%</div>Built-in rules, medium challenges: planted problems found, with no false alarms (20 fresh months).</div>
-      <div class="card"><div class="num">89%</div>Built-in rules, hard challenges: the three problems written to evade fixed rules are missed, by design.</div>
+      <div class="card"><div class="num">0 / 1,320</div>Traps flagged: legitimate look-alikes (batch transfers, rent without a PO, discounts, voids, day-first dates...) planted in 60 fresh months.</div>
+      <div class="card"><div class="num">100%</div>Built-in rules, medium challenges: planted problems found, at 100% precision. Hard: 96%, by design not all.</div>
       <div class="card"><div class="num">25 / 26</div>Sample company: problems the rules find. The one missed needs staff records that are not in the files.</div>
     </div>
     <p class="cap">AI engine results are measured on your own computer with <code>python scripts/benchmark.py --engines ollama,ollama-tools</code>; see docs/benchmark.md.</p>

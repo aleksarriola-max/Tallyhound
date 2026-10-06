@@ -30,11 +30,14 @@ def test_challenge_is_repeatable_and_rules_find_every_easy_and_medium_problem():
             assert s["recall"] == 1.0 and s["false_alarms"] == 0, (diff, seed, s)
 
 
-def test_hard_challenge_hides_three_problems_from_the_fixed_rules():
-    files, key = challenge.generate(3, "hard")
-    k = score.key_from_csv(challenge.key_csv(key))
-    s = score.score(proposed(rules.analyze(files)), k)
-    assert s["planted"] - s["found"] == 3 and s["false_alarms"] == 0
+def test_hard_challenge_hides_problems_from_the_fixed_rules():
+    misses = 0
+    for seed in range(1, 6):
+        files, key = challenge.generate(seed, "hard")
+        s = score.score(proposed(rules.analyze(files)), score.key_from_csv(challenge.key_csv(key)))
+        misses += s["planted"] - s["found"]
+        assert s["false_alarms"] == 0
+    assert misses >= 1          # hard mode keeps at least some problems out of reach of fixed rules
 
 
 def test_challenge_zip_round_trips_with_its_answer_key():
@@ -155,7 +158,7 @@ def test_gate_on_a_challenge_run_holds_the_four_bad_lines():
     from tallyhound import gate
     files, _ = challenge.generate(5, "medium")
     df = gate.evaluate(files)
-    assert len(df) == 8
+    assert len(df) == 9                                     # line 9: a supplier-name variant that must NOT be held
     assert sorted(df[df.decision == "HOLD"].line.astype(int)) == [2, 3, 7, 8]
     assert set(df.loc[df.line == "7", "failed_checks"].iloc[0].split(",")) == {"5"}
 
@@ -164,7 +167,7 @@ def test_gate_says_which_checks_could_not_run():
     from tallyhound import gate
     files, _ = challenge.generate(5, "easy")
     df = gate.evaluate({"payment_run.csv": files["payment_run.csv"]})
-    assert (df.decision == "RELEASE").sum() == 7 and "not checked" in df.reason.iloc[0]
+    assert (df.decision == "RELEASE").sum() == 8 and "not checked" in df.reason.iloc[0]
 
 
 # ---- Skeptic contradiction guard

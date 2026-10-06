@@ -179,6 +179,27 @@ def add_zip(up) -> None:
                "Pick it there and press Run selected.")
     st.dataframe(pd.DataFrame([dict(file=n, lines=len(v)) for n, v in sorted(files.items())]), hide_index=True, **C.dfw())
     column_matching(label)
+    data_check(label)
+
+
+def _set_date_order(label: str, name: str) -> None:
+    S = st.session_state
+    S.setdefault("date_order", {}).setdefault(label, {})[name] = S[f"dord_{label}_{name}"]
+
+
+def data_check(label: str) -> None:
+    """Show what Tallyhound believes about the files before it analyses them."""
+    from . import custom
+    items = custom.profile(label)
+    if not items:
+        return
+    warn = [x for x in items if x["level"] == "warn"]
+    with st.expander(f"Data check: {len(warn)} thing(s) to confirm" if warn else "Data check: looks right", expanded=bool(warn)):
+        for x in items:
+            (st.warning if x["level"] == "warn" else st.caption)(f"`{x['file']}` - {x['message']}")
+            if x.get("kind") == "dates":
+                st.radio("Dates in " + x["file"], ["day-first", "month-first"], key=f"dord_{label}_{x['file']}",
+                         horizontal=True, index=None, on_change=_set_date_order, args=(label, x["file"]))
 
 
 def _save_matching(label: str, name: str, missing: list[str]) -> None:

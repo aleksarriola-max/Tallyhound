@@ -58,7 +58,9 @@ def scorecard_page() -> None:
         s = score.score(prop, key)
         sk = s.get("skeptic")
         rows.append({"Run": name, "Proposed": s["proposed"], "Found": f"{s['found']} of {s['planted']}",
-                     "False alarms": s["false_alarms"], "Recall": _pct(s["recall"]), "Precision": _pct(s["precision"]),
+                     "False alarms": s["false_alarms"],
+                     "Traps flagged": f"{s['traps_flagged']} of {s['traps']}" if s["traps"] else "-",
+                     "Recall": _pct(s["recall"]), "Precision": _pct(s["precision"]),
                      "Precision of Confirmed": _pct(sk["precision_confirmed"]) if sk else "-",
                      "Real problems doubted": sk["real_doubted"] if sk else "-",
                      "False alarms caught": sk["false_alarms_caught"] if sk else "-",
@@ -82,12 +84,16 @@ def scorecard_page() -> None:
     if len(runs) == 1:
         st.info("Only the built-in rules are scored so far. To score the AI: upload this data as a zip on Run "
                 "analysis, run it with an Ollama engine, and the finished run appears here.")
-    with st.expander(f"Every planted problem ({len(key)})", expanded=False):
+    n_traps = sum(k.get("expect") == "trap" for k in key)
+    with st.expander(f"Every planted problem ({len(key) - n_traps})" + (f" and trap ({n_traps})" if n_traps else ""),
+                     expanded=False):
         st.dataframe(pd.DataFrame(score.per_issue(key, runs)), hide_index=True, **C.dfw())
 
     st.subheader("Make a challenge")
-    st.caption("A new fictional month with problems planted in it, and its answer key. Hard mode makes some problems "
-               "subtle on purpose, and words a few so the fixed rules miss them - a good test of whether the AI adds value.")
+    st.caption("A new fictional month with problems planted in it, plus traps: legitimate things that look suspicious "
+               "(batch transfers, rent without a PO, discounts, instalments, voids, day-first dates, name variants...). "
+               "A finding on a trap is a false alarm. Hard mode makes some problems subtle and words a few so fixed "
+               "rules miss them - a fair test of whether the AI adds value.")
     c1, c2, c3 = st.columns([2, 1, 2], vertical_alignment="bottom")
     diff = c1.segmented_control("Difficulty", ["easy", "medium", "hard"], default="medium", key="ch_diff") or "medium"
     seed = int(c2.number_input("Seed", min_value=1, max_value=9999, value=1, step=1, key="ch_seed"))
@@ -115,7 +121,9 @@ def _add_challenge() -> None:
 
 def _save_limits() -> None:
     S = st.session_state
-    new = {k: float(S[f"lim_{k}"]) if k != "split_days" else int(S[f"lim_{k}"]) for k in rules.LIMITS}
+    new = {k: float(S[f"lim_{k}"]) if k not in ("split_days", "bank_days") else int(S[f"lim_{k}"]) for k in rules.LIMIT_LABELS}
+    S["po_exempt_words"] = [w.strip() for w in S.get("lim_exempt_words", "").split(",") if w.strip()]
+    S["po_exempt_vendors"] = [w.strip() for w in S.get("lim_exempt_vendors", "").splitlines() if w.strip()]
     changed = {k: v for k, v in new.items() if v != C.limits()[k]}
     S["limits"] = new
     if changed:
@@ -127,6 +135,10 @@ def _reset_limits() -> None:
     S["limits"] = {}
     for k, v in rules.LIMITS.items():
         S[f"lim_{k}"] = v
+    S.pop("po_exempt_words", None)
+    S.pop("po_exempt_vendors", None)
+    S["lim_exempt_words"] = ", ".join(rules.PO_EXEMPT_WORDS)
+    S["lim_exempt_vendors"] = ""
     C.log_action("Reviewer", "Policy limits reset", "", "defaults")
 
 
@@ -137,13 +149,20 @@ def policy_page() -> None:
                "company's findings are pre-written and do not change.")
     L = C.limits()
     with st.container(border=True):
-        cols = st.columns(len(rules.LIMITS))
-        for col, (k, label) in zip(cols, rules.LIMIT_LABELS.items()):
-            S.setdefault(f"lim_{k}", L[k])
-            if k == "split_days":
-                col.number_input(label, min_value=1, max_value=30, step=1, key=f"lim_{k}")
-            else:
-                col.number_input(label, min_value=0.0, step=50.0 if L[k] >= 100 else 5.0, key=f"lim_{k}")
+        items = list(rules.LIMIT_LABELS.items())
+        for i in range(0, len(items), 4):
+            cols = st.columns(4)
+            for col, (k, label) in zip(cols, items[i:i + 4]):
+                S.setdefault(f"lim_{k}", L[k])
+                if k in ("split_days", "bank_days"):
+                    col.number_input(label, min_value=0, max_value=30, step=1, key=f"lim_{k}")
+                else:
+                    col.number_input(label, min_value=0.0, step=50.0 if L[k] >= 100 else 1.0, key=f"lim_{k}")
+        S.setdefault("lim_exempt_words", ", ".join(L["po_exempt_words"]))
+        S.setdefault("lim_exempt_vendors", "\n".join(L["po_exempt_vendors"]))
+        e1, e2 = st.columns(2)
+        e1.text_area("Bills that need no PO: words in the vendor name (comma-separated)", key="lim_exempt_words", height=90)
+        e2.text_area("Vendors that need no PO (one per line)", key="lim_exempt_vendors", height=90)
         b1, b2, _ = st.columns([1, 1, 4])
         from . import auth
         locked = not auth.can("policy")
@@ -154,7 +173,58 @@ def policy_page() -> None:
     pol = C.policy()
     rows = [dict(Area=k.split("|")[1], Clause=k.split("|")[0], Text=v) for k, v in pol.items()]
     st.dataframe(pd.DataFrame(rows), hide_index=True, **C.dfw())
+    rule_health_section()
     learning_section()
+
+
+def _set_override(clause: str, value: str | None) -> None:
+    S = st.session_state
+    o = S.setdefault("rule_override", {})
+    if value:
+        o[clause] = value
+    else:
+        o.pop(clause, None)
+    C.log_action("Reviewer", "Rule status changed", "", f"clause {clause}: {value or 'automatic'}")
+
+
+def _promote(clause: str) -> None:
+    S = st.session_state
+    S["shadow"] = [c for c in S.get("shadow", []) if c != clause]
+    C.log_action("Reviewer", "Shadow rule promoted", "", f"clause {clause}")
+
+
+def rule_health_section() -> None:
+    from . import auth, triage
+    S = st.session_state
+    st.subheader("How each rule is doing")
+    st.caption(f"From your reviewers' decisions on uploaded data. A rule rejected {triage.DEMOTE_REJECT_RATE:.0%} or more of "
+               f"the time (after {triage.DEMOTE_MIN_DECISIONS} decisions) is demoted to Minor items automatically - "
+               "never deleted. You can restore it.")
+    df = triage.rule_health()
+    if df.empty:
+        st.caption("No decisions on uploaded data yet.")
+    else:
+        show = df.copy()
+        show["Reject rate"] = show["Reject rate"].map(lambda x: f"{100 * x:.0f}%")
+        st.dataframe(show, hide_index=True, **C.dfw())
+        for r in df[df.Status == "Demoted"].itertuples():
+            c1, c2 = st.columns([5, 1], vertical_alignment="center")
+            c1.warning(f"Clause {r.Clause} is demoted: reviewers rejected {r.Rejected} of {r.Decisions} of its findings. "
+                       "Check its limits or exemptions above.")
+            c2.button("Restore", key=f"restore_{r.Clause}", on_click=_set_override, args=(r.Clause, "normal"),
+                      disabled=not auth.can("policy"))
+    st.subheader("Shadow rules")
+    st.caption("A rule in shadow mode still runs, but its findings stay out of the review queue until reviewers have "
+               f"marked at least {triage.PROMOTE_MIN_MARKS} of them and {triage.PROMOTE_PRECISION:.0%} were real problems. "
+               "Use it when you add or change a rule.")
+    all_clauses = sorted({k.split("|")[0] for k in C.policy()}, key=lambda c: [int(x) for x in c.split(".")])
+    st.multiselect("Clauses in shadow mode", all_clauses, key="shadow", disabled=not auth.can("policy"))
+    for c in S.get("shadow", []):
+        n, p = triage.shadow_precision(c)
+        c1, c2 = st.columns([5, 1], vertical_alignment="center")
+        c1.markdown(f"Clause **{c}**: {n} marked, {100 * p:.0f}% real" + (" - ready to promote" if triage.ready_to_promote(c) else ""))
+        c2.button("Promote", key=f"promote_{c}", on_click=_promote, args=(c,),
+                  disabled=not triage.ready_to_promote(c) or not auth.can("policy"))
 
 
 def learning_section() -> None:

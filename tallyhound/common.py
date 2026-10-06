@@ -68,7 +68,10 @@ def _policy_base() -> dict:
 def limits() -> dict:
     """The policy limits in force: the defaults, changed on the Policy page."""
     from . import rules
-    return {**rules.LIMITS, **st.session_state.get("limits", {})}
+    S = st.session_state
+    return {**rules.LIMITS, **S.get("limits", {}),
+            "po_exempt_words": S.get("po_exempt_words", rules.PO_EXEMPT_WORDS),
+            "po_exempt_vendors": S.get("po_exempt_vendors", [])}
 
 
 def policy() -> dict:

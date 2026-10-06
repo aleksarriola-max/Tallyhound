@@ -14,19 +14,59 @@ def _code(text: str) -> None:
         st.code(text, language=None)
 
 
-def finding_card(r) -> None:
+def _decide_all(ids: list[str], status: str, reason: str = "") -> None:
+    for i in ids:
+        C.decide(i, status, reason)
+
+
+def _undo_all(ids: list[str]) -> None:
+    for i in ids:
+        if i in st.session_state.decisions:
+            C.undo(i)
+
+
+def test_case_json(r, ids: list[str]) -> str:
+    """A regression test for tests/cases/: the files, and the lines that must not be flagged again."""
+    import json
+    from . import custom
+    label = custom.active_label()
+    files = custom.view(label) if label else {n: C.read_source(n) for n in rules_files()}
+    f = C.findings().set_index("id")
+    must_not = [dict(source_file=f.loc[i, "source_file"], line=int(f.loc[i, "line_number"]), clause=str(f.loc[i, "clause"]))
+                for i in ids if i in f.index]
+    d = st.session_state.decisions.get(r.id, {})
+    return json.dumps(dict(description=f"Rejected by a reviewer: {d.get('reason', '')} ({r.title})",
+                           files={k: v for k, v in files.items() if v}, must_not_flag=must_not), indent=1)
+
+
+def rules_files() -> list[str]:
+    from . import rules
+    return list(rules.FILES.values())
+
+
+def finding_card(r, others: list | None = None) -> None:
+    from . import triage
     S = st.session_state
+    others = others or []
+    ids = [r.id] + [o.id for o in others]
     d = S.decisions.get(r.id)
     blocked = auth.review_block_reason()
     with st.container(border=True):
         a, b = st.columns([5, 2], vertical_alignment="center")
-        a.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{r.id}** &nbsp;·&nbsp; {r.area} &nbsp;·&nbsp; clause {r.clause}",
+        a.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{r.id}** &nbsp;·&nbsp; {r.area} &nbsp;·&nbsp; clause {r.clause}"
+                   + (f" &nbsp;·&nbsp; <span class='th-muted'>case of {len(ids)}</span>" if others else ""),
                    unsafe_allow_html=True)
         b.markdown(f"<div style='text-align:right;font-weight:700'>{C.money(r.amount)}</div>", unsafe_allow_html=True)
         st.markdown(f"**{C.esc(r.title)}**")
         _code(r.evidence)
         st.markdown(f"Skeptic verdict: **{r.skeptic_verdict}** - {C.esc(r.skeptic_reason)}")
         st.markdown(f"Proposed fix: {C.esc(r.proposed_fix)}")
+        clears = triage.CLEARS.get(str(r.clause))
+        if clears:
+            st.caption(f"Clears if {clears}. Priority {triage.priority(r)}.")
+        if others:
+            st.markdown("Also in this case (decided together): " + "; ".join(
+                f"**{o.id}** {C.esc(o.title)} (clause {o.clause})" for o in others))
         note = S.notes.get(r.id, {})
         label = "Owner and notes" + (f" - {note['owner']}" if note.get("owner") else "") + (" (note)" if note.get("note") else "")
         with st.expander(label):
@@ -35,20 +75,24 @@ def finding_card(r) -> None:
             st.button("Save", key=f"savenote_{r.id}", on_click=C.save_note, args=(r.id,))
         if d:
             color = C.RELEASE if d["status"] == "Approved" else C.HOLD
-            c1, c2 = st.columns([5, 1], vertical_alignment="center")
+            c1, c2, c3 = st.columns([4, 1.4, 1], vertical_alignment="center")
             c1.markdown(C.badge(d["status"], color) + (f" &nbsp; <span class='th-muted'>{d['reason']}</span>" if d["reason"] else ""),
                         unsafe_allow_html=True)
-            c2.button("Undo", key=f"undo_{r.id}", on_click=C.undo, args=(r.id,), disabled=bool(blocked))
+            if d["status"] == "Rejected":
+                c2.download_button("Save as test case", test_case_json(r, ids), file_name=f"case_{r.id}_{r.clause}.json",
+                                   mime="application/json", key=f"case_{r.id}", type="tertiary",
+                                   help="A regression test: put it in tests/cases/ so this false alarm can never come back.")
+            c3.button("Undo", key=f"undo_{r.id}", on_click=_undo_all, args=(ids,), disabled=bool(blocked))
         else:
             c1, c2 = st.columns([1, 4])
-            c1.button("Approve", key=f"appr_{r.id}", type="primary", on_click=C.decide, args=(r.id, "Approved"),
+            c1.button("Approve", key=f"appr_{r.id}", type="primary", on_click=_decide_all, args=(ids, "Approved"),
                       disabled=bool(blocked), help=blocked)
             with c2.expander("Reject..."):
                 reason = st.text_input("Reason (required)", key=f"rej_{r.id}")
                 who = _entity(r)
                 st.checkbox(f"Don't flag clause {r.clause} again for {who}", key=f"supp_{r.id}")
                 st.button("Reject", key=f"rejbtn_{r.id}", disabled=not reason.strip() or bool(blocked),
-                          on_click=_reject, args=(r.id, reason.strip(), str(r.clause), r.source_file, who))
+                          on_click=_reject, args=(r.id, reason.strip(), str(r.clause), r.source_file, who, ids))
 
 
 def _entity(r) -> str:
@@ -57,9 +101,10 @@ def _entity(r) -> str:
     return learn.entity(r.source_file, r.evidence, lines[0] if r.source_file.endswith(".csv") and lines else "")
 
 
-def _reject(fid: str, reason: str, clause: str, source_file: str, who: str) -> None:
+def _reject(fid: str, reason: str, clause: str, source_file: str, who: str, ids: list[str] | None = None) -> None:
     from . import learn
-    C.decide(fid, "Rejected", reason)
+    for i in ids or [fid]:
+        C.decide(i, "Rejected", reason)
     if st.session_state.get(f"supp_{fid}"):
         learn.suppress(clause, source_file, who, reason)
         C.log_action("Reviewer", "Suppression added", fid, f"clause {clause} for {who}: {reason}")
@@ -78,20 +123,62 @@ def suppressed_notice() -> None:
                   key="show_suppressed")
 
 
+def _mark_shadow(key: str, value: int) -> None:
+    st.session_state.setdefault("shadow_marks", {})[key] = value
+
+
 def step3() -> None:
+    from . import triage
     suppressed_notice()
     why = auth.review_block_reason()
     if why:
         st.warning(why)
     S = st.session_state
     f = C.findings()
+    triage.refresh_health()
+    L = C.limits()
+    shadow = triage.shadow_clauses()
+    in_shadow = f[f.clause.astype(str).isin(shadow)]
+    f = f[~f.clause.astype(str).isin(shadow)]
     left, right = st.columns([7, 3])
     with left:
         sev = st.segmented_control("Severity", ["All", "High", "Medium", "Low"], default="All",
                                    key="rev_sev", label_visibility="collapsed")
         shown = f if sev in (None, "All") else f[f.severity == sev]
-        for r in shown.itertuples():
-            finding_card(r)
+
+        def minor(r) -> bool:
+            return (float(r.amount) < L["materiality"] and r.severity != "High") or triage.demoted(str(r.clause))
+        groups = triage.cases(shown)
+        main = [g for g in groups if not all(minor(r) for r in g)]
+        small = [g for g in groups if all(minor(r) for r in g)]
+        n_items = sum(len(g) for g in main)
+        if len(main) > 20 and not S.get("rev_all"):
+            st.caption(f"Showing the 20 most important of {len(main)} cases ({n_items} findings), ranked by severity, "
+                       "money at stake and the Skeptic's confidence.")
+            todo = main[:20]
+        else:
+            todo = main
+        if len(main) > 20:
+            st.toggle(f"Show all {len(main)} cases", key="rev_all")
+        for g in todo:
+            finding_card(g[0], g[1:])
+        if small:
+            with st.expander(f"Minor items ({sum(len(g) for g in small)}): under ${L['materiality']:,.0f} or from a rule "
+                             "reviewers usually reject"):
+                for g in small:
+                    finding_card(g[0], g[1:])
+        if not in_shadow.empty:
+            with st.expander(f"Shadow rules: {len(in_shadow)} finding(s) these rules would have raised"):
+                st.caption("Shadow rules run without adding to the queue. Mark a few: once enough are real problems, "
+                           "the rule can be promoted on the Policy page.")
+                for r in in_shadow.itertuples():
+                    k = f"{r.clause}|{r.id}"
+                    c1, c2, c3 = st.columns([6, 1.3, 1.3], vertical_alignment="center")
+                    mark = S.get("shadow_marks", {}).get(k)
+                    c1.markdown(f"**{r.id}** clause {r.clause}: {C.esc(r.title)}" +
+                                ("" if mark is None else f" - marked {'real' if mark else 'not a problem'}"))
+                    c2.button("Real", key=f"shy_{r.id}", on_click=_mark_shadow, args=(k, 1))
+                    c3.button("Not a problem", key=f"shn_{r.id}", on_click=_mark_shadow, args=(k, 0))
     with right:
         with st.container(border=True):
             st.markdown("**Bulk action**")

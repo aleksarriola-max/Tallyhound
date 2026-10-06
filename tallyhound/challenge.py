@@ -1,7 +1,11 @@
 """Challenge generator: a fresh, fictional month of data with problems planted in it, plus the answer key.
 
-Use it to test the engines on data they have never seen. The clean rows are built so that none of the built-in
-rules fire on them; every planted problem is recorded with its file and line numbers. "Hard" variants are
+Use it to test the engines on data they have never seen. Every planted problem is recorded with its file and line
+numbers. So are planted TRAPS: things that look suspicious but are legitimate and common in real books - batch bank
+transfers, rent paid without a PO, early-payment discounts, instalments, a voided and re-issued payment, bank fees
+and payroll on the statement, day-first dates, supplier-name variants, team dinners, professional memberships,
+weekend taxis on a business trip, remit-to vendor records, vendors closed after their last payment, invoices that
+show a net total before tax. Any finding on a trap is a measured false alarm. "Hard" variants are
 deliberately subtle, and a few are worded so that the fixed rules miss them - that is where an AI model can earn
 its keep, and the scorecard shows whether it does.
 """
@@ -19,10 +23,12 @@ HEADERS = {
     "approvals.csv": ["record_id", "type", "doc_no", "date", "vendor", "amount", "requested_by", "approved_by",
                       "approver_role", "po_no"],
     "vendors.csv": ["vendor_id", "name", "tax_id", "status", "bank_acct", "bank_changed_on", "bank_verified", "created_on",
-                    "w9_on_file", "last_paid_on", "last_paid_amount"],
+                    "w9_on_file", "last_paid_on", "last_paid_amount", "status_changed_on"],
     "expenses.csv": ["claim_id", "date", "employee", "category", "amount", "receipt_ref", "notes", "people"],
 }
-KEY_HEADER = ["id", "clause", "area", "source_file", "line_number", "related_lines", "description"]
+KEY_HEADER = ["id", "clause", "area", "source_file", "line_number", "related_lines", "description", "expect"]
+TRAPS = ["batch", "nonap", "poexempt", "discount", "rounding", "instalment", "void", "dayfirst", "names", "team_dinner",
+         "membership", "weekend_travel", "remit", "closed", "net_total"]
 PEOPLE = ["J. Okoro", "M. Lindqvist", "P. Herrera", "S. Nakamura", "D. Abara", "L. Fontaine", "R. Mehta", "T. Walsh"]
 NAMES = ["Arden", "Bexley", "Calder", "Dunmore", "Ellery", "Fenwick", "Garrow", "Holloway", "Ingram", "Juniper",
          "Kestrel", "Lomond", "Marlby", "Northam", "Orchard", "Pembury", "Quarry", "Rushden", "Selby", "Thornbury",
@@ -37,8 +43,10 @@ COUNTS = {"easy": 8, "medium": 14, "hard": len(ISSUES)}
 
 
 class _Gen:
-    def __init__(self, seed: int, difficulty: str):
+    def __init__(self, seed: int, difficulty: str, traps: bool = True):
         self.r = random.Random(seed)
+        self.with_traps = traps
+        self.dayfirst = False
         self.hard = difficulty == "hard"
         self.days = [date(2026, 9, d) for d in range(1, 31)]
         self.weekdays = [d for d in self.days if d.weekday() < 5]
@@ -112,7 +120,92 @@ class _Gen:
         return c, i
 
     def plant(self, issue: str, clause: str, area: str, file: str, main: dict, related: list[dict], desc: str) -> None:
-        self.key.append(dict(issue=issue, clause=clause, area=area, source_file=file, main=main, related=related, description=desc))
+        self.key.append(dict(issue=issue, clause=clause, area=area, source_file=file, main=main, related=related,
+                             description=desc, expect="problem"))
+
+    def trap(self, kind: str, area: str, file: str, main: dict, related: list[dict], desc: str) -> None:
+        self.key.append(dict(issue=kind, clause="-", area=area, source_file=file, main=main, related=related,
+                             description=f"TRAP ({kind}): {desc}", expect="trap"))
+
+    # -------- legitimate things that look suspicious
+    def traps(self) -> None:
+        r = self.r
+        # batch: three supplier payments leave the bank as one transfer
+        vs = r.sample(self.paid_vendors, 3)
+        day = self.wd(8, 16)
+        batch = []
+        for v in vs:
+            inv = self.approval(v["name"], self.amt(700, 4000), day - timedelta(days=4))
+            p = self.payment(v, inv, pay_date=day.isoformat())
+            p["_nobank"] = True
+            batch.append(p)
+        b = dict(date=(day + timedelta(days=1)).isoformat(), description=f"BACS BATCH {day:%d%b}".upper(),
+                 amount=f"-{sum(float(p['paid_amount']) for p in batch):.2f}", reference=f"BATCH-{r.randint(100, 999)}")
+        self.bank_extra.append(b)
+        self.trap("batch", "Payments", "bank_statement.csv", b, [], "three payments in one bank transfer")
+        for p in batch:                               # each batched payment is on the statement, inside the transfer
+            self.trap("batch", "Payments", "payments.csv", p, [], f"{p['payment_id']} paid inside a batch transfer")
+        # non-AP debits on the bank statement
+        for desc, amt in (("BANK CHARGES SEP", 38.50), ("PAYROLL 2026-09", self.amt(40000, 60000)),
+                          ("IRS EFTPS FEDERAL TAX", self.amt(8000, 15000)), ("AMEX CARD SETTLEMENT", self.amt(2000, 6000)),
+                          ("TRANSFER TO SAVINGS ACCT 4471", 20000.00)):
+            b = dict(date=self.wd(3, 28).isoformat(), description=desc, amount=f"-{amt:.2f}", reference="")
+            self.bank_extra.append(b)
+            self.trap("nonap", "Payments", "bank_statement.csv", b, [], desc.lower())
+        # PO-exempt bills (rent, utilities, insurance); three utility bills for three sites on one day
+        rent = self.approval("Northgate Property Rent", 8500.00, self.wd(1, 5), po_no="")
+        ins = self.approval("Shield Insurance Co", self.amt(2600, 6000), self.wd(), po_no="")
+        self.trap("poexempt", "Approvals", "approvals.csv", rent, [], "office rent, paid without a PO")
+        self.trap("poexempt", "Approvals", "approvals.csv", ins, [], "insurance premium, paid without a PO")
+        day = self.wd(8, 20)
+        people = r.sample(PEOPLE, 3)
+        bills = [self.approval("City Power & Light", self.amt(3500, 3900), day, po_no="", requested_by=people[i],
+                               approved_by=people[(i + 1) % 3]) for i in range(3)]
+        self.trap("poexempt", "Approvals", "approvals.csv", bills[0], bills[1:], "three site electricity bills, one supplier")
+        # early-payment discount (paid 2% less) and a 40-cent rounding difference
+        v = r.choice(self.paid_vendors)
+        inv = self.approval(v["name"], 5000.00, self.wd(2, 12))
+        p = self.payment(v, inv, paid_amount="4900.00")
+        self.trap("discount", "Payments", "payments.csv", p, [], "2% early-payment discount")
+        v = r.choice(self.paid_vendors)
+        inv = self.approval(v["name"], self.amt(1000, 5000), self.wd(2, 12))
+        p = self.payment(v, inv, paid_amount=f"{float(inv['amount']) + 0.40:.2f}")
+        self.trap("rounding", "Payments", "payments.csv", p, [], "40-cent rounding difference")
+        # instalments: one invoice paid in two halves
+        v = r.choice(self.paid_vendors)
+        inv = self.approval(v["name"], 6000.00, self.wd(1, 8))
+        p1 = self.payment(v, inv, paid_amount="3000.00")
+        p2 = self.payment(v, inv, paid_amount="3000.00", pay_date=self.wd(16, 22).isoformat())
+        self.trap("instalment", "Payments", "payments.csv", p2, [p1], "invoice paid in two instalments")
+        # void and re-issue
+        v = r.choice(self.paid_vendors)
+        inv = self.approval(v["name"], self.amt(1500, 4500), self.wd(2, 8))
+        a = self.payment(v, inv)
+        later = [d for d in self.weekdays if d > date.fromisoformat(a["pay_date"])]
+        void = self.payment(v, inv, paid_amount=f"-{float(inv['amount']):.2f}", pay_date=later[0].isoformat())
+        again = self.payment(v, inv, pay_date=later[min(2, len(later) - 1)].isoformat())
+        self.trap("void", "Payments", "payments.csv", again, [a, void], "payment voided and re-issued")
+        # day-first dates in the expenses export
+        self.dayfirst = True
+        # supplier-name variants: an open invoice paid on the run under another spelling (see payment_run)
+        v = r.choice(self.paid_vendors)
+        self.variant_inv = (v, self.approval(v["name"], self.amt(800, 4000), self.wd(18, 26)))
+        # team dinner with the head count only in the notes; professional membership; weekend taxi on a trip
+        e = self.expense(category="MEAL", amount="264.00", people="", notes="Team dinner - 5 people")
+        self.trap("team_dinner", "Expenses", "expenses.csv", e, [], "team dinner, 5 people")
+        e = self.expense(category="TRAINING", amount="185.00", notes="Annual CPA society membership")
+        self.trap("membership", "Expenses", "expenses.csv", e, [], "professional membership")
+        who = r.choice(PEOPLE)
+        fri = r.choice([d for d in self.weekdays if d.weekday() == 4 and d.day < 26])
+        trip = self.expense(employee=who, category="TRAVEL", amount="420.00", date=fri.isoformat(), notes="Flight to client site")
+        taxi = self.expense(employee=who, category="TAXI", amount="46.00", date=(fri + timedelta(days=1)).isoformat(), notes="")
+        self.trap("weekend_travel", "Expenses", "expenses.csv", taxi, [trip], "Saturday taxi during a business trip")
+        # remit-to record sharing the supplier's tax ID; vendor closed after its final payment
+        base = r.choice(self.paid_vendors)
+        remit = self.vendor(name=f"{base['name']} - REMIT TO LEEDS", tax_id=base["tax_id"])
+        self.trap("remit", "Vendors", "vendors.csv", remit, [base], "remit-to address record")
+        closed = self.vendor(status="INACTIVE", last_paid_on="2026-09-04", status_changed_on="2026-09-20")
+        self.trap("closed", "Vendors", "vendors.csv", closed, [], "vendor closed after its last payment")
 
     # -------- the clean month
     def clean(self) -> None:
@@ -147,7 +240,7 @@ class _Gen:
         elif kind == "pay_over":
             v = r.choice(self.paid_vendors)
             inv = self.approval(v["name"], self.amt(1500, 8000), self.wd(1, 20))
-            extra = 0.5 if hard else round(r.uniform(150, 900), 2)
+            extra = 12.5 if hard else round(r.uniform(150, 900), 2)
             p = self.payment(v, inv, paid_amount=f"{float(inv['amount']) + extra:.2f}")
             self.plant(kind, "5.1", "Payments", "payments.csv", p, [], f"{inv['doc_no']} overpaid by ${extra:,.2f}")
         elif kind == "pay_noinv":
@@ -218,7 +311,7 @@ class _Gen:
                              employee=r.choice([p for p in PEOPLE if p != a["employee"]]))
             self.plant(kind, "6.5", "Expenses", "expenses.csv", b, [a], f"Receipt {a['receipt_ref']} claimed twice")
         elif kind == "exp_weekend":
-            e = self.expense(date=r.choice(self.weekends).isoformat(), notes="")
+            e = self.expense(date=r.choice(self.weekends).isoformat(), notes="", category="SUPPLIES")
             self.plant(kind, "6.4", "Expenses", "expenses.csv", e, [], "Weekend claim with no reason")
         elif kind == "exp_personal":
             note = "Yoga classes for myself" if hard else "Monthly gym membership"
@@ -284,7 +377,12 @@ class _Gen:
                     total += 0.1 if self.hard else round(self.r.uniform(120, 600), 2)
                 elif kind == "inv_unknown":
                     a = dict(a, doc_no=f"{a['doc_no']}-X")
-            docs.append((f"{a['doc_no']}.pdf", doc(v, a["doc_no"], a["date"], a["po_no"], total, acct), kind))
+            lines = doc(v, a["doc_no"], a["date"], a["po_no"], total, acct)
+            if self.with_traps and i == 0:            # trap: net total before tax shown above the total due
+                net = round(total / 1.2, 2)
+                lines[6:6] = [f"Net total: ${net:,.2f}", f"VAT 20%: ${total - net:,.2f}"]
+                kind = "trap_net_total"
+            docs.append((f"{a['doc_no']}.pdf", lines, kind))
             if kind == "inv_dup":
                 docs.append((f"{a['doc_no']}-copy.pdf", doc(v, a["doc_no"], a["date"], a["po_no"], total, acct), "inv_dup_copy"))
         return docs
@@ -296,8 +394,9 @@ class _Gen:
             if p.get("_nobank"):
                 continue
             d = date.fromisoformat(p["pay_date"]) + timedelta(days=self.r.randint(0, 2))
-            out.append(dict(date=d.isoformat(), description=f"PAYMENT {p['supplier'].upper()}",
-                            amount=f"-{float(p['paid_amount']):.2f}", reference=p["payment_id"]))
+            amt = float(p["paid_amount"])
+            out.append(dict(date=d.isoformat(), description=f"{'PAYMENT' if amt > 0 else 'RETURNED PAYMENT'} {p['supplier'].upper()}",
+                            amount=f"{-amt:.2f}", reference=p["payment_id"]))
         return out + self.bank_extra
 
     # -------- the proposed payment run for the Payment gate (four lines should be held)
@@ -313,6 +412,10 @@ class _Gen:
                       amount=paid["paid_amount"], bank_last4=paid["bank_last4"])]       # already paid
         rows[1]["bank_last4"] = f"{(int(v1['bank_acct'][-4:]) + 1111) % 10000:04d}"   # bank differs from master
         rows[2]["amount"] = f"{float(a2['amount']) + 250:.2f}"                          # more than the invoice
+        if self.with_traps:                                                             # trap: same supplier, other spelling
+            v4, a4 = self.variant_inv
+            rows.append(dict(vendor_id=v4["vendor_id"], supplier=v4["name"].upper() + " LTD", invoice=a4["doc_no"],
+                             amount=a4["amount"], bank_last4=v4["bank_acct"][-4:]))
         buf = io.StringIO()
         w = csv.writer(buf, lineterminator="\n")
         w.writerow(["line", "vendor_id", "supplier", "invoice", "amount", "bank_last4"])
@@ -325,6 +428,8 @@ class _Gen:
         self.clean()
         for kind in self.r.sample(ISSUES, n_issues):
             self.issue(kind)
+        if self.with_traps:
+            self.traps()
         files, where = {}, {}
         for name, head in HEADERS.items():
             rows = list(self.rows[name])
@@ -335,7 +440,11 @@ class _Gen:
             w = csv.writer(buf, lineterminator="\n")
             w.writerow(head)
             for i, row in enumerate(rows, start=2):
-                w.writerow([row[h] for h in head])
+                vals = [row.get(h, "") for h in head]
+                if name == "expenses.csv" and self.dayfirst:
+                    d = date.fromisoformat(row["date"])
+                    vals[head.index("date")] = f"{d.day:02d}/{d.month:02d}/{d.year}"
+                w.writerow(vals)
                 where[id(row)] = i
             files[name] = buf.getvalue().splitlines()
         self.r.shuffle(self.contracts)
@@ -374,6 +483,9 @@ class _Gen:
                 inv_key.append(("8.1", no_line, [], f"{name}: invoice has no approval record"))
             elif kind == "inv_dup":
                 inv_key.append(("8.3", find(name.replace(".pdf", "-copy.pdf"), "Invoice No"), [no_line], f"{name} submitted twice"))
+            elif kind == "trap_net_total":
+                inv_key.append(("-", find(name, "Net total"), [find(name, "Total due"), no_line],
+                                f"TRAP (net_total): {name} shows the net total before tax"))
         bank = self.bank_rows()
         self.r.shuffle(bank)
         bank.sort(key=lambda x: x["date"])
@@ -388,27 +500,30 @@ class _Gen:
         for n, k in enumerate(self.key, start=1):
             key.append(dict(id=f"K-{n:02d}", clause=k["clause"], area=k["area"], source_file=k["source_file"],
                             line_number=where[id(k["main"])],
-                            related_lines=";".join(str(where[id(x)]) for x in k["related"]), description=k["description"]))
+                            related_lines=";".join(str(where[id(x)]) for x in k["related"]), description=k["description"],
+                            expect=k["expect"]))
         for clause, line, rel, desc in inv_key:
             key.append(dict(id=f"K-{len(key) + 1:02d}", clause=clause, area="Invoices", source_file=invoices.NAME,
-                            line_number=line, related_lines=";".join(map(str, rel)), description=desc))
+                            line_number=line, related_lines=";".join(map(str, rel)), description=desc,
+                            expect="trap" if desc.startswith("TRAP") else "problem"))
         return files, key
 
 
-def generate_full(seed: int = 1, difficulty: str = "medium") -> tuple[dict[str, list[str]], list[dict], dict[str, bytes]]:
+def generate_full(seed: int = 1, difficulty: str = "medium", traps: bool = True
+                  ) -> tuple[dict[str, list[str]], list[dict], dict[str, bytes]]:
     """Like generate, plus the invoice PDFs (name -> bytes) for writing a zip."""
     if difficulty not in COUNTS:
         raise ValueError("difficulty must be easy, medium or hard")
-    g = _Gen(seed, difficulty)
+    g = _Gen(seed, difficulty, traps)
     files, key = g.build(COUNTS[difficulty])
     return files, key, g.pdfs
 
 
-def generate(seed: int = 1, difficulty: str = "medium") -> tuple[dict[str, list[str]], list[dict]]:
-    """Returns (files as exact lines, answer key rows)."""
+def generate(seed: int = 1, difficulty: str = "medium", traps: bool = True) -> tuple[dict[str, list[str]], list[dict]]:
+    """Returns (files as exact lines, answer key rows). traps=False gives the old, clean-background challenge."""
     if difficulty not in COUNTS:
         raise ValueError("difficulty must be easy, medium or hard")
-    return _Gen(seed, difficulty).build(COUNTS[difficulty])
+    return _Gen(seed, difficulty, traps).build(COUNTS[difficulty])
 
 
 def key_csv(key: list[dict]) -> str:

@@ -130,8 +130,12 @@ def view(label: str) -> dict[str, list[str]]:
     import csv
     import io
     out = {}
+    orders = st.session_state.get("date_order", {}).get(label, {})
     for name, lines in st.session_state.uploads[label].items():
         m = mapping(label).get(name)
+        marker = {"day-first": "tallyhound_dayfirst", "month-first": "tallyhound_monthfirst"}.get(orders.get(name, ""))
+        if marker and lines:                       # a date order the person chose: carried as an extra header name
+            lines = [lines[0] + "," + marker] + lines[1:]
         if not m or not lines:
             out[name] = lines
             continue
@@ -226,7 +230,8 @@ class Job:
                             reason=f"Fixed rule check, no AI. Clause {h.clause}: {self.policy.get(h.clause + '|' + h.area, '')}")
                        if self.engine == "rules" else {})))
                 r = self.records[-1]
-                r["evidence"] = lines[r["line_number"] - 1]
+                src = self.files.get(r["source_file"], [])          # cross-file checks quote other files
+                r["evidence"] = src[r["line_number"] - 1] if 0 < r["line_number"] <= len(src) else ""
             return
         if self.engine == "ollama-tools":
             from . import agents_tools
@@ -376,3 +381,54 @@ def frame(label: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     else:
         st.session_state["_n_suppressed"] = 0
     return ok, hidden
+
+
+# ---------------------------------------------------------------- data check before a run
+def profile(label: str) -> list[dict]:
+    """What Tallyhound believes about each uploaded file, so misread data is caught before it becomes findings.
+    Each item: file, level (ok / warn), message."""
+    import re as _re
+    S = st.session_state
+    files = view(label)
+    out = []
+    for name, lines in sorted(files.items()):
+        if not lines:
+            continue
+        if name.endswith(".csv"):
+            n = len(lines) - 1
+            order = rules.date_order(lines)
+            chosen = S.get("date_order", {}).get(label, {}).get(name)
+            msg = f"{n} rows"
+            if order == "ambiguous" and not chosen:
+                out.append(dict(file=name, level="warn", kind="dates",
+                                message=f"{msg}. Dates like 03/09/2026 could be 3 September or March 9 - choose below."))
+            else:
+                out.append(dict(file=name, level="ok", kind="info",
+                                message=f"{msg}; dates {chosen or order}"))
+            text = "\n".join(lines[1:])
+            if _re.search(r"\d\.\d{3},\d{2}\b", text):
+                out.append(dict(file=name, level="ok", kind="info", message="amounts use decimal commas (1.234,50) - read as such"))
+            cur = sorted(set(_re.findall(r"[$€£]", text)))
+            if len(cur) > 1:
+                out.append(dict(file=name, level="warn", kind="currency", message=f"more than one currency symbol: {' '.join(cur)}"))
+            if name == "payments.csv" and any(rules._f(r["paid_amount"]) < 0 for _, r in rules.rows(lines)):
+                out.append(dict(file=name, level="ok", kind="info", message="contains reversals (negative payments) - netted"))
+            if name == "bank_statement.csv":
+                non_ap = sum(bool(rules.NON_AP_BANK.search(r["description"] + " " + r["reference"])) for _, r in rules.rows(lines))
+                if non_ap:
+                    out.append(dict(file=name, level="ok", kind="info",
+                                    message=f"{non_ap} bank line(s) look like fees, payroll, tax, cards or own-account transfers - not matched to suppliers"))
+                if "payments.csv" not in files:
+                    out.append(dict(file=name, level="warn", kind="missing", message="no payments.csv to reconcile against"))
+            if name == "payment_run.csv":
+                for need in ("vendors.csv", "approvals.csv", "payments.csv"):
+                    if need not in files:
+                        out.append(dict(file=name, level="warn", kind="missing", message=f"gate checks that need {need} will not run"))
+        elif name == "invoices.txt":
+            from . import invoices
+            b = invoices.blocks(lines)
+            out.append(dict(file=name, level="ok", kind="info", message=f"{len(b)} invoice PDF(s) read"))
+            no_total = [x["name"] for x in b if "total" not in x]
+            if no_total:
+                out.append(dict(file=name, level="warn", kind="pdf", message="no total found in: " + ", ".join(no_total[:5])))
+    return out

@@ -19,7 +19,8 @@ def key_from_csv(text: str) -> list[dict]:
             continue
         rel = [int(x) for x in str(r.get("related_lines", "")).replace(",", ";").split(";") if x.strip().isdigit()]
         out.append(dict(id=r.get("id", ""), clause=r.get("clause", ""), area=r.get("area", ""),
-                        source_file=r["source_file"].strip(), lines=sorted({main, *rel}), description=r.get("description", "")))
+                        source_file=r["source_file"].strip(), lines=sorted({main, *rel}), description=r.get("description", ""),
+                        expect=(r.get("expect") or "problem").strip()))
     return out
 
 
@@ -43,14 +44,20 @@ def matches(p: dict, k: dict) -> bool:
 
 
 def score(proposed: list[dict], key: list[dict]) -> dict:
-    """proposed: dicts with source_file, line_number, related_lines and optionally verdict."""
+    """proposed: dicts with source_file, line_number, related_lines and optionally verdict.
+    Key rows marked expect="trap" are legitimate look-alikes: a finding on one is a false alarm, counted separately."""
+    traps = [k for k in key if k.get("expect") == "trap"]
+    key = [k for k in key if k.get("expect") != "trap"]
+    trap_hit = [k for k in traps if any(matches(p, k) for p in proposed)]
     found = [any(matches(p, k) for p in proposed) for k in key]
     true = [any(matches(p, k) for k in key) for p in proposed]
     out = dict(planted=len(key), proposed=len(proposed), found=sum(found), true_pos=sum(true),
                false_alarms=len(proposed) - sum(true),
                recall=sum(found) / len(key) if key else 0.0,
                precision=sum(true) / len(proposed) if proposed else 0.0,
-               found_ids=[k["id"] for k, f in zip(key, found) if f])
+               found_ids=[k["id"] for k, f in zip(key, found) if f],
+               traps=len(traps), traps_flagged=len(trap_hit), trap_ids=[k["id"] for k in trap_hit],
+               trap_kinds=sorted({k["description"].split(")")[0].replace("TRAP (", "") for k in trap_hit}))
     judged = [(p, t) for p, t in zip(proposed, true) if p.get("verdict") in ("Confirmed", "Doubtful")]
     if judged and any("rule check" not in str(p.get("reason", "")).lower() for p, _ in judged):   # a real Skeptic ran
         conf = [(p, t) for p, t in judged if p["verdict"] == "Confirmed"]
@@ -64,13 +71,17 @@ def score(proposed: list[dict], key: list[dict]) -> dict:
 
 
 def per_issue(key: list[dict], runs: dict[str, list[dict]]) -> list[dict]:
-    """One row per planted problem with Found / Missed for each run."""
+    """One row per planted problem or trap, with what each run did with it."""
     rows = []
     for k in key:
-        row = {"Planted problem": k["description"], "Clause": k["clause"], "File": k["source_file"],
-               "Line": k["lines"][0] if k["lines"] else ""}
+        trap = k.get("expect") == "trap"
+        row = {"Planted": k["description"], "Kind": "Trap (legitimate)" if trap else "Problem", "Clause": k["clause"],
+               "File": k["source_file"], "Line": k["lines"][0] if k["lines"] else ""}
         for name, proposed in runs.items():
             hit = next((p for p in proposed if matches(p, k)), None)
-            row[name] = "Missed" if hit is None else ("Found (doubted)" if hit.get("verdict") == "Doubtful" else "Found")
+            if trap:
+                row[name] = "Left alone" if hit is None else "FALSE ALARM"
+            else:
+                row[name] = "Missed" if hit is None else ("Found (doubted)" if hit.get("verdict") == "Doubtful" else "Found")
         rows.append(row)
     return rows

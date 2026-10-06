@@ -63,6 +63,7 @@ def main() -> None:
                     rows.append(dict(difficulty=diff, seed=seed, engine=engine, model=model, planted=s["planted"],
                                      proposed=s["proposed"], found=s["found"], false_alarms=s["false_alarms"],
                                      recall=round(s["recall"], 4), precision=round(s["precision"], 4),
+                                     traps=s["traps"], traps_flagged=s["traps_flagged"],
                                      precision_confirmed=round(sk.get("precision_confirmed", 0), 4) if sk else "",
                                      real_doubted=sk.get("real_doubted", "") if sk else "",
                                      seconds=round(time.time() - t, 1)))
@@ -77,12 +78,13 @@ def main() -> None:
     g = df.groupby(["engine", "model", "difficulty"], sort=False)
     md = ["# Benchmark", "", f"Generated {datetime.now():%Y-%m-%d %H:%M} on fresh challenge data "
           f"({len(seeds(a.seeds))} seeds per difficulty). Planted problems per month: easy 8, medium 14, hard ~28.", "",
-          "| Engine | Model | Difficulty | Runs | Recall | Precision | False alarms per run | Seconds per run |",
-          "|---|---|---|---|---|---|---|---|"]
+          "| Engine | Model | Difficulty | Runs | Recall | Precision | False alarms per run | Traps flagged | Seconds per run |",
+          "|---|---|---|---|---|---|---|---|---|"]
     for (engine, model, diff), part in g:
         md.append(f"| {NAMES.get(engine, engine)} | {model or '-'} | {diff} | {len(part)} | "
                   f"{100 * statistics.mean(part.recall):.0f}% | {100 * statistics.mean(part.precision):.0f}% | "
-                  f"{statistics.mean(part.false_alarms):.1f} | {statistics.mean(part.seconds):.0f} |")
+                  f"{statistics.mean(part.false_alarms):.1f} | {part.traps_flagged.sum()} of {part.traps.sum()} | "
+                  f"{statistics.mean(part.seconds):.0f} |")
     md += ["", "Recall: share of planted problems found. Precision: share of findings that were real. Hard mode words "
            "three problems so the fixed rules cannot see them; the rules' hard-mode recall is capped by design.", ""]
     (out / "benchmark.md").write_text("\n".join(md), encoding="utf-8")

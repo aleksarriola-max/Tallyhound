@@ -183,3 +183,14 @@ def test_tools_engine_runs_through_the_job(fake_ollama):
                      policy(), ["Approvals", "Vendors", "Contracts", "Expenses"])
     job.thread.join(30)
     assert job.done, job.failed
+
+
+def test_rules_job_quotes_lines_from_the_right_file():
+    from tallyhound import challenge as ch
+    for seed in (2, 3, 6):
+        files, _ = ch.generate(seed, "hard")
+        job = custom.Job("t", files, "rules", "m", "http://127.0.0.1:1", policy(), [])
+        job.thread.join(30)
+        assert job.done and job.failed is None
+        for r in job.records:
+            assert r["evidence"] == files[r["source_file"]][r["line_number"] - 1]

@@ -23,7 +23,7 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
     if not run or rules.missing_columns("payment_run.csv", run):
         return pd.DataFrame()
     V = {r["vendor_id"].strip(): r for _, r in rules.rows(files.get("vendors.csv", []))} if files.get("vendors.csv") else None
-    names = {r["name"].strip().lower(): r for r in (V or {}).values()}
+    names = {rules.norm_name(r["name"]): r for r in (V or {}).values()}
     A = {r["doc_no"].strip().lower(): r for _, r in rules.rows(files.get("approvals.csv", []))
          if r["type"].strip().upper() in ("", "INVOICE")} if files.get("approvals.csv") else None
     P = {r["invoice_no"].strip().lower() for _, r in rules.rows(files.get("payments.csv", []))
@@ -33,14 +33,14 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
     out, seen = [], set()
     for ln, r in rules.rows(run):
         inv, amt = r["invoice"].strip(), rules._f(r["amount"])
-        v = (V or {}).get(r["vendor_id"].strip()) or names.get(r["supplier"].strip().lower())
+        v = (V or {}).get(r["vendor_id"].strip()) or names.get(rules.norm_name(r["supplier"]))
         a = (A or {}).get(inv.lower())
         fail = []
         if V is not None and (v is None or v["status"].strip().upper() != "ACTIVE"):
             fail.append(1)
         if A is not None and (a is None or not a["approved_by"].strip()):
             fail.append(2)
-        if a is not None and a["vendor"].strip().lower() != r["supplier"].strip().lower():
+        if a is not None and rules.norm_name(a["vendor"]) != rules.norm_name(r["supplier"]):
             fail.append(3)
         if P is not None and inv.lower() in P:
             fail.append(4)

@@ -13,6 +13,7 @@ import re
 NAME = "invoices.txt"
 HEAD = re.compile(r"^\[PDF (.+)\]$")
 INV_NO = re.compile(r"\binvoice\s*(?:no\.?|number|#|:)\s*[:#]?\s*([A-Z0-9/-]*\d[A-Z0-9/-]*)", re.I)
+TOTAL_DUE = re.compile(r"\b(?:total due|amount due|balance due|amount payable|total payable)\b\s*[:]?\s*(?:USD|EUR|GBP)?\s*[$€£]?\s*(-?[\d,]+\.\d{2})", re.I)
 TOTAL = re.compile(r"\b(?:total due|amount due|balance due|invoice total|total)\b\s*[:]?\s*(?:USD|EUR|GBP)?\s*[$€£]?\s*(-?[\d,]+\.\d{2})", re.I)
 BANK = re.compile(r"\b(?:account|acct)\s*(?:no\.?|number|#)?\s*[:#]?\s*[*xX\s-]*(\d{4,})", re.I)
 VENDOR = re.compile(r"^\s*(?:from|supplier|vendor)\s*[:]\s*(.+)$", re.I)
@@ -46,12 +47,14 @@ def blocks(lines: list[str]) -> list[dict]:
             cur = dict(name=m.group(1), start=n)
             out.append(cur)
             continue
+        if cur is not None and "total_due" in cur:
+            cur["total"] = cur["total_due"]           # the amount payable wins over any other "total" line
         if cur is None:
             continue
-        for field, rx in (("number", INV_NO), ("total", TOTAL), ("bank", BANK), ("vendor", VENDOR)):
+        for field, rx in (("number", INV_NO), ("total_due", TOTAL_DUE), ("total", TOTAL), ("bank", BANK), ("vendor", VENDOR)):
             if field not in cur:
                 hit = rx.search(ln)
-                if hit:
+                if hit and not (field == "total" and re.search(r"\b(net|sub)\s*-?\s*total", ln, re.I)):
                     cur[field] = (n, hit.group(1).strip())
         if "vendor" not in cur and n == cur["start"] + 1:     # first text line is usually the supplier name
             cur["vendor_guess"] = (n, ln.strip())
@@ -66,7 +69,7 @@ def check(files: dict[str, list[str]]) -> list:
         return []
     A = {r["doc_no"].strip().lower(): r for _, r in rules.rows(files.get("approvals.csv", []))
          if r["type"].strip().upper() in ("", "INVOICE")} if files.get("approvals.csv") else None
-    V = {r["name"].strip().lower(): r for _, r in rules.rows(files.get("vendors.csv", []))} if files.get("vendors.csv") else None
+    V = {rules.norm_name(r["name"]): r for _, r in rules.rows(files.get("vendors.csv", []))} if files.get("vendors.csv") else None
     out, seen = [], {}
     for b in blocks(lines):
         if "number" not in b:
@@ -89,7 +92,7 @@ def check(files: dict[str, list[str]]) -> list:
                                      f"Invoice {no} total ${total:,.2f} differs from the approved ${rules._f(a['amount']):,.2f}",
                                      NAME, b["total"][0], [(NAME, nl)]))
         if V is not None and "bank" in b and vendor:
-            v = V.get(vendor.lower())
+            v = V.get(rules.norm_name(vendor))
             if v and v["bank_acct"].strip()[-4:] and v["bank_acct"].strip()[-4:] != b["bank"][1][-4:]:
                 out.append(rules.Hit("Invoices", "8.2", "High", total,
                                      f"Invoice {no} asks for payment to account ending {b['bank'][1][-4:]}; "

@@ -18,7 +18,8 @@ import streamlit as st
 
 KEYS = ["decisions", "audit_log", "cleared", "step", "fail_pending", "recent_extra", "tour_downloaded", "tour_off",
         "uploads", "custom", "by_dataset", "dataset", "extra_opts",
-        "mappings", "answer_keys", "run_history", "limits", "notes", "suppressions", "presets"]
+        "mappings", "answer_keys", "run_history", "limits", "notes", "suppressions", "presets",
+        "po_exempt_words", "po_exempt_vendors", "rule_override", "shadow", "shadow_marks", "date_order"]
 MAX_AGE_DAYS = 14
 _SID = re.compile(r"^[0-9a-f]{12}$")
 

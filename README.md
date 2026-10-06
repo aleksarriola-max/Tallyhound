@@ -47,9 +47,25 @@ Agents and rules only ever **propose**. Every quote is checked against the uploa
 
 ![Tamper demo](docs/tamper.png)
 
+## Guardrails against false alarms
+
+A tool that flags everything is as useless as one that flags nothing. Tallyhound is tested against *traps*: things that look suspicious but are normal in real books. Every challenge month plants 22 of them next to the real problems: a batch bank transfer paying three invoices, bank fees, payroll, tax and card settlements on the statement, rent and utilities paid without a PO, a 2% early-payment discount, a 40-cent rounding difference, an invoice paid in two instalments, a voided and re-issued payment, a day-first expenses export, a supplier spelt differently on the payment run, a team dinner with the head count in the notes, a CPA society membership, a weekend taxi on a business trip, a remit-to vendor record, a vendor closed after its last payment, and an invoice PDF that shows the net total before tax.
+
+Before these were fixed the built-in rules raised about 30 false alarms per month (precision 37-47%). Now: 0 traps flagged in 1,320 across 60 months, 100% precision, recall 100% easy / 100% medium / 96% hard.
+
+What keeps it that way:
+
+- **Quality gates in CI** (`tests/test_quality.py`): the build fails if any trap is flagged, precision drops below 95%, recall drops below the bar per difficulty, or false alarms exceed 0.5 per 100 rows.
+- **Regression cases**: on the Review page a rejected finding can be saved as a test case (Save as test case). Anonymise it with `python scripts/anonymise.py case.json --out tests/cases/` and it becomes a permanent check: that false alarm can never come back.
+- **Rule health**: each rule's reject rate from real reviewer decisions is shown on the Policy page. A rule rejected 60% or more of the time (after 5 decisions) is demoted to Minor items automatically - never deleted - and can be restored.
+- **Shadow mode**: put a new or changed rule in shadow on the Policy page; it runs without touching the review queue until reviewers have marked enough of its findings as real.
+- **Data check before a run**: after upload, Tallyhound shows what it believes about each file - date order, decimal commas, currencies, reversals, non-supplier bank lines, missing companion files - and asks when dates are ambiguous.
+- **A queue worth reading**: findings that share a line are one case, decided once; cases are ranked by severity, money and the Skeptic's confidence (top 20 first); items under the materiality threshold are grouped as Minor items; each finding says what would clear it.
+- **Tolerances and exemptions** on the Policy page: amount tolerance, minor-item threshold, and the bills that need no PO.
+
 ## Benchmark
 
-`python scripts/benchmark.py` runs the engines on fresh challenge months and writes [docs/benchmark.md](docs/benchmark.md). Built-in rules, 20 months per difficulty: easy 100%, medium 100%, hard 89% of planted problems found, with no false alarms. That is strong but expected: the generator plants problems shaped like the rules' checks, and hard mode hides three on purpose. The AI engines are benchmarked on your own machine:
+`python scripts/benchmark.py` runs the engines on fresh challenge months and writes [docs/benchmark.md](docs/benchmark.md). Built-in rules, 20 months per difficulty with traps: easy 100%, medium 100%, hard 96% of planted problems found, 0 of 1,320 traps flagged. The generator plants problems shaped like the rules' checks, so treat this as a regression baseline that the AI engines must beat; hard mode still hides some problems from fixed rules on purpose. The AI engines are benchmarked on your own machine:
 
 ```bash
 python scripts/benchmark.py --engines rules,rules+skeptic,ollama,ollama-tools --models qwen3.5:9b --seeds 1-3
@@ -144,6 +160,7 @@ tallyhound/
   invoices.py          invoice PDF reading and checks
   columns.py           column-matching suggestions
   learn.py             suppressions and limit hints
+  triage.py            cases, priority, minor items, rule health, shadow mode
   auth.py              optional sign-in, roles, segregation of duties
   headless.py          folder check and alerts without the app
   store.py             saves and restores decisions across reloads
@@ -154,8 +171,9 @@ scripts/make_data.py   regenerates all data
 scripts/benchmark.py   scores engines on fresh challenge data
 scripts/watch.py       scheduled folder check with alerts
 scripts/add_user.py    creates users (turns sign-in on)
+scripts/anonymise.py   anonymises exports and saved test cases
 Dockerfile, docker-compose.yml
-tests/                 automated tests
+tests/                 automated tests (test_quality.py: the false-alarm gates; cases/: regression cases)
 ```
 
 ## Tests

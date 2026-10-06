@@ -2,15 +2,21 @@
 
 Each check returns Hit objects that point at exact lines of the uploaded files. Nothing here decides anything;
 every hit is only a proposal for a person to review.
+
+The checks are written to stay quiet on things that look odd but are normal in real books: instalments and
+voided-and-reissued payments, early-payment discounts and rounding, bills that never carry a PO (rent, utilities,
+insurance), batch bank transfers and non-supplier bank debits, day-first dates, supplier-name spellings, remit-to
+vendor records, vendors closed after their last payment, team meals, professional memberships and weekend travel.
+The challenge generator plants each of these as a trap, and the test suite fails if a rule flags one.
 """
 from __future__ import annotations
 
 import csv
-from functools import lru_cache
-import io
 import re
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from functools import lru_cache
+from itertools import combinations
 
 FILES = {"Payments": "payments.csv", "Approvals": "approvals.csv", "Vendors": "vendors.csv",
          "Contracts": "contracts.txt", "Expenses": "expenses.csv", "Invoices": "invoices.txt"}
@@ -24,18 +30,36 @@ REQUIRED = {
     "expenses.csv": ["claim_id", "date", "employee", "category", "amount", "receipt_ref", "notes", "people"],
 }
 
-
-LIMITS = dict(po_limit=2500.0, director_limit=10000.0, meal_limit=75.0, receipt_limit=25.0, split_days=3, bank_days=5)
+LIMITS = dict(po_limit=2500.0, director_limit=10000.0, meal_limit=75.0, receipt_limit=25.0, split_days=3, bank_days=5,
+              tolerance=1.0, materiality=50.0)
 LIMIT_LABELS = dict(po_limit="Purchase order needed above ($)", director_limit="Director approval needed above ($)",
                     meal_limit="Meal limit per person ($)", receipt_limit="Receipt needed above ($)",
-                    split_days="Split-order window (days)", bank_days="Bank clearing window (days)")
+                    split_days="Split-order window (days)", bank_days="Bank clearing window (days)",
+                    tolerance="Ignore amount differences up to ($)", materiality="Minor-item threshold ($)")
+# Bills that normally have no purchase order. Editable on the Policy page.
+PO_EXEMPT_WORDS = ["rent", "lease", "property", "properties", "utility", "utilities", "power", "electric", "water",
+                   "gas", "energy", "insurance", "telecom", "broadband", "subscription", "council", "tax", "legal"]
+NON_AP_BANK = re.compile(r"\b(bank charges?|fees?|interest|payroll|salar(y|ies)|wages|irs|eftps|hmrc|vat|tax|"
+                         r"card settlement|amex|visa|mastercard|transfer to|own account|savings|loan)\b", re.I)
+PERSONAL = re.compile(r"\b(gym|membership|personal|netflix|spa|haircut|for myself)\b", re.I)
+PROFESSIONAL = re.compile(r"\b(society|institute|association|professional|licen[cs]e|certif\w*|chamber|cpa|cima|acca|"
+                          r"bar council|union dues)\b", re.I)
+TRAVEL = re.compile(r"\b(travel|trip|flight|hotel|conference|client site|airport|mileage)\b", re.I)
+TRAVEL_SPEND = re.compile(r"\b(taxi|meal|hotel|travel|mileage|parking|fuel|train|airfare)\b", re.I)
+SUFFIXES = {"ltd", "limited", "inc", "incorporated", "llc", "llp", "co", "corp", "corporation", "plc", "gmbh", "sa",
+            "bv", "pty", "the", "company"}
 
 
 class Row(dict):
-    """A CSV row; a column that is not in the file reads as an empty string."""
+    """A CSV row; a column that is not in the file reads as an empty string. d() reads a date column using the
+    date order detected for the whole file (day-first or month-first)."""
+    dayfirst = False
 
     def __missing__(self, key):
         return ""
+
+    def d(self, col: str) -> date | None:
+        return _d(self[col], self.dayfirst)
 
 
 @dataclass
@@ -50,17 +74,47 @@ class Hit:
     related: list[tuple[str, int]] = field(default_factory=list)   # (file, line) of supporting lines
 
 
-def rows(lines: list[str]) -> list[tuple[int, dict]]:
-    """(1-based line number, row dict) for every data row of a CSV given as exact lines."""
+SLASH = re.compile(r"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$")
+
+
+def date_order(lines: list[str]) -> str:
+    """'day-first', 'month-first', 'iso' or 'ambiguous' for the slash dates in a CSV."""
+    first = second = slash = 0
+    for ln in lines[1:]:
+        for cell in next(csv.reader([ln])) if ln.strip() else []:
+            m = SLASH.match(cell.strip())
+            if m:
+                slash += 1
+                first += int(m.group(1)) > 12
+                second += int(m.group(2)) > 12
+    if not slash:
+        return "iso"
+    if first and not second:
+        return "day-first"
+    if second and not first:
+        return "month-first"
+    return "ambiguous"
+
+
+def rows(lines: list[str]) -> list[tuple[int, Row]]:
+    """(1-based line number, row) for every data row of a CSV given as exact lines."""
     if not lines:
         return []
     head = next(csv.reader([lines[0]]))
+    if "tallyhound_dayfirst" in head:             # set by the person on the data check (see custom.view)
+        dayfirst = True
+    elif "tallyhound_monthfirst" in head:
+        dayfirst = False
+    else:
+        dayfirst = date_order(lines) == "day-first"
     out = []
     for i, ln in enumerate(lines[1:], start=2):
         if not ln.strip():
             continue
         vals = next(csv.reader([ln]))
-        out.append((i, Row(zip(head, vals + [""] * (len(head) - len(vals))))))
+        r = Row(zip(head, vals + [""] * (len(head) - len(vals))))
+        r.dayfirst = dayfirst
+        out.append((i, r))
     return out
 
 
@@ -72,11 +126,11 @@ def missing_columns(name: str, lines: list[str]) -> list[str]:
 
 
 @lru_cache(maxsize=65536)
-def _d(s: str) -> date | None:
-    """Dates as YYYY-MM-DD, YYYY/MM/DD, MM/DD/YYYY or DD.MM.YYYY. Anything else counts as no date."""
-    from datetime import datetime
+def _d(s: str, dayfirst: bool = False) -> date | None:
+    """Dates as YYYY-MM-DD, YYYY/MM/DD, or slash/dot/dash dates in the file's day or month order."""
     s = str(s).strip()[:10]
-    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d.%m.%Y"):
+    fmts = ("%Y-%m-%d", "%Y/%m/%d") + (("%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y") if dayfirst else ("%m/%d/%Y", "%d.%m.%Y"))
+    for fmt in fmts:
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
@@ -84,8 +138,14 @@ def _d(s: str) -> date | None:
     return None
 
 
+EU_NUMBER = re.compile(r"^-?\(?[$€£]?\d{1,3}(\.\d{3})*,\d{2}\)?$")
+
+
 def _f(s: str) -> float:
-    t = str(s).strip().replace(",", "").replace("$", "").replace("£", "").replace("€", "")
+    t = str(s).strip().replace("$", "").replace("£", "").replace("€", "").replace(" ", "")
+    if EU_NUMBER.match(t):                       # 1.234,50 -> 1234.50
+        t = t.replace(".", "").replace(",", ".")
+    t = t.replace(",", "")
     neg = t.startswith("(") and t.endswith(")")
     try:
         return -float(t.strip("()")) if neg else float(t)
@@ -93,25 +153,62 @@ def _f(s: str) -> float:
         return 0.0
 
 
+@lru_cache(maxsize=65536)
+def norm_name(s: str) -> str:
+    """'CALDER LOGISTICS LTD.' and 'Calder Logistics' compare equal."""
+    words = re.sub(r"[^a-z0-9 ]+", " ", str(s).lower().replace("&", " and ")).split()
+    while words and words[-1] in SUFFIXES:
+        words.pop()
+    return " ".join(w for w in words if w != "the")
+
+
+def same_person(a: str, b: str) -> bool:
+    """'K. Lowe' and 'Kate Lowe' are the same person; 'K. Lowe' and 'K. Lowry' are not."""
+    a, b = a.strip().lower(), b.strip().lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    ta, tb = re.findall(r"[a-z]+", a), re.findall(r"[a-z]+", b)
+    return bool(ta and tb) and ta[-1] == tb[-1] and ta[0][0] == tb[0][0]
+
+
+def po_exempt(vendor: str, L: dict) -> bool:
+    n = norm_name(vendor)
+    if n in {norm_name(v) for v in L.get("po_exempt_vendors", [])}:
+        return True
+    words = L.get("po_exempt_words", PO_EXEMPT_WORDS)
+    return any(re.search(rf"\b{re.escape(w.strip().lower())}\b", n) for w in words if w.strip())
+
+
 def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
-    R, out, seen = rows(lines), [], {}
+    """Duplicates count money, not rows: instalments and void-and-reissue add up to the invoice and are fine;
+    a payment that takes the total above the invoice is a duplicate. Only overpayments beyond the tolerance are
+    flagged - paying less (a discount, a short payment) is not money lost."""
+    R, out, groups = rows(lines), [], {}
+    tol = L.get("tolerance", 1.0)
     for ln, r in R:
-        key = (r["supplier"].strip().lower(), r["invoice_no"].strip().lower())
-        if r["invoice_no"].strip() and key in seen:
-            first = seen[key]
-            out.append(Hit("Payments", "5.2", "High", _f(r["paid_amount"]),
-                           f"{r['invoice_no'].upper()} was paid more than once", "payments.csv", ln, [("payments.csv", first)]))
-        else:
-            seen.setdefault(key, ln)
         pa, ia = _f(r["paid_amount"]), _f(r["invoice_amount"])
-        if r["invoice_no"].strip() and abs(pa - ia) > 0.005:
-            out.append(Hit("Payments", "5.1", "Medium", round(abs(pa - ia), 2),
-                           f"{r['invoice_no']} paid ${pa:,.2f} against an invoice of ${ia:,.2f}", "payments.csv", ln))
-        pd_, idt = _d(r["pay_date"]), _d(r["invoice_date"])
-        if not r["invoice_no"].strip():
+        inv = r["invoice_no"].strip()
+        if inv:
+            g = groups.setdefault((norm_name(r["supplier"]), inv.lower()), dict(net=0.0, inv=0.0, lines=[]))
+            g["net"] += pa
+            g["inv"] = max(g["inv"], ia)
+            if pa > 0 and g["lines"] and g["net"] > g["inv"] + tol:
+                out.append(Hit("Payments", "5.2", "High", pa, f"{inv.upper()} was paid more than once", "payments.csv", ln,
+                               [("payments.csv", x) for x in g["lines"]]))
+            if pa > 0:
+                g["lines"].append(ln)
+            if pa > ia + tol and len(g["lines"]) == 1:
+                out.append(Hit("Payments", "5.1", "Medium", round(pa - ia, 2),
+                               f"{inv} paid ${pa:,.2f} against an invoice of ${ia:,.2f}", "payments.csv", ln))
+        pd_, idt = r.d("pay_date"), r.d("invoice_date")
+        if pa <= 0:
+            continue                                  # reversals and credits are not releases of money
+        if not inv:
             out.append(Hit("Payments", "5.3", "Medium", pa, f"Payment to {r['supplier']} has no invoice reference", "payments.csv", ln))
         elif pd_ and idt and pd_ < idt:
-            out.append(Hit("Payments", "5.3", "Low", pa, f"{r['invoice_no']} paid before the invoice date", "payments.csv", ln))
+            out.append(Hit("Payments", "5.3", "Low", pa, f"{inv} paid before the invoice date", "payments.csv", ln))
         if pd_ and pd_.weekday() >= 5:
             out.append(Hit("Payments", "5.4", "Low", pa, f"Payment released on a {pd_.strftime('%A')}", "payments.csv", ln))
     return out
@@ -123,9 +220,10 @@ def approvals(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     for ln, r in R:
         amt = _f(r["amount"])
         label = r["doc_no"] or r["record_id"]
-        if r["requested_by"].strip() and r["requested_by"].strip().lower() == r["approved_by"].strip().lower():
+        if same_person(r["requested_by"], r["approved_by"]):
             out.append(Hit("Approvals", "1.2", "High", amt, f"{label} raised and approved by the same person", "approvals.csv", ln))
-        if amt > L["po_limit"] and not r["po_no"].strip():
+        if amt > L["po_limit"] and not r["po_no"].strip() and r["type"].strip().upper() in ("", "INVOICE") \
+                and not po_exempt(r["vendor"], L):
             out.append(Hit("Approvals", "1.1", "Medium", amt, f"{label} for ${amt:,.2f} has no purchase order", "approvals.csv", ln))
         if amt > L["director_limit"] and r["approver_role"].strip().lower() != "director":
             out.append(Hit("Approvals", "1.3", "Medium", amt,
@@ -136,17 +234,17 @@ def approvals(lines: list[str], L: dict = LIMITS) -> list[Hit]:
 
 
 def _split_orders(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
-    """Several invoices from one vendor, each under the director limit and without a PO, close together in time,
-    adding up to more than the director limit."""
+    """Several invoices from one vendor raised by the same person, each under the director limit and without a PO,
+    close together in time, adding up to more than the director limit. Bills that never carry a PO do not count."""
     out, groups = [], {}
     for ln, r in R:
-        if r["type"].strip().upper() in ("", "INVOICE") and not r["po_no"].strip() and _d(r["date"]) \
-                and _f(r["amount"]) <= L["director_limit"]:
-            groups.setdefault(r["vendor"].strip().lower(), []).append((ln, r))
+        if r["type"].strip().upper() in ("", "INVOICE") and not r["po_no"].strip() and r.d("date") \
+                and _f(r["amount"]) <= L["director_limit"] and not po_exempt(r["vendor"], L):
+            groups.setdefault((norm_name(r["vendor"]), r["requested_by"].strip().lower()), []).append((ln, r))
     for items in groups.values():
-        items.sort(key=lambda x: _d(x[1]["date"]))
+        items.sort(key=lambda x: x[1].d("date"))
         for i in range(len(items)):
-            win = [x for x in items[i:] if (_d(x[1]["date"]) - _d(items[i][1]["date"])).days <= L["split_days"]]
+            win = [x for x in items[i:] if (x[1].d("date") - items[i][1].d("date")).days <= L["split_days"]]
             total = sum(_f(x[1]["amount"]) for x in win)
             if len(win) >= 2 and total > L["director_limit"]:
                 last = max(win, key=lambda x: x[0])
@@ -166,8 +264,8 @@ def _po_after_invoice(R: list[tuple[int, Row]]) -> list[Hit]:
         if r["type"].strip().upper() != "INVOICE":
             continue
         hit = pos.get(r["po_no"].strip().lower())
-        if hit and _d(hit[1]["date"]) and _d(r["date"]) and _d(hit[1]["date"]) > _d(r["date"]):
-            days = (_d(hit[1]["date"]) - _d(r["date"])).days
+        if hit and hit[1].d("date") and r.d("date") and hit[1].d("date") > r.d("date"):
+            days = (hit[1].d("date") - r.d("date")).days
             out.append(Hit("Approvals", "1.1", "Medium", _f(r["amount"]),
                            f"{hit[1]['doc_no']} raised {days} days after invoice {r['doc_no']}", "approvals.csv", hit[0],
                            [("approvals.csv", ln)]))
@@ -183,51 +281,69 @@ def cross_file(files: dict[str, list[str]]) -> list[Hit]:
     out = []
     for ln, r in rows(P):
         vid = r.get("vendor_id", "").strip()
-        if not vid:
+        if not vid or _f(r["paid_amount"]) <= 0:
             continue
         if vid not in master:
             out.append(Hit("Payments", "4.1", "Medium", _f(r["paid_amount"]),
                            f"{r['payment_id']} paid vendor {vid}, which is not in the vendor master", "payments.csv", ln))
         elif master[vid][1]["status"].strip().upper() != "ACTIVE":
-            out.append(Hit("Payments", "4.1", "Medium", _f(r["paid_amount"]),
-                           f"{r['payment_id']} paid {master[vid][1]['status'].lower()} vendor {vid}", "payments.csv", ln))
+            changed, paid_on = master[vid][1].d("status_changed_on"), r.d("pay_date")
+            if not (changed and paid_on and paid_on <= changed):
+                out.append(Hit("Payments", "4.1", "Medium", _f(r["paid_amount"]),
+                               f"{r['payment_id']} paid {master[vid][1]['status'].lower()} vendor {vid}", "payments.csv", ln))
     return out
 
 
 def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
-    """Match the bank statement to recorded payments. Money that left the bank with no recorded payment is the
-    serious case; a recorded payment missing from the bank is usually timing, so it is Low."""
+    """Match the bank statement to recorded payments: one-to-one first, then credits to reversals, then batch
+    transfers that pay several invoices at once. Bank debits that are clearly not supplier payments (fees, payroll,
+    tax, card settlements, own-account transfers) are left out. What remains is money that left with no record
+    (High), and recorded payments missing from the statement (Low - usually timing)."""
     B, P = files.get("bank_statement.csv"), files.get("payments.csv")
     if not B or not P or missing_columns("bank_statement.csv", B) or missing_columns("payments.csv", P):
         return []
-    bank = [(ln, r) for ln, r in rows(B) if _d(r["date"])]
+    bank = [(ln, r) for ln, r in rows(B) if r.d("date")]
     if not bank:
         return []
-    negative = any(_f(r["amount"]) < 0 for _, r in bank)
+    signed = any(_f(r["amount"]) < 0 for _, r in bank)
     # money out is negative when the file has signs; when every amount is positive, every line is money out
-    debits = [(ln, r, abs(_f(r["amount"]))) for ln, r in bank if not negative or _f(r["amount"]) < 0]
-    pays = [(ln, r, _f(r["paid_amount"])) for ln, r in rows(P) if _d(r["pay_date"])]
-    first, last = min(_d(r["date"]) for _, r in bank), max(_d(r["date"]) for _, r in bank)
+    lines_ = [(ln, r, -_f(r["amount"]) if signed else _f(r["amount"])) for ln, r in bank]
+    pays = [(ln, r, _f(r["paid_amount"])) for ln, r in rows(P) if r.d("pay_date")]
+    first, last = min(r.d("date") for _, r in bank), max(r.d("date") for _, r in bank)
     by_cents: dict[int, list] = {}
     for pl, p, pa in pays:                      # index by amount so big files stay fast
         by_cents.setdefault(round(pa * 100), []).append((pl, p))
     used: set[int] = set()
-    out = []
-    for ln, r, amt in debits:
-        d, ref = _d(r["date"]), (r["reference"] + " " + r["description"]).lower()
+    unmatched = []
+    for ln, r, amt in lines_:
+        if amt > 0 and NON_AP_BANK.search(r["description"] + " " + r["reference"]):
+            continue
+        d, ref = r.d("date"), (r["reference"] + " " + r["description"]).lower()
         cands = [(pl, p) for pl, p in by_cents.get(round(amt * 100), []) if pl not in used
-                 and 0 <= (d - _d(p["pay_date"])).days <= L["bank_days"]]
+                 and -L["bank_days"] <= (d - p.d("pay_date")).days <= L["bank_days"]]
         cands.sort(key=lambda c: (c[1]["payment_id"].lower() not in ref, c[1]["invoice_no"].lower() not in ref,
-                                  (d - _d(c[1]["pay_date"])).days))
+                                  abs((d - c[1].d("pay_date")).days)))
         if cands:
             used.add(cands[0][0])
+        elif amt > 0:
+            unmatched.append((ln, r, amt))
+    out = []
+    for ln, r, amt in unmatched:                 # batch transfers: several open payments adding up to the debit
+        d = r.d("date")
+        pool = [(pl, pa) for pl, p, pa in pays if pl not in used and pa > 0
+                and 0 <= (d - p.d("pay_date")).days <= L["bank_days"]][:18]
+        target = round(amt * 100)
+        combo = next((c for k in range(2, min(6, len(pool)) + 1) for c in combinations(pool, k)
+                      if sum(round(pa * 100) for _, pa in c) == target), None)
+        if combo:
+            used.update(pl for pl, _ in combo)
         else:
             out.append(Hit("Payments", "5.5", "High", amt,
                            f"Bank payment of ${amt:,.2f} on {r['date']} ({r['description'].strip()}) has no recorded payment",
                            "bank_statement.csv", ln))
     for pl, p, pa in pays:
-        pdte = _d(p["pay_date"])
-        if pl not in used and first <= pdte and pdte + timedelta(days=L["bank_days"]) <= last:
+        pdte = p.d("pay_date")
+        if pl not in used and pa > 0 and first <= pdte and pdte + timedelta(days=L["bank_days"]) <= last:
             out.append(Hit("Payments", "5.5", "Low", pa,
                            f"{p['payment_id']} (${pa:,.2f} to {p['supplier']}) is not on the bank statement", "payments.csv", pl))
     return out
@@ -240,18 +356,23 @@ def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
         if r["bank_changed_on"].strip() and r["bank_verified"].strip().upper() == "NO" and r["last_paid_on"].strip():
             out.append(Hit("Vendors", "4.3", "High", paid, f"{r['vendor_id']} paid to an unverified new bank account", "vendors.csv", ln))
         if r["status"].strip().upper() != "ACTIVE" and r["last_paid_on"].strip():
-            out.append(Hit("Vendors", "4.1", "Medium", paid,
-                           f"{r['status'].title()} vendor {r['vendor_id']} was paid ${paid:,.2f} on {r['last_paid_on']}", "vendors.csv", ln))
+            changed, paid_on = r.d("status_changed_on"), r.d("last_paid_on")
+            if not (changed and paid_on and paid_on <= changed):       # closed after its final payment is normal
+                out.append(Hit("Vendors", "4.1", "Medium", paid,
+                               f"{r['status'].title()} vendor {r['vendor_id']} was paid ${paid:,.2f} on {r['last_paid_on']}",
+                               "vendors.csv", ln))
         if r["w9_on_file"].strip().upper() == "NO" and r["last_paid_on"].strip():
             out.append(Hit("Vendors", "4.4", "Low", paid, f"{r['vendor_id']} paid ${paid:,.2f} with no tax form on file", "vendors.csv", ln))
-        t = r["tax_id"].strip()
+        t = re.sub(r"[^0-9a-z]", "", r["tax_id"].lower())
         if t:
-            if t in tax:
-                out.append(Hit("Vendors", "4.2", "High", paid + _f(rows_by_line(R, tax[t])["last_paid_amount"]),
-                               f"Vendor records {rows_by_line(R, tax[t])['vendor_id']} and {r['vendor_id']} share tax ID {t}",
-                               "vendors.csv", ln, [("vendors.csv", tax[t])]))
-            else:
-                tax[t] = ln
+            remit = re.search(r"remit[ -]?to", r["name"], re.I)
+            if t in tax and not remit and not re.search(r"remit[ -]?to", tax[t][1]["name"], re.I):
+                other = tax[t][1]
+                out.append(Hit("Vendors", "4.2", "High", paid + _f(other["last_paid_amount"]),
+                               f"Vendor records {other['vendor_id']} and {r['vendor_id']} share tax ID {r['tax_id'].strip()}",
+                               "vendors.csv", ln, [("vendors.csv", tax[t][0])]))
+            elif t not in tax and not remit:
+                tax[t] = (ln, r)
     return out
 
 
@@ -298,14 +419,25 @@ def contracts(lines: list[str], L: dict = LIMITS) -> list[Hit]:
 
 def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     out, seen = [], {}
-    for ln, r in rows(lines):
+    R = rows(lines)
+    trips: dict[str, list[date]] = {}
+    for _, r in R:
+        if r.d("date") and (re.search(r"\b(travel|airfare|hotel)\b", r["category"], re.I) or TRAVEL.search(r["notes"])) \
+                and r["notes"].strip().lower() != "business purpose recorded":
+            trips.setdefault(r["employee"].strip().lower(), []).append(r.d("date"))
+    for ln, r in R:
         amt = _f(r["amount"])
-        people = int(_f(r["people"])) if r["people"].strip() else 1
-        if r["category"].strip().upper() == "MEAL" and people and amt / max(people, 1) > L["meal_limit"]:
-            out.append(Hit("Expenses", "6.1", "Low", amt, f"Meal at ${amt / people:,.2f} per person (limit ${L['meal_limit']:,.2f})", "expenses.csv", ln))
+        if r["category"].strip().upper() == "MEAL":
+            people = int(_f(r["people"])) if r["people"].strip() else 0
+            if not people:                            # head count may be in the notes: "Team dinner - 5 people"
+                m = re.search(r"(\d+)\s*(people|persons|guests|pax|attendees)|\((\d+)\)", r["notes"], re.I)
+                people = int(m.group(1) or m.group(3)) if m else 0
+            if people and amt / people > L["meal_limit"]:
+                out.append(Hit("Expenses", "6.1", "Low", amt,
+                               f"Meal at ${amt / people:,.2f} per person (limit ${L['meal_limit']:,.2f})", "expenses.csv", ln))
         if amt > L["receipt_limit"] and not r["receipt_ref"].strip():
             out.append(Hit("Expenses", "6.2", "Medium", amt, f"Claim {r['claim_id']} of ${amt:,.2f} has no receipt", "expenses.csv", ln))
-        if re.search(r"gym|membership|personal|netflix|spa\b|haircut", r["notes"], re.I):
+        if PERSONAL.search(r["notes"]) and not PROFESSIONAL.search(r["notes"]):
             out.append(Hit("Expenses", "6.3", "Low", amt, f"Personal item claimed: {r['notes'].strip().lower()}", "expenses.csv", ln))
         ref = r["receipt_ref"].strip()
         if ref:
@@ -314,9 +446,13 @@ def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
                                [("expenses.csv", seen[ref])]))
             else:
                 seen[ref] = ln
-        d = _d(r["date"])
+        d = r.d("date")
         if d and d.weekday() >= 5 and not r["notes"].strip():
-            out.append(Hit("Expenses", "6.4", "Low", amt, f"Weekend expense {r['claim_id']} with no reason given", "expenses.csv", ln))
+            # a taxi, meal or hotel on the weekend of a business trip is normal; a weekend purchase of supplies is not
+            near_trip = TRAVEL_SPEND.search(r["category"]) and any(
+                0 < abs((d - t).days) <= 1 for t in trips.get(r["employee"].strip().lower(), []))
+            if not near_trip:
+                out.append(Hit("Expenses", "6.4", "Low", amt, f"Weekend expense {r['claim_id']} with no reason given", "expenses.csv", ln))
     return out
 
 

@@ -1,0 +1,36 @@
+{
+  "description": "Day-first expense export: 08/09/2026 is Tuesday 8 September (read month-first it would be a Sunday in August). A team dinner with the head count in the notes is within the limit. 13/09/2026 is a Sunday.",
+  "files": {
+    "expenses.csv": [
+      "claim_id,date,employee,category,amount,receipt_ref,notes,people",
+      "E-1,03/09/2026,R. Chen,TAXI,22.00,RC-1,Client visit,",
+      "E-2,08/09/2026,R. Chen,SUPPLIES,40.00,RC-2,,",
+      "E-3,25/09/2026,A. Patel,MEAL,300.00,RC-3,Team dinner - 6 people,",
+      "E-4,13/09/2026,A. Patel,SUPPLIES,35.00,RC-4,,"
+    ]
+  },
+  "must_not_flag": [
+    {
+      "source_file": "expenses.csv",
+      "line": 2,
+      "clause": "6.4"
+    },
+    {
+      "source_file": "expenses.csv",
+      "line": 3,
+      "clause": "6.4"
+    },
+    {
+      "source_file": "expenses.csv",
+      "line": 4,
+      "clause": "6.1"
+    }
+  ],
+  "must_flag": [
+    {
+      "source_file": "expenses.csv",
+      "line": 5,
+      "clause": "6.4"
+    }
+  ]
+}
