@@ -41,7 +41,8 @@ with st.sidebar:
     st.markdown(f"<div class='th-foot'>Quotes verified {C.quote_pct()}% · offline · work saved automatically</div>",
                 unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    c1.button("Reset demo", key="reset_demo", on_click=store.reset, type="tertiary")
+    c1.button("Reset demo", key="reset_demo", on_click=store.reset, type="tertiary", disabled=not auth.can("policy"),
+              help=None if auth.can("policy") else "Only an admin can reset: it erases the audit trail.")
     if st.session_state.get("tour_off"):
         c2.button("Tour", key="tour_show", on_click=lambda: st.session_state.update(tour_off=False), type="tertiary")
 

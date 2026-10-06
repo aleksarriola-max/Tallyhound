@@ -94,7 +94,7 @@ def findings_page() -> None:
 
 def detail(r) -> None:
     with st.container(border=True):
-        st.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{r.id}** · {r.area} · {C.money(r.amount)}", unsafe_allow_html=True)
+        st.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{C.esc(r.id)}** · {C.esc(r.area)} · {C.money(r.amount)}", unsafe_allow_html=True)
         st.markdown(f"**{C.esc(r.title)}**")
         st.markdown(f"**Policy clause {r.clause}**")
         st.markdown(f"> {C.esc(C.clause_text(r.area, r.clause))}")
@@ -251,7 +251,7 @@ def live_activity() -> None:
         with st.container(border=True):
             st.markdown("**Always-on monitor**")
             for r in C.read_csv("monitor.csv").itertuples():
-                st.markdown(f"{r.item}: <b>{r.value}</b>", unsafe_allow_html=True)
+                st.markdown(f"{C.esc(r.item)}: <b>{C.esc(r.value)}</b>", unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown("**Agents**")
             item = sim.current(st.session_state.sim)
@@ -275,13 +275,13 @@ def evidence_viewer() -> None:
         return
     left, right = st.columns(2)
     with left, st.container(border=True):
-        st.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{r.id}** · {r.area} · clause {r.clause}", unsafe_allow_html=True)
+        st.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{C.esc(r.id)}** · {C.esc(r.area)} · clause {C.esc(r.clause)}", unsafe_allow_html=True)
         st.markdown("**Agent claim**")
         st.markdown(C.esc(r.title))
         st.markdown(f"**Clause {r.clause}**")
         st.markdown(f"> {C.esc(C.clause_text(r.area, r.clause))}")
         st.markdown(f'<div style="background:#e0f0e7;border:1px solid {C.RELEASE};color:#07161f;border-radius:6px;padding:.5rem .7rem">'
-                    f'<b>Quote check passed:</b> {r.matched_n} line(s) matched in {r.source_file}</div>', unsafe_allow_html=True)
+                    f'<b>Quote check passed:</b> {r.matched_n} line(s) matched in {C.esc(r.source_file)}</div>', unsafe_allow_html=True)
         st.caption(f"Main evidence on line {r.line_number}. Related lines are shown in light blue.")
     with right:
         st.markdown(f"**{r.source_file}**")

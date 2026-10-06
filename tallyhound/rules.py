@@ -12,6 +12,7 @@ The challenge generator plants each of these as a trap, and the test suite fails
 from __future__ import annotations
 
 import csv
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -138,6 +139,7 @@ def _d(s: str, dayfirst: bool = False) -> date | None:
     return None
 
 
+MAX_AMOUNT = 1e13
 EU_NUMBER = re.compile(r"^-?\(?[$€£]?\d{1,3}(\.\d{3})*,\d{2}\)?$")
 
 
@@ -148,9 +150,10 @@ def _f(s: str) -> float:
     t = t.replace(",", "")
     neg = t.startswith("(") and t.endswith(")")
     try:
-        return -float(t.strip("()")) if neg else float(t)
+        v = -float(t.strip("()")) if neg else float(t)
     except ValueError:
         return 0.0
+    return v if math.isfinite(v) and abs(v) < MAX_AMOUNT else 0.0    # 'nan', 'inf' or a 40-digit typo is not money
 
 
 @lru_cache(maxsize=65536)
@@ -393,7 +396,7 @@ def contracts(lines: list[str], L: dict = LIMITS) -> list[Hit]:
             continue
         inv, vendor, _, body = m.groups()
         vendor = vendor.strip()
-        for cline, where, text in contract.get(vendor, []):
+        for cline, _where, text in contract.get(vendor, []):
             amt = _f(re.findall(r"(\d[\d,]*\.\d{2})\s*$", body)[0]) if re.findall(r"(\d[\d,]*\.\d{2})\s*$", body) else 0.0
             if "surcharge" in body.lower() and re.search(r"surcharge.*excluded|not listed|may not be billed", text, re.I):
                 out.append(Hit("Contracts", "7.1", "Medium", amt, f"{inv} adds a ${amt:,.2f} charge the contract does not allow",

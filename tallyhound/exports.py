@@ -1,6 +1,7 @@
 """Excel workbook and PDF memo builders."""
 from __future__ import annotations
 
+import html
 import io
 from datetime import datetime
 
@@ -84,8 +85,18 @@ def build_workbook(draft: bool = False) -> bytes:
             C.subscriptions().to_excel(xw, sheet_name="Subscriptions", index=False)
         trail.to_excel(xw, sheet_name="Audit trail", index=False)
         for ws in xw.book.worksheets:
+            defuse_formulas(ws)
             _style(ws)
     return buf.getvalue()
+
+
+def defuse_formulas(ws) -> None:
+    """Text from uploaded files that starts with '=' must stay text. Otherwise a supplier named
+    '=HYPERLINK("http://...")' becomes a live formula when the reviewer opens the workbook."""
+    for row in ws.iter_rows():
+        for c in row:
+            if c.data_type == "f":
+                c.data_type = "s"
 
 
 def build_memo() -> bytes:
@@ -97,7 +108,7 @@ def build_memo() -> bytes:
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm,
                             title="Tallyhound audit memo")
     story = [
-        Paragraph(f"Uploaded files: {C.custom_label()}" if C.custom_label() else "FICTIONAL TEST DATA - not a real company", ParagraphStyle("b", parent=ss["Normal"], textColor=colors.HexColor("#0a3a4f"), fontSize=9)),
+        Paragraph(f"Uploaded files: {html.escape(C.custom_label())}" if C.custom_label() else "FICTIONAL TEST DATA - not a real company", ParagraphStyle("b", parent=ss["Normal"], textColor=colors.HexColor("#0a3a4f"), fontSize=9)),
         Spacer(1, 4),
         Paragraph("Tallyhound audit memo", ss["Title"]),
         Paragraph(("Uploaded data - " if C.custom_label() else "Bramblecourt Instruments Ltd (fictional) - ") + datetime.now().strftime("%Y-%m-%d"), ss["Normal"]),
@@ -119,7 +130,7 @@ def build_memo() -> bytes:
             continue
         rows = [["ID", "Severity", "Area", "Amount", "Finding"]]
         for r in part.itertuples():
-            rows.append([r.id, r.severity, r.area, C.money(r.amount), Paragraph(r.title, small)])
+            rows.append([r.id, r.severity, r.area, C.money(r.amount), Paragraph(html.escape(str(r.title)), small)])
         t = Table(rows, colWidths=[14 * mm, 18 * mm, 22 * mm, 24 * mm, 98 * mm], repeatRows=1)
         t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0a3a4f")),
                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTSIZE", (0, 0), (-1, -1), 8.5),

@@ -14,9 +14,16 @@ import hmac
 import json
 import os
 import secrets
+import threading
+import time
 from pathlib import Path
 
 import streamlit as st
+
+MAX_FAILS = 5            # wrong passwords in a row for one name ...
+LOCK_SECONDS = 60        # ... lock that name for this long
+_fails: dict[str, list[float]] = {}
+_lock = threading.Lock()
 
 ROLES = {"preparer": {"run"}, "reviewer": {"review"}, "admin": {"run", "review", "policy"}}
 ITER = 200_000
@@ -50,7 +57,34 @@ def add_user(name: str, role: str, password: str) -> None:
     users_file().write_text(json.dumps(users, indent=2), encoding="utf-8")
 
 
+def locked_for(name: str) -> int:
+    """Seconds left before this name may try again (0 when it may)."""
+    with _lock:
+        n, last = _fails.get(name.lower(), [0, 0.0])
+    left = LOCK_SECONDS - (time.time() - last) if n >= MAX_FAILS else 0
+    return max(0, int(left + 0.999))
+
+
+def _record(name: str, ok: bool) -> None:
+    with _lock:
+        if ok:
+            _fails.pop(name.lower(), None)
+        else:
+            n, last = _fails.get(name.lower(), [0, 0.0])
+            if n >= MAX_FAILS and time.time() - last >= LOCK_SECONDS:
+                n = 0                                 # the lock expired: start counting again
+            _fails[name.lower()] = [n + 1, time.time()]
+
+
 def check(name: str, password: str) -> str | None:
+    if locked_for(name):
+        return None
+    r = _check(name, password)
+    _record(name, r is not None)
+    return r
+
+
+def _check(name: str, password: str) -> str | None:
     u = load_users().get(name)
     if not u:
         hash_password(password)            # same work either way, so timing does not reveal which names exist
@@ -106,11 +140,13 @@ def gate() -> bool:
         pw = st.text_input("Password", type="password")
         ok = st.form_submit_button("Sign in", type="primary")
     if ok:
-        r = check(name.strip(), pw)
+        wait = locked_for(name.strip())
+        r = None if wait else check(name.strip(), pw)
         if r:
             S["user"], S["role"] = name.strip(), r
             st.rerun()
-        st.error("Wrong name or password.")
+        wait = wait or locked_for(name.strip())
+        st.error(f"Too many wrong passwords. Try again in {wait} seconds." if wait else "Wrong name or password.")
     return False
 
 

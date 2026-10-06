@@ -60,7 +60,7 @@ def build_names(files: dict[str, list[str]]) -> dict[str, str]:
 
 def replace_names(text: str, mapping: dict[str, str]) -> str:
     for real, fake in mapping.items():
-        text = re.sub(re.escape(real), lambda m: fake.upper() if m.group(0).isupper() else fake, text, flags=re.I)
+        text = re.sub(re.escape(real), lambda m, fake=fake: fake.upper() if m.group(0).isupper() else fake, text, flags=re.I)
     text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "someone@example.com", text)
     return text
 

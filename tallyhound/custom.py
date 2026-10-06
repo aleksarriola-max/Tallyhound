@@ -25,6 +25,20 @@ COLS = ["id", "severity", "area", "clause", "amount", "title", "skeptic_verdict"
 
 
 # ---------------------------------------------------------------- reading a zip
+MAX_UNZIPPED_MB = 100          # everything in one zip, once unpacked (stops "zip bombs")
+
+
+def decode(raw: bytes) -> str:
+    """Text of an uploaded file. UTF-8 (with or without BOM), UTF-16 from Excel's "Unicode text", else Windows-1252,
+    which is what Excel on Windows writes for 'Save as CSV'. Never fails: unknown bytes become U+FFFD."""
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16", errors="replace")
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
+
+
 def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
     """Returns (files, notes). Reads in memory only; nothing is written to disk and no path is ever used."""
     notes: list[str] = []
@@ -32,40 +46,68 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         return {}, [f"That zip is larger than {MAX_ZIP_MB} MB."]
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile:
+        infos = zf.infolist()
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, ValueError):
         return {}, ["That file is not a valid zip."]
     files: dict[str, list[str]] = {}
+    origin: dict[str, str] = {}
     total = 0
+    unpacked = 0
     pdfs: list[tuple[str, list[str]]] = []
-    for info in zf.infolist():
+
+    def read(info) -> bytes | None:
+        nonlocal unpacked
+        if info.flag_bits & 0x1:
+            notes.append(f"Skipped {base}: it is password-protected. Zip it again without a password.")
+            return None
+        if info.file_size > MAX_ZIP_MB * 1024 * 1024:
+            notes.append(f"Skipped {base}: too large.")
+            return None
+        if unpacked + info.file_size > MAX_UNZIPPED_MB * 1024 * 1024:
+            notes.append(f"Stopped at {MAX_UNZIPPED_MB} MB of unpacked data; {base} and later files were skipped.")
+            return None
+        try:
+            raw = zf.read(info)
+        except (zipfile.BadZipFile, RuntimeError, NotImplementedError, OSError, EOFError, ValueError) as e:
+            notes.append(f"Skipped {base}: it could not be unpacked ({type(e).__name__}).")
+            return None
+        unpacked += len(raw)
+        return raw
+
+    for info in infos:
         base = info.filename.replace("\\", "/").rsplit("/", 1)[-1]
         if info.is_dir() or base.startswith(".") or "__MACOSX" in info.filename:
             continue
         stem = base.rsplit(".", 1)[0].lower()
         if base.lower().endswith(".pdf"):
             from . import invoices
-            if info.file_size > MAX_ZIP_MB * 1024 * 1024:
-                notes.append(f"Skipped {base}: too large.")
+            raw = read(info)
+            if raw is None:
                 continue
-            lines = invoices.pdf_lines(zf.read(info))
+            lines = invoices.pdf_lines(raw)
             if lines:
                 pdfs.append((base, lines))
             else:
                 notes.append(f"{base} has no readable text (a scan?). It was skipped; scanned PDFs need OCR first.")
             continue
         if stem == "answer_key" and base.lower().endswith(".csv"):
-            files["answer_key.csv"] = zf.read(info).decode("utf-8-sig", errors="replace").splitlines()
-            notes.append("Found answer_key.csv: the Scorecard page will grade runs on this data.")
+            raw = read(info)
+            if raw is not None:
+                files["answer_key.csv"] = decode(raw).splitlines()
+                notes.append("Found answer_key.csv: the Scorecard page will grade runs on this data.")
             continue
         match = next((v for k, v in STEMS.items() if stem == k or stem.startswith(k + "_") or stem.endswith("_" + k)), None)
         if match is None:
             notes.append(f"Ignored {base} (not one of the audit files).")
             continue
-        if info.file_size > MAX_ZIP_MB * 1024 * 1024:
-            notes.append(f"Skipped {base}: too large.")
+        if match in files:
+            notes.append(f"Two files are read as {match}: kept {origin[match]}, skipped {info.filename}. "
+                         "Upload one month per zip, or rename the extra file.")
             continue
-        text = zf.read(info).decode("utf-8-sig", errors="replace")
-        lines = text.splitlines()
+        raw = read(info)
+        if raw is None:
+            continue
+        lines = decode(raw).replace("\x00", "").splitlines()
         total += len(lines)
         if total > MAX_LINES:
             notes.append(f"Stopped at {MAX_LINES} lines; {base} and later files were skipped.")
@@ -74,6 +116,7 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         if missing:
             notes.append(f"{match} is missing columns: {', '.join(missing)}. Match its columns below, or it is skipped.")
         files[match] = lines
+        origin[match] = info.filename
     if pdfs:
         from . import invoices
         files[invoices.NAME] = invoices.combine(sorted(pdfs))
@@ -406,6 +449,18 @@ def profile(label: str) -> list[dict]:
                 out.append(dict(file=name, level="ok", kind="info",
                                 message=f"{msg}; dates {chosen or order}"))
             text = "\n".join(lines[1:])
+            R = rules.rows(lines)
+            for col in rules.REQUIRED.get(name, []):
+                is_amt, is_date = "amount" in col, col.endswith("date") or col.endswith("_on") or col == "date"
+                if not (is_amt or is_date):
+                    continue
+                bad = [i for i, r in R if r[col].strip() and r[col].strip().upper() not in ("N/A", "NA", "-")
+                       and ((is_amt and rules._f(r[col]) == 0.0 and not _re.fullmatch(r"[\s$€£(]*-?0+([.,]0+)?\)?", r[col]))
+                            or (is_date and r.d(col) is None))]
+                if bad:
+                    out.append(dict(file=name, level="warn", kind="unreadable",
+                                    message=f"{len(bad)} {col} value(s) could not be read (line {', '.join(map(str, bad[:5]))}"
+                                            f"{'...' if len(bad) > 5 else ''}) - those rows are checked as if blank"))
             if _re.search(r"\d\.\d{3},\d{2}\b", text):
                 out.append(dict(file=name, level="ok", kind="info", message="amounts use decimal commas (1.234,50) - read as such"))
             cur = sorted(set(_re.findall(r"[$€£]", text)))

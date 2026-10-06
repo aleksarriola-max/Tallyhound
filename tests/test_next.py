@@ -1,8 +1,6 @@
 """Scorecard, challenge generator, column matching, policy limits, owner/notes and the tamper demo."""
-import io
 from pathlib import Path
 
-import openpyxl
 from streamlit.testing.v1 import AppTest
 
 from tallyhound import challenge, rules, score

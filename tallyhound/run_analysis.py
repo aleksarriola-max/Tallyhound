@@ -1,7 +1,6 @@
 """Page: Run analysis (4 steps)."""
 from __future__ import annotations
 
-import zipfile
 
 import pandas as pd
 import streamlit as st
@@ -254,7 +253,6 @@ def S_lines(label: str, name: str) -> list[str]:
 
 
 def queue_panel(selection: dict, running: bool) -> None:
-    S = st.session_state
     with st.container(border=True):
         st.markdown("**Run queue**")
         frag = st.fragment(run_every=1 if running else None)(queue_body)
@@ -266,7 +264,7 @@ def queue_body(selection: dict) -> None:
     sm = S.sim
     if sm and sm["queue"]:
         for it in sm["queue"]:
-            st.markdown(f"**{it['label']}**")
+            st.markdown(f"**{C.esc(it['label'])}**")
             if it["status"] == "Running":
                 done = sum(a["status"] in ("Done", "Skipped") for a in it["agents"])
                 agent = next((a for a in it["agents"] if a["status"] not in ("Done", "Skipped")), it["agents"][-1])

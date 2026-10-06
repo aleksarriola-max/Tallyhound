@@ -234,7 +234,7 @@ def rule_health_section() -> None:
 
 
 def learning_section() -> None:
-    from . import learn
+    from . import auth, learn
     S = st.session_state
     st.subheader("Learned from reviewers")
     hints = learn.limit_hints(C.findings(), S.decisions, C.limits())
@@ -242,14 +242,15 @@ def learning_section() -> None:
         c1, c2 = st.columns([5, 1], vertical_alignment="center")
         c1.info(f"{h['n']} findings under clause {h['clause']} were rejected and all were just over "
                 f"${h['current']:,.0f}. Raise the limit to ${h['suggested']:,.0f}?")
-        c2.button("Apply", key=f"hint_{h['clause']}", on_click=_apply_hint, args=(h["key"], h["suggested"]))
+        c2.button("Apply", key=f"hint_{h['clause']}", on_click=_apply_hint, args=(h["key"], h["suggested"]),
+                  disabled=not auth.can("policy"))
     sup = S.get("suppressions", [])
     if not sup and not hints:
         st.caption("Nothing yet. When a reviewer rejects a finding and ticks \"Don't flag this again\", it shows here.")
     for i, x in enumerate(sup):
         c1, c2 = st.columns([5, 1], vertical_alignment="center")
         c1.markdown(f"Clause **{x['clause']}** in `{x['source_file']}` for **{C.esc(x['entity'])}** - {C.esc(x['reason'])}")
-        c2.button("Remove", key=f"unsupp_{i}", on_click=learn.unsuppress, args=(i,))
+        c2.button("Remove", key=f"unsupp_{i}", on_click=learn.unsuppress, args=(i,), disabled=not auth.can("policy"))
 
 
 def _apply_hint(key: str, value: float) -> None:

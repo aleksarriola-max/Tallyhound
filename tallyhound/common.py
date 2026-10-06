@@ -37,9 +37,14 @@ def dfw() -> dict:
     return {"width": "stretch"} if "width" in inspect.signature(st.dataframe).parameters else {"use_container_width": True}
 
 
-def esc(text: str) -> str:
-    """Escape $ so Streamlit markdown does not treat amounts as LaTeX."""
-    return str(text).replace("$", "\\$")
+_MD = str.maketrans({c: "\\" + c for c in "\\`*_[]$~|#"})
+
+
+def esc(text) -> str:
+    """Make text from files or models safe inside st.markdown: HTML is escaped (no tags or scripts from an upload),
+    and markdown characters are backslash-escaped so '****1234' stays literal and '[x](url)' is not a link."""
+    out = html.escape(str(text), quote=False).translate(_MD)
+    return out.replace("://", ":\\/\\/").replace("www.", "www\\.")     # no clickable links from bare addresses
 
 
 def money(x: float) -> str:

@@ -53,7 +53,7 @@ def finding_card(r, others: list | None = None) -> None:
     blocked = auth.review_block_reason()
     with st.container(border=True):
         a, b = st.columns([5, 2], vertical_alignment="center")
-        a.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{r.id}** &nbsp;·&nbsp; {r.area} &nbsp;·&nbsp; clause {r.clause}"
+        a.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{C.esc(r.id)}** &nbsp;·&nbsp; {C.esc(r.area)} &nbsp;·&nbsp; clause {C.esc(r.clause)}"
                    + (f" &nbsp;·&nbsp; <span class='th-muted'>case of {len(ids)}</span>" if others else ""),
                    unsafe_allow_html=True)
         b.markdown(f"<div style='text-align:right;font-weight:700'>{C.money(r.amount)}</div>", unsafe_allow_html=True)
@@ -76,7 +76,7 @@ def finding_card(r, others: list | None = None) -> None:
         if d:
             color = C.RELEASE if d["status"] == "Approved" else C.HOLD
             c1, c2, c3 = st.columns([4, 1.4, 1], vertical_alignment="center")
-            c1.markdown(C.badge(d["status"], color) + (f" &nbsp; <span class='th-muted'>{d['reason']}</span>" if d["reason"] else ""),
+            c1.markdown(C.badge(d["status"], color) + (f" &nbsp; <span class='th-muted'>{C.esc(d['reason'])}</span>" if d["reason"] else ""),
                         unsafe_allow_html=True)
             if d["status"] == "Rejected":
                 c2.download_button("Save as test case", test_case_json(r, ids), file_name=f"case_{r.id}_{r.clause}.json",

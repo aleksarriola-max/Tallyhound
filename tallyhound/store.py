@@ -1,6 +1,7 @@
 """Saves the reviewer's work so a page reload does not lose it.
 
-Each browser gets a short random id kept in the page address (?s=...). Its work is stored as one row in a small
+Each browser gets a random 128-bit id kept in the page address (?s=...). Anyone with that address sees that work,
+so share it only with people who should. Its work is stored as one row in a small
 SQLite database, .tallyhound_state/tallyhound.db (override the folder with TALLYHOUND_STATE_DIR). Nothing leaves the
 server. SQLite handles several people saving at once safely, which loose files did not.
 """
@@ -21,7 +22,7 @@ KEYS = ["decisions", "audit_log", "cleared", "step", "fail_pending", "recent_ext
         "mappings", "answer_keys", "run_history", "limits", "notes", "suppressions", "presets",
         "po_exempt_words", "po_exempt_vendors", "rule_override", "shadow", "shadow_marks", "date_order"]
 MAX_AGE_DAYS = 14
-_SID = re.compile(r"^[0-9a-f]{12}$")
+_SID = re.compile(r"^(?:[0-9a-f]{12}|[0-9a-f]{32})$")   # 12 = links made before the audit; new ones are 128-bit
 
 
 def state_dir() -> Path:
@@ -85,7 +86,7 @@ def snapshot() -> dict:
 def session_id() -> str:
     sid = st.query_params.get("s", "")
     if not _SID.match(str(sid)):
-        sid = secrets.token_hex(6)
+        sid = secrets.token_hex(16)
         st.query_params["s"] = sid
     return sid
 

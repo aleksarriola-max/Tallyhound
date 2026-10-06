@@ -16,15 +16,61 @@ class LLMError(RuntimeError):
     """Raised for any problem talking to the model, with a message a person can act on."""
 
 
+MAX_REPLY = 20 * 1024 * 1024
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):          # a model server never needs to redirect; refusing stops tricks
+        return None
+
+
+_OPEN = urllib.request.build_opener(_NoRedirect)
+
+
+def check_url(url: str) -> str | None:
+    """Why this model address is refused, or None. Only http(s), and never link-local addresses such as the cloud
+    metadata service (169.254.169.254), so a visitor to a hosted copy cannot make the server fetch them."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit(url)
+        host = u.hostname or ""
+        u.port                                    # noqa: B018  (raises ValueError for a bad port)
+    except ValueError:
+        return "That is not a valid address."
+    if u.scheme not in ("http", "https") or not host:
+        return "The model address must start with http:// or https://."
+    if host.lower() in ("metadata", "metadata.google.internal"):
+        return "That address is not allowed."
+    try:
+        addrs = {i[4][0] for i in socket.getaddrinfo(host, None)}
+    except (socket.gaierror, UnicodeError, OSError):
+        return None                               # unreachable anyway; the call reports it
+    for a in addrs:
+        ip = ipaddress.ip_address(a.split("%")[0])
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+            return "That address is not allowed."
+    return None
+
+
 def _call(url: str, path: str, payload: dict | None, timeout: float) -> dict:
+    bad = check_url(url)
+    if bad:
+        raise LLMError(bad)
     req = urllib.request.Request(url.rstrip("/") + path, method="POST" if payload is not None else "GET",
                                  data=json.dumps(payload).encode() if payload is not None else None,
                                  headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8"))
+        with _OPEN.open(req, timeout=timeout) as r:
+            raw = r.read(MAX_REPLY + 1)
+        if len(raw) > MAX_REPLY:
+            raise LLMError("The model server sent back far too much data.")
+        return json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", "replace")[:300]
+        if 300 <= e.code < 400:
+            raise LLMError("The model server tried to redirect; use its final address.") from e
+        body = e.read(300).decode("utf-8", "replace")
         raise LLMError(f"Ollama said: {body or e.reason}") from e
     except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
         raise LLMError(f"Could not reach Ollama at {url}. Is it running? (start it with: ollama serve)") from e

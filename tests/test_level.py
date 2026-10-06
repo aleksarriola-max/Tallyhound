@@ -156,7 +156,6 @@ def test_suppressed_findings_are_set_aside():
 
 # ---- vendor risk
 def test_vendor_risk_ranks_by_severity_and_money():
-    import pandas as pd
     from tallyhound import common as C
     from tallyhound import pages_extra
     f = C.load_findings_checked()[0]

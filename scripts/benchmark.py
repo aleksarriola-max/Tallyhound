@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 import pandas as pd  # noqa: E402
 
-from tallyhound import challenge, custom, llm, rules, score  # noqa: E402
+from tallyhound import challenge, custom, llm, score  # noqa: E402
 
 NAMES = {"rules": "Built-in rules", "rules+skeptic": "Rules + Skeptic", "ollama": "AI agents", "ollama-tools": "AI agents with tools"}
 

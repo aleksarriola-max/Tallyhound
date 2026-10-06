@@ -84,7 +84,6 @@ def cases(f: pd.DataFrame) -> list[list]:
 def rule_health() -> pd.DataFrame:
     """Per clause: how many of its findings reviewers approved and rejected, across every dataset this browser has."""
     S = st.session_state
-    from . import custom
     stats: dict[str, list[int]] = {}
     sets = [(S.get("dataset"), S.decisions)] + [(k, v.get("decisions", {})) for k, v in S.get("by_dataset", {}).items()
                                                 if k != (S.get("dataset") or "__sample__")]

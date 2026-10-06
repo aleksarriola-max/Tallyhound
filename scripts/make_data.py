@@ -105,7 +105,7 @@ def approvals_filler():
 
 def vendors_filler():
     rows = []
-    for i, (name, pre, vid) in enumerate(SUPPLIERS):
+    for i, (name, _pre, vid) in enumerate(SUPPLIERS):
         rows.append(",".join([vid, name, f"55-{1000000 + i * 7919}", "ACTIVE",
                               f"****{rnd.randint(1000, 9999)}", "", "N/A",
                               f"2024-0{1 + i % 9}-1{i % 9}", "YES",

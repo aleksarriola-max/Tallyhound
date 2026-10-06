@@ -133,7 +133,7 @@ def _run_status() -> None:
         agents = [a for a in it["agents"] if a["status"] != "Skipped"]
         done = sum(a["status"] == "Done" for a in agents)
         c1, c2 = st.columns([3, 2], vertical_alignment="center")
-        c1.markdown(f"**{it['label']}** &nbsp; <span class='th-muted'>{it['status']}</span>", unsafe_allow_html=True)
+        c1.markdown(f"**{C.esc(it['label'])}** &nbsp; <span class='th-muted'>{C.esc(it['status'])}</span>", unsafe_allow_html=True)
         c2.progress(done / max(len(agents), 1))
         bad = next((a for a in it["agents"] if a["status"] == "Failed"), None)
         if bad:
@@ -200,7 +200,7 @@ def case_details(r, others, ids, d, blocked) -> None:
     b.text_input("Note", value=note.get("note", ""), key=f"note_{r.id}")
     st.button("Save owner and note", key=f"savenote_{r.id}", on_click=C.save_note, args=(r.id,), type="tertiary")
     if d:
-        st.caption(f"{d['status']}" + (f": {d['reason']}" if d.get("reason") else ""))
+        st.caption(f"{d['status']}" + (f": {C.esc(d['reason'])}" if d.get("reason") else ""))
         x1, x2, _ = st.columns([1, 1.3, 3])
         x1.button("Undo", key=f"undo_{r.id}", on_click=review._undo_all, args=(ids,), disabled=bool(blocked))
         if d["status"] == "Rejected":
@@ -260,8 +260,8 @@ def findings_tab() -> None:
                 c1, c2, c3 = st.columns([6, 1.3, 1.6], vertical_alignment="center")
                 mark = S.get("shadow_marks", {}).get(k)
                 c1.markdown(f"clause {r.clause}: {C.esc(r.title)}" + ("" if mark is None else f" - {'real' if mark else 'not a problem'}"))
-                c2.button("Real", key=f"shy_{r.id}", on_click=review._mark_shadow, args=(k, 1))
-                c3.button("Not a problem", key=f"shn_{r.id}", on_click=review._mark_shadow, args=(k, 0))
+                c2.button("Real", key=f"shy_{r.id}", on_click=review._mark_shadow, args=(k, 1), disabled=bool(why))
+                c3.button("Not a problem", key=f"shn_{r.id}", on_click=review._mark_shadow, args=(k, 0), disabled=bool(why))
 
 
 def review_page() -> None:
@@ -307,7 +307,7 @@ def data_settings() -> None:
     for label, files in ups.items():
         with st.container(border=True):
             c1, c2 = st.columns([5, 1], vertical_alignment="center")
-            c1.markdown(f"**{C.esc(label)}** &nbsp; <span class='th-muted'>{', '.join(sorted(files))}</span>",
+            c1.markdown(f"**{C.esc(label)}** &nbsp; <span class='th-muted'>{C.esc(', '.join(sorted(files)))}</span>",
                         unsafe_allow_html=True)
             c2.button("Remove", key=f"rm_{label}", on_click=_remove_upload, args=(label,), type="tertiary")
             run_analysis.column_matching(label)

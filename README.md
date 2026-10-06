@@ -63,6 +63,17 @@ What keeps it that way:
 - **A queue worth reading**: findings that share a line are one case, decided once; cases are ranked by severity, money and the Skeptic's confidence (top 20 first); items under the materiality threshold are grouped as Minor items; each finding says what would clear it.
 - **Tolerances and exemptions** on the Policy page: amount tolerance, minor-item threshold, and the bills that need no PO.
 
+## Safe with untrusted files
+
+Uploads come from outside, so they are treated as hostile (`tests/test_audit.py` uploads a month full of them and walks every page):
+
+- **No HTML or links from files**: names, notes and model text are escaped before display, so a supplier called `<img onerror=...>` or `[click](http://...)` shows as plain text. Workbook cells that start with `=` stay text, not formulas, and the PDF memo handles `&` and `<`.
+- **Zip limits**: 50 MB per zip and per file, 100 MB once unpacked (stops zip bombs), 300,000 lines; password-protected or corrupt entries become a note, not a crash. Two files for the same slot are reported, never merged.
+- **Encodings**: UTF-8, UTF-16 and Windows-1252 (Excel's "Save as CSV") keep their accents.
+- **Unreadable values are reported**: an amount like `nan` or a date like `31/31/2026` is listed in the data check instead of silently counting as zero.
+- **Model address**: only http(s), never link-local addresses such as the cloud metadata service, no redirects, replies capped at 20 MB.
+- **Sessions and sign-in**: saved work is keyed by a random 128-bit id in the page address (share it only with people who should see that work); five wrong passwords lock a name for a minute; with sign-in on, only an admin can reset (it erases the audit trail).
+
 ## Benchmark
 
 `python scripts/benchmark.py` runs the engines on fresh challenge months and writes [docs/benchmark.md](docs/benchmark.md). Built-in rules, 20 months per difficulty with traps: easy 100%, medium 100%, hard 96% of planted problems found, 0 of 1,320 traps flagged. The generator plants problems shaped like the rules' checks, so treat this as a regression baseline that the AI engines must beat; hard mode still hides some problems from fixed rules on purpose. The AI engines are benchmarked on your own machine:
