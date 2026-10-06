@@ -257,7 +257,8 @@ def test_anonymiser_removes_personal_data_from_free_text_and_reasons(tmp_path):
 
 def test_without_a_writable_disk_the_trail_key_is_secret_not_a_constant(monkeypatch, tmp_path):
     monkeypatch.delenv("TALLYHOUND_TRAIL_KEY", raising=False)
-    monkeypatch.setattr(store, "state_dir", lambda: tmp_path / "missing" / "x")
+    (tmp_path / "a-file").write_text("x")                       # a folder cannot be made inside a file
+    monkeypatch.setattr(store, "state_dir", lambda: tmp_path / "a-file" / "x")
     monkeypatch.setattr(C, "_EPHEMERAL_KEY", None)
     k = C._trail_key()
     assert len(k) == 32 and b"tallyhound" not in k and C._trail_key() == k

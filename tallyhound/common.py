@@ -19,9 +19,6 @@ HOLD, RELEASE = "#9f2a2f", "#2b7a55"
 MUTED = "#5b6b73"
 
 NAV = ["Home", "Review", "Reports", "Settings", "Trust"]
-STEPS = ["1  Choose data (Folder or zip)", "2  Run (Eight agents)",
-         "3  Review (Approve / reject)", "4  Download (Excel and memo)"]
-
 
 # ---- widget helpers that work on old and new Streamlit ----
 def _stretch() -> dict:
@@ -91,9 +88,6 @@ def policy() -> dict:
     return out
 
 
-def clause_text(area: str, clause: str) -> str:
-    return policy().get(f"{clause}|{area}", "")
-
 
 def check_findings(df: pd.DataFrame, getter) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split findings into (verified, hidden). A finding is verified only when its quote is an exact line of its
@@ -147,7 +141,7 @@ def custom_label() -> str | None:
 def sample_only_notice() -> None:
     d = custom_label()
     if d:
-        st.info(f"This page shows the sample company. Your uploaded files (\"{d}\") drive Findings, Review and the "
+        st.info(f"This page shows the sample company. Your uploaded files (\"{esc(d)}\") drive Findings, Review and the "
                 "downloads. Add a payment_run.csv to the zip to check a payment run; recovery and subscriptions are not "
                 "analysed from uploads yet.")
 
@@ -202,13 +196,6 @@ def opt_row(workflow: str, option: str) -> pd.Series:
     return base
 
 
-def option_preview(workflow: str, option: str) -> tuple[str, str]:
-    row = opt_row(workflow, option)
-    if row["file"]:
-        t = gate_totals(gate(row["file"]))
-        return row["preview_title"], f"{t['lines']} lines · {money(t['total'])} · {t['vendors']} vendors"
-    return row["preview_title"], row["preview"]
-
 
 @st.cache_data
 def recovery() -> pd.DataFrame:
@@ -255,6 +242,7 @@ def _trail_key() -> bytes:
     it nobody can produce a valid seal, so a trail cannot be edited, cut short or rebuilt from scratch unnoticed."""
     import os
     import secrets
+
     from . import store
     env = os.environ.get("TALLYHOUND_TRAIL_KEY")
     if env:
@@ -262,8 +250,7 @@ def _trail_key() -> bytes:
     p = store.state_dir() / "trail.key"
     try:
         if not p.exists():
-            p.write_text(secrets.token_hex(32), encoding="utf-8")
-            p.chmod(0o600)
+            store.write_private(p, secrets.token_hex(32))           # never readable by others, not even briefly
         return p.read_text(encoding="utf-8").strip().encode()
     except OSError:
         # no writable disk: a key that lives only as long as this server process. Trails sealed with it cannot be
@@ -388,14 +375,12 @@ def init_state() -> None:
     store.load_into_session()
     S = st.session_state
     S.setdefault("nav", "Home")
-    S.setdefault("step", 1)
     S.setdefault("decisions", {})
     S.setdefault("audit_log", [])
     S.setdefault("cleared", {})
     S.setdefault("uploads", {})
     S.setdefault("sim", None)
     S.setdefault("recent_extra", [])
-    S.setdefault("events_extra", [])
     S.setdefault("fail_pending", True)
     S.setdefault("last_tick", 0.0)
     S.setdefault("extra_opts", {})
@@ -408,21 +393,15 @@ def init_state() -> None:
 CSS = f"""
 <style>
 .block-container {{ padding-top: 2.6rem; padding-bottom: 3rem; max-width: 1500px; }}
-.th-banner {{ background:{SKY}; color:{INK}; font-weight:700; letter-spacing:.22em; text-align:center;
-  padding:.45rem .5rem; border-radius:4px; font-size:.82rem; margin-bottom:.6rem; }}
 .th-header {{ display:flex; align-items:center; gap:.9rem; flex-wrap:wrap; margin-bottom:.8rem; }}
 .th-header .th-dot {{ margin-left:auto; }}
 .th-title {{ font-family:'Arial Narrow','Roboto Condensed','Helvetica Neue',Arial,sans-serif; font-stretch:condensed;
   font-weight:800; font-size:1.6rem; letter-spacing:.06em; color:{TEAL_DARK}; }}
-.th-co {{ color:{INK}; font-size:1rem; }}
-.th-strip {{ display:flex; gap:1.2rem; flex-wrap:wrap; font-size:.82rem; color:{INK}; margin:.15rem 0 1rem; }}
 .th-dot {{ display:inline-block; width:.55rem; height:.55rem; border-radius:50%; background:{RELEASE}; margin-right:.35rem; }}
 .th-badge {{ display:inline-block; padding:.08rem .55rem; border-radius:999px; color:#fff; font-size:.74rem;
   font-weight:700; letter-spacing:.03em; white-space:nowrap; }}
 .th-chip {{ display:inline-block; padding:.05rem .5rem; border-radius:4px; font-size:.74rem; font-weight:700;
   border:1px solid; white-space:nowrap; }}
-.th-preview {{ background:{PAPER}; border:1px solid {SKY}; border-radius:6px; padding:.5rem .7rem; font-size:.85rem; }}
-.th-preview b {{ display:block; font-size:.76rem; color:{TEAL_DARK}; letter-spacing:.03em; margin-bottom:.15rem; }}
 .th-muted {{ color:{MUTED}; font-size:.82rem; }}
 .th-src {{ background:#fff; border:1px solid {SKY}; border-radius:6px; padding:.4rem 0; font-family:ui-monospace,Menlo,Consolas,monospace;
   font-size:.78rem; line-height:1.5; overflow-x:auto; }}
@@ -439,17 +418,12 @@ section[data-testid="stSidebar"] [data-testid="stSelectbox"] * {{
 section[data-testid="stSidebar"] [data-testid="stSelectbox"] label, section[data-testid="stSidebar"] [data-testid="stSelectbox"] label * {{
   color:{PAPER} !important; -webkit-text-fill-color:{PAPER} !important; }}
 .th-foot {{ font-size:.74rem; opacity:.75; margin-top:1.4rem; }}
-.th-guard {{ border:1px solid rgba(179,224,247,.4); border-radius:6px; padding:.6rem .7rem; font-size:.82rem; margin-top:1.5rem; }}
-.th-guard b {{ letter-spacing:.06em; }}
-[class*="st-key-step_btn_"] button {{ padding:.35rem .4rem; }}
-[class*="st-key-step_btn_"] button p {{ font-size:.82rem; white-space:nowrap; }}
 div[data-testid="stMetricValue"] {{ color:{TEAL_DARK}; }}
 button[data-testid="stBaseButton-primary"] {{ background:{TEAL_DARK}; border-color:{TEAL_DARK}; color:#fff; }}
 button[data-testid="stBaseButton-primary"]:hover {{ background:{TEAL}; border-color:{TEAL}; color:#fff; }}
 @media (max-width: 1150px) {{
   section[data-testid="stMain"] [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .6rem; }}
   section[data-testid="stMain"] [data-testid="stColumn"] {{ min-width: 260px; }}
-  [class*="st-key-step_btn_"] button p {{ white-space: normal; }}
 }}
 </style>
 """
@@ -471,7 +445,7 @@ def chip(text: str, color: str) -> str:
     return f'<span class="th-chip" style="color:{color};border-color:{color}">{html.escape(text)}</span>'
 
 
-def banner_and_header(last_run: str = "14:32") -> None:
+def banner_and_header() -> None:
     """A slim header: the name, one chip saying whose data this is, and nothing else."""
     mine = custom_label()
     chip = (f'<span class="th-chip" style="color:{TEAL_DARK};border-color:{TEAL}">Your files: {html.escape(mine)}</span>'

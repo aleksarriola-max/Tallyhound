@@ -27,10 +27,8 @@ HEADERS = {
     "expenses.csv": ["claim_id", "date", "employee", "category", "amount", "receipt_ref", "notes", "people"],
 }
 KEY_HEADER = ["id", "clause", "area", "source_file", "line_number", "related_lines", "description", "expect"]
-TRAPS = ["batch", "nonap", "poexempt", "discount", "rounding", "instalment", "void", "dayfirst", "names", "team_dinner",
-         "membership", "weekend_travel", "remit", "closed", "net_total"]
 PEOPLE = ["J. Okoro", "M. Lindqvist", "P. Herrera", "S. Nakamura", "D. Abara", "L. Fontaine", "R. Mehta", "T. Walsh"]
-NAMES = ["Arden", "Bexley", "Calder", "Dunmore", "Ellery", "Fenwick", "Garrow", "Holloway", "Ingram", "Juniper",
+NAMES = ["Arden", "Bexley", "Calder", "Dunmore", "Ellery", "Fenwick", "Garrow", "Holloway", "Ilverton", "Jessamy",
          "Kestrel", "Lomond", "Marlby", "Northam", "Orchard", "Pembury", "Quarry", "Rushden", "Selby", "Thornbury",
          "Upton", "Varley", "Wexcombe", "Yarrow"]
 TRADES = ["Components", "Plastics", "Packaging", "Fasteners", "Logistics", "Tooling", "Print", "Cleaning", "Office Supply",

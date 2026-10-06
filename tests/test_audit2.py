@@ -12,6 +12,7 @@ import pytest
 from tallyhound import agents, agents_tools, challenge, gate, headless, rules, score, triage
 from tallyhound import common as C
 
+
 @pytest.fixture(autouse=True)
 def _clean_state():
     """Tests here use Streamlit's session state directly; leave nothing behind for other test files."""

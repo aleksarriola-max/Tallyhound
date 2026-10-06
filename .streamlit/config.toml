@@ -7,6 +7,10 @@ font = "sans serif"
 
 [server]
 headless = true
+maxUploadSize = 50          # MB; matches the app's own zip limit (custom.MAX_ZIP_MB)
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "viewer"       # no Deploy button or developer menu for visitors

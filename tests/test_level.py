@@ -22,6 +22,7 @@ def sample_files():
 # ---- tamper-evident trail
 def _trail_app():
     import streamlit as st
+
     from tallyhound import common as C
     C.init_state()
     for i in range(3):
@@ -121,6 +122,7 @@ def test_column_suggestions_from_export_names():
 # ---- learning from reviewers
 def test_entity_and_limit_hints():
     import pandas as pd
+
     from tallyhound import learn
     head = "claim_id,date,employee,category,amount,receipt_ref,notes,people"
     assert learn.entity("expenses.csv", "E-1,2026-09-01,R. Chen,TAXI,30.00,,x,", head) == "R. Chen"
@@ -131,10 +133,12 @@ def test_entity_and_limit_hints():
 
 
 def _suppress_app():
+    from pathlib import Path
+
     import streamlit as st
+
     from tallyhound import common as C
     from tallyhound import custom, learn
-    from pathlib import Path
     C.init_state()
     lines = (Path(C.SRC) / "expenses.csv").read_text(encoding="utf-8").splitlines()
     custom.add_upload("mine", {"expenses.csv": lines})
@@ -180,6 +184,7 @@ class Hook(BaseHTTPRequestHandler):
 def test_watch_folder_reports_and_alerts_once(tmp_path, monkeypatch):
     import io
     import zipfile
+
     from tallyhound import headless
     f, k, p = challenge.generate_full(2, "medium")
     zipfile.ZipFile(io.BytesIO(challenge.to_zip(f, k, p))).extractall(tmp_path)
@@ -242,6 +247,7 @@ def test_uploads_survive_a_reload():
 
 def test_identical_related_lines_still_verify():
     import pandas as pd
+
     from tallyhound import common as C
     lines = ["head", "Invoice No: X-1", "Invoice No: X-1"]
     df = pd.DataFrame([dict(id="F-1", severity="High", area="Invoices", clause="8.3", amount=1.0, title="dup",

@@ -35,7 +35,6 @@ def _progress() -> list[tuple[str, str, bool]]:
 def demo_start() -> None:
     """Start the demo run on the sample company."""
     from . import layout
-    st.session_state["_tour_started"] = True
     layout._start(layout.SAMPLE)
 
 
@@ -46,9 +45,6 @@ def mark_downloaded() -> None:
 def _hide() -> None:
     st.session_state["tour_off"] = True
 
-
-def _show() -> None:
-    st.session_state["tour_off"] = False
 
 
 def tour() -> None:

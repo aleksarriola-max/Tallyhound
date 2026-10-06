@@ -22,12 +22,13 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _quiet  # noqa: E402,F401  (silences Streamlit's "No runtime" warnings)
 
 NAME_COLS = {"supplier", "vendor", "name", "employee", "requested_by", "approved_by", "payee"}
 ID_COLS = {"tax_id", "bank_acct", "bank_last4", "receipt_ref"}
 FIRST = ["Alex", "Blair", "Casey", "Drew", "Eden", "Finley", "Gray", "Harper", "Indy", "Jules", "Kai", "Lane"]
 LAST = ["Ash", "Birch", "Cedar", "Elm", "Fir", "Hazel", "Juniper", "Larch", "Maple", "Oak", "Pine", "Rowan"]
-SUFFIX = re.compile(r"\s*\b(ltd|limited|inc|llc|plc|co|corp|gmbh)\.?$", re.I)
+SUFFIX = re.compile(r"\b(ltd|limited|inc|llc|plc|co|corp|gmbh)\.?$", re.I)     # callers strip() around it
 # words that carry meaning for the checks and are kept even inside names (rent, insurance, remit to...)
 KEEP = re.compile(r"\b(rent|property|power|light|water|utility|utilities|insurance|tax|legal|subscription|"
                   r"remit to \w+)\b", re.I)
@@ -77,7 +78,7 @@ def build_names(files: dict[str, list[str]]) -> dict[str, str]:
                         names.add(SUFFIX.sub("", v.strip()).split(" - ")[0].strip())
     for ln in files.get("contracts.txt", []) + files.get("invoices.txt", []):
         for m in re.finditer(r"\| ([^|\]]+?) \|", ln):
-            names.add(SUFFIX.sub("", m.group(1).strip()))
+            names.add(SUFFIX.sub("", m.group(1).strip()).strip())
     from tallyhound import rules
     mapping: dict[str, str] = {}
     for n in sorted((x for x in names if len(x) > 2), key=lambda x: (-len(x), x)):
@@ -95,7 +96,7 @@ def build_names(files: dict[str, list[str]]) -> dict[str, str]:
 
 
 def replace_names(text: str, mapping: dict[str, str]) -> str:
-    text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "someone@example.com", text)    # before names, which are inside emails
+    text = re.sub(r"[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}", "someone@example.com", text)    # before names, which are inside emails
     for real, fake in mapping.items():
         text = re.sub(re.escape(real), lambda m, fake=fake: fake.upper() if m.group(0).isupper() else fake, text, flags=re.I)
     return text
@@ -181,6 +182,8 @@ def main() -> None:
     a.add_argument("--out", default="anonymised")
     args = a.parse_args()
     src, out = Path(args.source), Path(args.out)
+    if not src.exists():
+        sys.exit(f"{src} does not exist. Give a folder, a zip, or a saved case file (case_<id>_<clause>.json).")
     out.mkdir(parents=True, exist_ok=True)
     files = anonymise(files_of(src))
     if src.suffix == ".json":

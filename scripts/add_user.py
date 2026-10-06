@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _quiet  # noqa: E402,F401  (silences Streamlit's "No runtime" warnings)
 from tallyhound import auth  # noqa: E402
 
 if len(sys.argv) != 3:

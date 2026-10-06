@@ -37,7 +37,7 @@ LIMIT_LABELS = dict(po_limit="Purchase order needed above ($)", director_limit="
                     meal_limit="Meal limit per person ($)", receipt_limit="Receipt needed above ($)",
                     split_days="Split-order window (days)", bank_days="Bank clearing window (days)",
                     tolerance="Ignore amount differences up to ($)", materiality="Minor-item threshold ($)")
-# Bills that normally have no purchase order. Editable on the Policy page.
+# Bills that normally have no purchase order. Editable under Settings > Policy.
 # Phrases, not single words, where a single word also names ordinary suppliers ("Power Tools Direct", "Northern Gas
 # Turbine Parts" must still need a PO).
 PO_EXEMPT_WORDS = ["rent", "lease", "landlord", "property management", "properties", "utility", "utilities",
@@ -559,9 +559,6 @@ def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     return out
 
 
-def rows_by_line(R: list[tuple[int, dict]], ln: int) -> dict:
-    return next(r for n, r in R if n == ln)
-
 
 def contracts(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     out = []
@@ -577,13 +574,16 @@ def contracts(lines: list[str], L: dict = LIMITS) -> list[Hit]:
         inv, vendor, _, body = m.groups()
         vendor = vendor.strip()
         for cline, _where, text in contract.get(norm_name(vendor), []):     # "Calder Logistics Ltd" = "Calder Logistics"
-            amt = _f(re.findall(r"(\d[\d,]*\.\d{2})\s*$", body)[0]) if re.findall(r"(\d[\d,]*\.\d{2})\s*$", body) else 0.0
+            tail = re.search(r"(\d[\d,]{0,20}\.\d{2})\s*$", body[-60:])       # the amount at the end of the line
+            amt = _f(tail.group(1)) if tail else 0.0
             if "surcharge" in body.lower() and re.search(r"surcharge.*excluded|not listed|may not be billed", text, re.I):
                 out.append(Hit("Contracts", "7.1", "Medium", amt, f"{inv} adds a ${amt:,.2f} charge the contract does not allow",
                                "contracts.txt", i, [("contracts.txt", cline)]))
-            rate_c = re.search(r"rate is [$€£]?(\d+(?:\.\d+)?)\s*(?:per|an|/)\s*(?:hour|hr)", text, re.I)
-            rate_i = re.search(r"(?:at|@)\s*[$€£]?(\d+(?:\.\d+)?)\s*(?:per|an|/)\s*(?:hour|hr)", body, re.I)
-            hrs = re.search(r"(\d+(?:\.\d+)?)\s*(?:hours|hrs)\b", body, re.I)
+            # (?<![\d.]) makes each number start once: without it a long run of digits is retried from every position
+            text_, body_ = text[:1000], body[:1000]
+            rate_c = re.search(r"rate is [$€£]?(\d{1,7}(?:\.\d{1,4})?)\s*(?:per|an|/)\s*(?:hour|hr)", text_, re.I)
+            rate_i = re.search(r"(?:at|@)\s*[$€£]?(\d{1,7}(?:\.\d{1,4})?)\s*(?:per|an|/)\s*(?:hour|hr)", body_, re.I)
+            hrs = re.search(r"(?<![\d.])(\d{1,7}(?:\.\d{1,4})?)\s*(?:hours|hrs)\b", body_, re.I)
             if rate_c and rate_i and hrs and float(rate_i.group(1)) > float(rate_c.group(1)):
                 over = round((float(rate_i.group(1)) - float(rate_c.group(1))) * float(hrs.group(1)), 2)
                 out.append(Hit("Contracts", "7.2", "High", over,

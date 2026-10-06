@@ -5,132 +5,13 @@ import pandas as pd
 import streamlit as st
 
 from . import common as C
-from . import guide, review, sim
+from . import sim
 
-CARD_HEIGHT = 300
 AGENT_KEYS = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses", "Invoices"]
 
 
-def run_page() -> None:
-    S = st.session_state
-    guide.tour()
-    cols = st.columns(4)
-    for i, (col, label) in enumerate(zip(cols, C.STEPS), start=1):
-        col.button(label, key=f"step_btn_{i}", type="primary" if S.step == i else "secondary",
-                   on_click=lambda n=i: S.update(step=n), **C.bw())
-    st.write("")
-    {1: step1, 2: step2, 3: review.step3, 4: review.step4}[S.step]()
-
 
 # --------------------------------------------------------------------------
-# Step 1
-# --------------------------------------------------------------------------
-def picker_options(card) -> list[str]:
-    base = list(C.options().query("workflow == @card.id")["option"])
-    return base + list(st.session_state.extra_opts.get(card.id, {}))
-
-
-def workflow_card(card, running: bool) -> None:
-    S = st.session_state
-    with st.container(border=True, height=CARD_HEIGHT):
-        st.checkbox(f"**{card.name}**", key=f"inc_{card.id}", disabled=running)
-        st.caption(card.purpose)
-        opts = picker_options(card)
-        if card.picker == "multi":
-            S.setdefault(f"sel_{card.id}", [card.default])
-            picked = st.multiselect("Months", opts, key=f"sel_{card.id}", disabled=running,
-                                    label_visibility="collapsed")
-        else:
-            S.setdefault(f"sel_{card.id}", card.default)
-            picked = st.selectbox("Data", opts, key=f"sel_{card.id}", disabled=running,
-                                  label_visibility="collapsed")
-            picked = [picked] if picked else []
-        if picked:
-            if card.picker == "multi" and len(picked) > 1:
-                body = "".join(f"<div>{o}: {C.option_preview(card.id, o)[1]}</div>" for o in picked)
-                head = f"Preview · {len(picked)} months"
-            else:
-                head, body = C.option_preview(card.id, picked[0])
-            st.markdown(f'<div class="th-preview"><b>{head}</b>{body}</div>', unsafe_allow_html=True)
-            est = "Est. ~8 min per month" if card.id == "audit" else f"Est. ~{int(C.opt_row(card.id, picked[0])['est_min'])} min"
-            last = C.opt_row(card.id, picked[0])["last_run"]
-        else:
-            st.markdown('<div class="th-preview"><b>Preview</b>Pick something to run</div>', unsafe_allow_html=True)
-            est, last = "Est. -", "Never run"
-        color = C.RELEASE if last == "Done" else C.MUTED
-        st.markdown(f'<span class="th-muted">{est}</span> &nbsp; {C.chip("Last run: " + last, color)}',
-                    unsafe_allow_html=True)
-
-
-def ticked_selection(use_all: bool = False) -> dict:
-    S = st.session_state
-    out = {}
-    for card in C.read_csv("workflow_cards.csv").itertuples():
-        if use_all or S.get(f"inc_{card.id}"):
-            sel = S.get(f"sel_{card.id}", [card.default] if card.picker == "multi" else card.default)
-            sel = sel if isinstance(sel, list) else [sel]
-            sel = [s for s in sel if s]
-            if sel:
-                out[card.id] = sel
-    return out
-
-
-def start_run(use_all: bool) -> None:
-    S = st.session_state
-    selection = ticked_selection(use_all)
-    if not selection:
-        return
-    skip = frozenset(a for a in AGENT_KEYS if not S.get(f"adv_{a}", True))
-    sim.start(sim.build_queue(selection, skip), fresh=bool(S.get("adv_fresh")))
-
-
-def step1() -> None:
-    S = st.session_state
-    running = bool(S.sim and S.sim["running"])
-    left, right = st.columns([7, 3])
-    cards = list(C.read_csv("workflow_cards.csv").itertuples())
-    with left:
-        for r in range(2):
-            cols = st.columns(2)
-            for col, card in zip(cols, cards[r * 2:r * 2 + 2]):
-                with col:
-                    workflow_card(card, running)
-
-        sel = ticked_selection()
-        n = len(sel)
-        b1, b2, _ = st.columns([2, 1.3, 4])
-        if running:
-            b1.button("Stop after current", on_click=sim.request_stop, **C.bw())
-        else:
-            from . import auth
-            b1.button(f"Run selected ({n})", type="primary", disabled=n == 0 or not auth.can("run"),
-                      on_click=start_run, args=(False,), **C.bw())
-            b2.button("Run all", on_click=start_run, args=(True,), disabled=not auth.can("run"), **C.bw())
-        if n == 0 and not running:
-            st.caption("Tick at least one workflow")
-        else:
-            st.caption(f"Runs one at a time on the local GPU - total est. {sim.total_est(sel)} min")
-
-        with st.expander("Add new data", expanded=False):
-            up = st.file_uploader("Zip file", type="zip", label_visibility="collapsed", disabled=running or not auth.can("run"))
-            st.caption("Upload a zip with any of: payments.csv, approvals.csv, vendors.csv, contracts.txt, expenses.csv. "
-                       "The columns must match the sample files in data/source/. The zip is read in memory and never written to disk.")
-            if up is not None:
-                add_zip(up)
-        with st.expander("Advanced", expanded=False):
-            c = st.columns(3)
-            for i, name in enumerate(AGENT_KEYS):
-                c[i % 3].checkbox(name, value=True, key=f"adv_{name}", disabled=running)
-            c[2].checkbox("Skeptic review (always on, locked)", value=True, disabled=True)
-            st.toggle("Start fresh (archive previous results)", key="adv_fresh", disabled=running)
-            engine_settings(running)
-
-    with right:
-        queue_panel(sel, running)
-
-    st.subheader("Recent runs")
-    recent_runs()
-
 
 def engine_settings(running: bool) -> None:
     """How uploaded files are analysed. The sample company always uses the simulated run."""
@@ -162,6 +43,13 @@ def engine_settings(running: bool) -> None:
             st.success(f"Ollama is running with {len(have)} model(s).")
 
 
+def dataset_label(filename: str) -> str:
+    """The name a dataset gets from its zip's file name: letters, digits, spaces and .-_ only, so it can never carry
+    markup or a link into the page."""
+    import re
+    return re.sub(r"[^\w .-]+", "_", filename.rsplit(".", 1)[0]).strip(" ._")[:40] or "uploaded"
+
+
 def add_zip(up) -> str | None:
     """Read an uploaded zip, register it, and show what was found. Returns the dataset name."""
     from . import custom
@@ -172,12 +60,12 @@ def add_zip(up) -> str | None:
             st.warning(n)
         st.error("No usable audit files found.")
         return None
-    label = up.name.rsplit(".", 1)[0][:40] or "uploaded"
+    label = dataset_label(up.name)
     if label in C.read_csv("workflow_options.csv").query("workflow == 'audit'")["option"].values:
         label += " (upload)"
     if label not in S.get("uploads", {}):
         custom.add_upload(label, files)
-    st.success(f"Read \"{label}\": {len(files)} file(s).")
+    st.success(f"Read \"{C.esc(label)}\": {len(files)} file(s).")
     with st.expander(f"Files ({len(files)})" + (f" and {len(notes)} note(s)" if notes else "")):
         for n in notes:
             st.caption(n)
@@ -201,7 +89,7 @@ def data_check(label: str) -> None:
     warn = [x for x in items if x["level"] == "warn"]
     with st.expander(f"Data check: {len(warn)} thing(s) to confirm" if warn else "Data check: looks right", expanded=bool(warn)):
         for x in items:
-            (st.warning if x["level"] == "warn" else st.caption)(f"`{x['file']}` - {x['message']}")
+            (st.warning if x["level"] == "warn" else st.caption)(f"`{x['file']}` - {C.esc(x['message'])}")
             if x.get("kind") == "dates":
                 st.radio("Dates in " + x["file"], ["day-first", "month-first"], key=f"dord_{label}_{x['file']}",
                          horizontal=True, index=None, on_change=_set_date_order, args=(label, x["file"]))
@@ -256,46 +144,6 @@ def S_lines(label: str, name: str) -> list[str]:
     return st.session_state.uploads[label].get(name, [])
 
 
-def queue_panel(selection: dict, running: bool) -> None:
-    with st.container(border=True):
-        st.markdown("**Run queue**")
-        frag = st.fragment(run_every=1 if running else None)(queue_body)
-        frag(selection)
-
-
-def queue_body(selection: dict) -> None:
-    S = st.session_state
-    sm = S.sim
-    if sm and sm["queue"]:
-        for it in sm["queue"]:
-            st.markdown(f"**{C.esc(it['label'])}**")
-            if it["status"] == "Running":
-                done = sum(a["status"] in ("Done", "Skipped") for a in it["agents"])
-                agent = next((a for a in it["agents"] if a["status"] not in ("Done", "Skipped")), it["agents"][-1])
-                st.progress((sum(a["pct"] for a in it["agents"] if a["status"] != "Skipped") /
-                             max(1, 100 * sum(a["status"] != "Skipped" for a in it["agents"]))))
-                st.caption(f"Running: {agent['name']} agent ({min(done + 1, len(it['agents']))} of {len(it['agents'])})")
-            elif it["status"] == "Done":
-                st.markdown(C.chip(f"Done ({it['findings']} findings)", C.RELEASE), unsafe_allow_html=True)
-            elif it["status"] == "Failed":
-                bad = next(a for a in it["agents"] if a["status"] == "Failed")
-                st.markdown(C.chip("Failed", C.HOLD) + f" &nbsp;<span class='th-muted'>{bad['name']} agent</span>",
-                            unsafe_allow_html=True)
-                if st.button("Retry", key=f"retry_{it['label']}"):
-                    sim.retry()
-                    st.rerun()
-            else:
-                st.markdown(C.chip("Queued", C.MUTED), unsafe_allow_html=True)
-        if sm["running"] and sm["stop"]:
-            st.caption("Will stop after the current item.")
-    elif selection:
-        for wf, opts in selection.items():
-            for o in opts:
-                st.markdown(f"**{o if wf != 'audit' else o + ' audit'}**")
-                st.markdown(C.chip("Queued", C.MUTED), unsafe_allow_html=True)
-    else:
-        st.caption("Nothing queued. Tick a workflow to add it.")
-
 
 def recent_runs() -> None:
     S = st.session_state
@@ -315,14 +163,6 @@ def recent_runs() -> None:
 
 
 # --------------------------------------------------------------------------
-# Step 2
-# --------------------------------------------------------------------------
-def step2() -> None:
-    S = st.session_state
-    running = bool(S.sim and S.sim["running"])
-    frag = st.fragment(run_every=1 if running else None)(agents_body)
-    frag()
-
 
 def agents_body() -> None:
     S = st.session_state
@@ -330,7 +170,7 @@ def agents_body() -> None:
     item = sim.current(sm)
     roles = dict(zip(C.read_csv("agents.csv")["agent"], C.read_csv("agents.csv")["role"]))
     if item is None:
-        st.info("Nothing is running yet. Go to step 1, tick a workflow and press Run selected.")
+        st.info("Nothing is running yet. Use Check new files on Home to start a run.")
         agents = [dict(name=n, status="Waiting", pct=0, secs=0) for n in sim.agent_names()]
         title = "No run yet"
     else:
@@ -344,7 +184,7 @@ def agents_body() -> None:
         c3.progress(a["pct"] / 100 if a["status"] != "Skipped" else 0.0)
         c4.markdown(f"{a['secs'] // 60}:{a['secs'] % 60:02d}")
         if a["status"] == "Failed":
-            if c3.button("Rerun this agent", key=f"rerun_{a['name']}"):
+            if c3.button("Retry", key=f"rerun_{a['name']}"):
                 sim.retry()
                 st.rerun()
     all_done = bool(item) and all(a["status"] in ("Done", "Skipped") for a in agents)

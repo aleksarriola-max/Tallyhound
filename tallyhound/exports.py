@@ -60,7 +60,9 @@ def build_workbook(draft: bool = False) -> bytes:
     dc = C.decision_counts(C.findings())
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     summary = pd.DataFrame([
-        ["Status", "DRAFT - not reviewed" if draft else "Reviewed by a person"],
+        ["Status", "DRAFT - not reviewed" if draft else
+         ("Reviewed by a person" if dc["pending"] == 0 else
+          f"PARTLY REVIEWED - {dc['pending']} of {len(f)} findings still pending")],
         ["Company", f"Uploaded files: {C.custom_label()}" if C.custom_label() else "Bramblecourt Instruments Ltd (fictional)"],
         ["Notice", "Findings proposed by agents or rules and decided by a person" if C.custom_label()
          else "FICTIONAL TEST DATA - not a real company"],
@@ -124,7 +126,8 @@ def build_memo() -> bytes:
         Paragraph("Tallyhound audit memo", ss["Title"]),
         Paragraph(("Uploaded data - " if C.custom_label() else "Bramblecourt Instruments Ltd (fictional) - ") + datetime.now().strftime("%Y-%m-%d"), ss["Normal"]),
         Spacer(1, 8),
-        Paragraph(f"Findings reviewed: {len(f)}. Approved: {dc['approved']} ({C.money(dc['value'])}). "
+        Paragraph((f"Findings: {len(f)}, all decided by a person. " if dc["pending"] == 0 else
+                   f"Findings: {len(f)}. NOT FINISHED: {dc['pending']} are still pending review. ") + f"Approved: {dc['approved']} ({C.money(dc['value'])}). "
                   f"Rejected: {dc['rejected']}. Pending: {dc['pending']}. "
                   "Agents only proposed these findings; every decision recorded here was made by a person.", ss["Normal"]),
         Spacer(1, 8),

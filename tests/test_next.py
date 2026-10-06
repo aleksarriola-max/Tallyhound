@@ -85,6 +85,7 @@ def test_flexible_dates_and_amounts():
 # ---- column matching
 def _mapping_app():
     import streamlit as st
+
     from tallyhound import common as C
     from tallyhound import custom, rules
     C.init_state()

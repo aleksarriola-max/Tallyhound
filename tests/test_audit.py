@@ -86,7 +86,7 @@ def test_nan_amounts_do_not_crash_reconciliation_and_are_reported():
     files = hostile_month()
     hits = rules.analyze(files)
     assert all(h.amount == h.amount for h in hits)
-    import streamlit as st                               # outside a running app this is a plain dict-like state
+    import streamlit as st  # outside a running app this is a plain dict-like state
     st.session_state.uploads = {"t": files}
     warn = [x for x in custom.profile("t") if x["kind"] == "unreadable"]
     assert any("paid_amount" in x["message"] and "line 3" in x["message"] for x in warn)
@@ -186,9 +186,10 @@ def test_exports_survive_hostile_names_and_keep_formulas_as_text():
     exports.defuse_formulas(wb.active)
     assert wb.active["A1"].data_type == "s"
     # the PDF memo accepts names with & and < (it used to crash)
+    import html
+
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.platypus import Paragraph
-    import html
     Paragraph(html.escape("Smith & Sons <b"), getSampleStyleSheet()["Normal"])
     assert not at.exception
 

@@ -36,13 +36,17 @@ def test_reject_needs_a_reason():
     at.run()
     at.session_state["open_F-02"] = True                 # open the case's details
     at.run()
-    assert at.button(key="rejbtn_F-02").disabled
+    at.button(key="rejbtn_F-02").click().run()                       # no reason yet: asks for one, decides nothing
+    assert "F-02" not in at.session_state.decisions
+    assert any("Write a reason first" in w.value for w in at.warning)
     at.text_input(key="rej_F-02").set_value("Not enough evidence").run()
-    assert not at.button(key="rejbtn_F-02").disabled
+    at.button(key="rejbtn_F-02").click().run()
+    assert at.session_state.decisions["F-02"] == dict(status="Rejected", reason="Not enough evidence")
 
 
 def _exports_app():
     import streamlit as st
+
     from tallyhound import common as C
     from tallyhound import exports
     C.init_state()

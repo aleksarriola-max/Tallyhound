@@ -25,6 +25,7 @@ COLS = ["id", "severity", "area", "clause", "amount", "title", "skeptic_verdict"
 
 
 # ---------------------------------------------------------------- reading a zip
+MAX_LINE_CHARS = 4000
 MAX_UNZIPPED_MB = 100          # everything in one zip, once unpacked (stops "zip bombs")
 
 
@@ -54,6 +55,7 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
     total = 0
     unpacked = 0
     pdfs: list[tuple[str, list[str]]] = []
+    pdf_raw: list[tuple[str, bytes]] = []
 
     def read(info) -> bytes | None:
         nonlocal unpacked
@@ -81,14 +83,12 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         stem = base.rsplit(".", 1)[0].lower()
         if base.lower().endswith(".pdf"):
             from . import invoices
-            raw = read(info)
-            if raw is None:
+            if len(pdf_raw) >= invoices.MAX_PDFS:
+                notes.append(f"Skipped {base}: more than {invoices.MAX_PDFS} PDFs in one upload.")
                 continue
-            lines = invoices.pdf_lines(raw)
-            if lines:
-                pdfs.append((base, lines))
-            else:
-                notes.append(f"{base} has no readable text (a scan?). It was skipped; scanned PDFs need OCR first.")
+            raw = read(info)
+            if raw is not None:
+                pdf_raw.append((base, raw))
             continue
         if stem == "answer_key" and base.lower().endswith(".csv"):
             raw = read(info)
@@ -108,6 +108,11 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         if raw is None:
             continue
         lines = decode(raw).replace("\x00", "").splitlines()
+        long_ = [i for i, ln in enumerate(lines, start=1) if len(ln) > MAX_LINE_CHARS]
+        if long_:                     # no real export has lines this long; cutting them keeps every check fast
+            lines = [ln[:MAX_LINE_CHARS] for ln in lines]
+            notes.append(f"{base}: {len(long_)} line(s) longer than {MAX_LINE_CHARS:,} characters were cut "
+                         f"(first: line {long_[0]}).")
         total += len(lines)
         if total > MAX_LINES:
             notes.append(f"Stopped at {MAX_LINES} lines; {base} and later files were skipped.")
@@ -117,6 +122,16 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
             notes.append(f"{match} is missing columns: {', '.join(missing)}. Match its columns below, or it is skipped.")
         files[match] = lines
         origin[match] = info.filename
+    if pdf_raw:
+        from . import invoices
+        for base, lines in invoices.read_pdfs(pdf_raw).items():
+            if lines:
+                pdfs.append((base, lines))
+            elif lines is None:
+                notes.append(f"Skipped {base}: it could not be read safely (too slow, too large, or more than "
+                             f"{invoices.MAX_PDF_PAGES} pages).")
+            else:
+                notes.append(f"{base} has no readable text (a scan?). It was skipped; scanned PDFs need OCR first.")
     if pdfs:
         from . import invoices
         files[invoices.NAME] = invoices.combine(sorted(pdfs))
@@ -213,7 +228,7 @@ class Job:
                        ["Orchestrator", *rules.FILES, "Skeptic"]}
         self.records: list[dict] = []
         self.thread: threading.Thread | None = None
-        self.t0 = time.time()
+        self.t0 = self.touched = time.time()
         self.lock = threading.Lock()
         self.start()
 
@@ -305,14 +320,40 @@ class Job:
 
 
 JOBS: dict[str, Job] = {}
+JOBS_LOCK = threading.Lock()
+MAX_RUNNING = 4                 # analyses running at once on this server; more wait for a free slot
+IDLE_DONE_SECONDS = 30 * 60     # a finished or failed job nobody has looked at for this long is let go
+IDLE_ANY_SECONDS = 2 * 3600     # any job nobody has looked at for this long (its tab was closed) is let go
+
+
+def prune_jobs(now: float | None = None) -> None:
+    """Free the memory of jobs that are over, or whose browser tab went away. Each holds a copy of its files."""
+    now = now or time.time()
+    with JOBS_LOCK:
+        for k, j in list(JOBS.items()):
+            idle = now - j.touched
+            alive = bool(j.thread and j.thread.is_alive())
+            if idle > IDLE_ANY_SECONDS or (not alive and idle > IDLE_DONE_SECONDS):
+                JOBS.pop(k, None)
+
+
+def running_jobs() -> int:
+    return sum(bool(j.thread and j.thread.is_alive()) for j in list(JOBS.values()))
 
 
 def tick_item(sim: dict, item: dict) -> bool:
     """Called once a second for a running uploaded-data item. Returns True when the page must rerun."""
     S = st.session_state
     key = f"{S.get('sid', '')}|{item['label']}"
+    prune_jobs()
     job = JOBS.get(key)
     if job is None:
+        if running_jobs() >= MAX_RUNNING:
+            if not item.get("_waiting"):
+                item["_waiting"] = True
+                sim_log(sim, "Orchestrator", "The server is busy with other analyses; this one starts when a slot frees up")
+            return False
+        item.pop("_waiting", None)
         job = JOBS[key] = Job(item["custom"], view(item["custom"]), item.get("engine", "rules"),
                               item.get("model", llm.DEFAULT_MODEL), item.get("url", llm.DEFAULT_URL), C.policy(),
                               [a["name"] for a in item["agents"] if a["status"] == "Skipped"], C.limits())
@@ -320,6 +361,7 @@ def tick_item(sim: dict, item: dict) -> bool:
                 + ({"rules": "the built-in rules", "rules+skeptic": f"the built-in rules and an Ollama Skeptic ({job.model})",
                     "ollama-tools": f"Ollama agents with tools ({job.model})"}.get(job.engine, f"Ollama ({job.model})")))
         return True
+    job.touched = time.time()
     for a in item["agents"]:
         j = job.agents.get(a["name"])
         if j and a["status"] != "Skipped":

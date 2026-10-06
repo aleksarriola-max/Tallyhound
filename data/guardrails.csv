@@ -1,7 +1,7 @@
 name,description,metric
-Agents only propose,"Approve, reject, hold and release happen only on the Review step and the Payment gate.",Human decides
-Offline,The model runs on the local GPU. No cloud calls.,0 requests
-Sandbox,Agents read the inbox folder and write only to the results folder.,Read-only inbox
+Agents only propose,"Approve, reject, hold and release happen only when a person presses the button in Review.",Human decides
+Offline,"AI engines use a model on your own machine (Ollama, LM Studio, vLLM); the built-in rules use no model. No cloud calls.",0 cloud requests
+Uploads stay put,Uploaded files are read in memory and never used as file paths. Only your saved work is stored.,No file paths
 Quote check,Each quoted line is matched to the source file before it is shown.,{quote_pct}% matched
 Skeptic review,"A second agent tries to disprove every finding. Always on, locked.",{n_findings} reviewed
 Audit trail,"Every proposal, verdict and decision is logged with time and actor.",{n_findings} findings logged

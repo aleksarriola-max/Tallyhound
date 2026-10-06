@@ -9,7 +9,7 @@ import streamlit as st
 from . import common as C
 
 TICKS_PER_AGENT = 3
-FAIL_AGENT = "Expenses"   # fails once, then "Rerun this agent" fixes it
+FAIL_AGENT = "Expenses"   # fails once in the demo, so a visitor can try Retry
 
 
 def agent_names() -> list[str]:
@@ -41,14 +41,9 @@ def build_queue(selection: dict, skip: frozenset = frozenset()) -> list[dict]:
     return q
 
 
-def start(queue: list[dict], fresh: bool = False) -> None:
+def start(queue: list[dict]) -> None:
     S = st.session_state
-    if fresh:
-        S.decisions, S.cleared = {}, {}
-        if S.get("audit_log"):
-            C.log_action("Orchestrator", C.NEW_RUN, "-", "Fresh run; earlier decisions no longer apply")
-    S.sim = dict(queue=queue, running=True, stop=False, log=[])
-    S.step = 1
+    S.sim = dict(queue=queue, running=True, log=[])
     log("Orchestrator", f"Queue created with {len(queue)} item(s)")
 
 
@@ -113,7 +108,7 @@ def tick() -> bool:
     a["pct"] = min(100, a["pct"] + 100 // TICKS_PER_AGENT + 1)
     if a["name"] == FAIL_AGENT and S.fail_pending and a["pct"] >= 60:
         a["status"], item["status"], sim["running"] = "Failed", "Failed", False
-        log(a["name"], "Failed: could not read expenses.csv (simulated fault). Use Retry or Rerun this agent.")
+        log(a["name"], "Failed: could not read expenses.csv (simulated fault). Use Retry.")
         return True
     if a["pct"] >= 100:
         a["status"], a["pct"] = "Done", 100
@@ -132,10 +127,8 @@ def _finish_item(sim: dict, item: dict) -> bool:
                                   Status="Done" if item["result"] else "Done (clean)"))
     log("Skeptic", f"{item['label']} finished with {item['result']} finding(s)")
     nxt = any(i["status"] == "Queued" for i in sim["queue"])
-    if sim["stop"] or not nxt:
+    if not nxt:
         sim["running"] = False
-        if sim["stop"] and nxt:
-            log("Orchestrator", "Stopped after the current item as requested")
     return True
 
 
@@ -153,7 +146,7 @@ def retry(item: dict | None = None) -> None:
             for a in it["agents"]:
                 if a["status"] == "Failed":
                     a.update(status="Waiting", pct=0)
-            sim["running"], sim["stop"] = True, False
+            sim["running"] = True
             log("Orchestrator", "Rerunning the failed agent")
             return
     S.fail_pending = False
@@ -163,20 +156,8 @@ def retry(item: dict | None = None) -> None:
                 if a["status"] == "Failed":
                     a.update(status="Waiting", pct=0, secs=0)
             it["status"] = "Running"
-    sim["running"], sim["stop"] = True, False
+    sim["running"] = True
     log("Orchestrator", "Rerunning the failed agent")
 
 
-def request_stop() -> None:
-    sim = st.session_state.sim
-    if sim:
-        sim["stop"] = True
-        log("Orchestrator", "Stop requested - will stop after the current item")
 
-
-def total_est(selection: dict) -> int:
-    n = 0
-    for wf, opts in selection.items():
-        for o in opts:
-            n += int(C.opt_row(wf, o)["est_min"])
-    return n

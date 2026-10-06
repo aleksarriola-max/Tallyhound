@@ -1,4 +1,4 @@
-"""Pages: Scorecard (how good is each engine?) and Policy (the limits the rules use)."""
+"""Scorecard (how good is each engine?), Settings > Policy and Rules, and Reports > Trends and vendor risk."""
 from __future__ import annotations
 
 import altair as alt
@@ -69,6 +69,9 @@ def scorecard_page() -> None:
                      "_r": s["recall"], "_p": s["precision"]})
     df = pd.DataFrame(rows)
     st.dataframe(df.drop(columns=["_r", "_p"]), hide_index=True, **C.dfw())
+    st.caption("Proposed: findings the engine raised (several can point at the same planted problem, so this can be "
+               "more than Found). Found: planted problems at least one finding pointed at. False alarms: findings "
+               "that pointed at no planted problem. Recall = Found / planted; precision = real findings / Proposed.")
 
     long = pd.concat([df[["Run"]].assign(Measure="Recall", Value=df["_r"]),
                       df[["Run"]].assign(Measure="Precision", Value=df["_p"])])
@@ -144,11 +147,6 @@ def _reset_limits() -> None:
     C.log_action("Reviewer", "Policy limits reset", "", "defaults")
 
 
-def policy_page() -> None:
-    policy_limits()
-    rule_health_section()
-    learning_section()
-
 
 def policy_limits() -> None:
     S = st.session_state
@@ -174,7 +172,7 @@ def policy_limits() -> None:
         from . import auth
         locked = not auth.can("policy")
         b1.button("Save limits", type="primary", on_click=_save_limits, disabled=locked, **C.bw())
-        b2.button("Reset to defaults", on_click=_reset_limits, disabled=locked, **C.bw())
+        b2.button("Reset", on_click=_reset_limits, disabled=locked, **C.bw())
         if locked:
             st.caption("Only an admin can change the policy.")
     pol = C.policy()

@@ -17,22 +17,45 @@ from pathlib import Path
 
 import streamlit as st
 
-KEYS = ["decisions", "audit_log", "cleared", "step", "fail_pending", "recent_extra", "tour_downloaded", "tour_off",
+KEYS = ["decisions", "audit_log", "cleared", "fail_pending", "recent_extra", "tour_downloaded", "tour_off",
         "uploads", "custom", "by_dataset", "dataset", "extra_opts",
         "mappings", "answer_keys", "run_history", "limits", "notes", "suppressions", "presets",
         "po_exempt_words", "po_exempt_vendors", "rule_override", "shadow", "shadow_marks", "date_order", "trail_seals"]
 MAX_AGE_DAYS = 14
+TEAM = "team"            # the shared workspace when sign-in is on
 _SID = re.compile(r"^(?:[0-9a-f]{12}|[0-9a-f]{32})$")   # 12 = links made before the audit; new ones are 128-bit
 
 
 def state_dir() -> Path:
     d = Path(os.environ.get("TALLYHOUND_STATE_DIR") or Path(__file__).resolve().parent.parent / ".tallyhound_state")
-    d.mkdir(parents=True, exist_ok=True)
+    if not d.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            d.chmod(0o700)                  # saved work, password hashes and the trail key: the server user only
+        except OSError:
+            pass
     return d
 
 
+def write_private(path: Path, text: str) -> None:
+    """Write a file readable only by the server's user, atomically (a crash mid-write never leaves half a file)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _db() -> sqlite3.Connection:
-    con = sqlite3.connect(state_dir() / "tallyhound.db", timeout=10)
+    path = state_dir() / "tallyhound.db"
+    if not path.exists():
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600))      # every session's uploads live here
+    con = sqlite3.connect(path, timeout=10)
     con.execute("CREATE TABLE IF NOT EXISTS state (sid TEXT PRIMARY KEY, data TEXT NOT NULL, updated REAL NOT NULL)")
     return con
 
@@ -48,11 +71,28 @@ def _read(sid: str) -> str | None:
     return legacy.read_text(encoding="utf-8") if legacy.exists() else None
 
 
-def _write(sid: str, text: str) -> None:
+def _write(sid: str, text: str, expect: float | None = None) -> float | None:
+    """Save. With expect (the version this session loaded), save only if nobody else saved since; returns the new
+    version, or None when someone else got there first."""
+    now = time.time()
     with _db() as con:
+        if expect is not None:
+            cur = con.execute("UPDATE state SET data = ?, updated = ? WHERE sid = ? AND updated = ?",
+                              (text, now, sid, expect))
+            if cur.rowcount == 0 and con.execute("SELECT 1 FROM state WHERE sid = ?", (sid,)).fetchone():
+                return None
+            if cur.rowcount:
+                return now
         con.execute("INSERT INTO state (sid, data, updated) VALUES (?, ?, ?) "
                     "ON CONFLICT(sid) DO UPDATE SET data = excluded.data, updated = excluded.updated",
-                    (sid, text, time.time()))
+                    (sid, text, now))
+    return now
+
+
+def _version(sid: str) -> float | None:
+    with _db() as con:
+        row = con.execute("SELECT updated FROM state WHERE sid = ?", (sid,)).fetchone()
+    return row[0] if row else None
 
 
 def _delete(sid: str) -> None:
@@ -67,7 +107,7 @@ def _sweep() -> None:
     try:
         with _db() as con:
             # a session's uploads row is only rewritten when files change, so it goes with its session, not on its own
-            con.execute("DELETE FROM state WHERE updated < ? AND sid NOT LIKE '%:uploads'", (cutoff,))
+            con.execute("DELETE FROM state WHERE updated < ? AND sid NOT LIKE '%:uploads' AND sid != ?", (cutoff, TEAM))
             con.execute("DELETE FROM state WHERE sid LIKE '%:uploads' AND "
                         "substr(sid, 1, length(sid) - 8) NOT IN (SELECT sid FROM state WHERE sid NOT LIKE '%:uploads')")
         for p in state_dir().glob("*.json"):
@@ -80,15 +120,23 @@ def _sweep() -> None:
 def snapshot() -> dict:
     S = st.session_state
     snap = {k: S.get(k) for k in KEYS if k != "uploads"}   # uploads are big: saved separately, only when they change
-    sim = S.get("sim")
-    # a run in progress is not saved; a finished or failed one is
-    snap["sim"] = sim if sim and not sim["running"] else None
+    # a run in progress is saved too: after a reload the demo run carries on, and an uploaded-data run picks up its
+    # analysis again (or restarts it, if the server restarted meanwhile)
+    snap["sim"] = S.get("sim")
     return snap
 
 
 def session_id() -> str:
+    """Whose saved work this browser shows. With sign-in on, everyone signed in shares one team workspace on the
+    server and the address is ignored - so nobody can plant a link that captures someone else's work. With sign-in
+    off (the demo), the work belongs to a random 128-bit id in the address (?s=...)."""
+    from . import auth
+    if auth.enabled():
+        if "s" in st.query_params:
+            del st.query_params["s"]
+        return TEAM
     sid = st.query_params.get("s", "")
-    if not _SID.match(str(sid)):
+    if not _SID.fullmatch(str(sid)):
         sid = secrets.token_hex(16)
         st.query_params["s"] = sid
     return sid
@@ -131,7 +179,7 @@ SHAPES = {
     "po_exempt_vendors": _list_of(str), "rule_override": _dict_of(str), "shadow": _list_of(str),
     "shadow_marks": _dict_of(int), "date_order": _dict_of(dict),
     "sim": lambda v: isinstance(v, dict) and isinstance(v.get("queue"), list) and isinstance(v.get("log", []), list),
-    "step": lambda v: isinstance(v, int), "tour_off": lambda v: isinstance(v, bool),
+    "tour_off": lambda v: isinstance(v, bool),
     "tour_downloaded": lambda v: isinstance(v, bool), "fail_pending": lambda v: isinstance(v, bool),
 }
 
@@ -159,10 +207,15 @@ def load_into_session() -> None:
     S = st.session_state
     if S.get("_store_ready"):
         return
+    from . import auth
+    if auth.enabled() and not auth.current_user():
+        S["sid"] = None              # nothing is loaded, or saved, until someone has signed in
+        return
     S["_store_ready"] = True
     S["sid"] = session_id()
     _sweep()
     try:
+        S["_ver"] = _version(S["sid"])
         raw = _read(S["sid"])
         data = json.loads(raw) if raw else None
     except (OSError, ValueError, sqlite3.Error):
@@ -226,10 +279,15 @@ def save_if_changed() -> None:
     if text == S.get("_saved"):
         return
     try:
-        _write(sid, text)
-        S["_saved"] = text
+        ver = _write(sid, text, S.get("_ver"))
     except (OSError, sqlite3.Error):
-        pass  # a read-only disk must never break the app
+        return  # a read-only disk must never break the app
+    if ver is None:                  # a teammate saved since this page loaded: show their work, never overwrite it
+        S["_store_ready"] = False
+        S["_restore_note"] = ("Someone else saved changes at the same moment, so the latest work is shown. "
+                              "If your last click is missing, please do it again.")
+        st.rerun()
+    S["_ver"], S["_saved"] = ver, text
 
 
 def reset() -> None:

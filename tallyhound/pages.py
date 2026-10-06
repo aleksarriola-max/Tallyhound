@@ -6,14 +6,11 @@ import pandas as pd
 import streamlit as st
 
 from . import common as C
-from . import sim
+from . import gate, sim
 
 GATE_FILE = "payment_run_2026-10-01.csv"
 EVENT_CFG = {"time": st.column_config.Column(width=70), "agent": st.column_config.Column(width=110),
              "message": st.column_config.Column(width=420)}
-CHECKS = ["Vendor active", "Invoice open and approved", "Vendor matches invoice", "Not already paid",
-          "Not duplicated in run", "Amount within invoice", "Bank change verified", "Bank matches master"]
-
 
 def sev_counts(df: pd.DataFrame) -> dict:
     return {s: int((df.severity == s).sum()) for s in ("High", "Medium", "Low")}
@@ -34,7 +31,8 @@ def overview() -> None:
     m[0].metric("Held in payment run", C.money(gt["hold_amt"]))
     m[1].metric("Recoverable", C.money(rec.claim.sum()))
     m[2].metric("Annual savings", f"${subs.saving.sum():,.0f}")
-    m[3].metric("Open findings", len(f))
+    m[3].metric("Open findings", int((~f.id.isin(list(st.session_state.decisions))).sum()),
+                help=f"Findings nobody has decided yet, out of {len(f)}")
 
     st.subheader("Findings by area")
     areas = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses"] + (["Invoices"] if (f.area == "Invoices").any() else [])
@@ -67,50 +65,6 @@ def overview() -> None:
 
 
 # --------------------------------------------------------------------------
-def findings_page() -> None:
-    f = C.findings()
-    sc = sev_counts(f)
-    left, right = st.columns([5, 4])
-    with left:
-        c1, c2 = st.columns([3, 2], vertical_alignment="center")
-        labels = {"All": f"All {len(f)}", **{k: f"{k} {v}" for k, v in sc.items()}}
-        sev = c1.segmented_control("Severity", list(labels), default="All", format_func=labels.get,
-                                   key="find_sev", label_visibility="collapsed")
-        area = c2.selectbox("Area", ["All areas"] + sorted(f.area.unique()), label_visibility="collapsed", key="find_area")
-        view = f if sev in (None, "All") else f[f.severity == sev]
-        view = view if area == "All areas" else view[view.area == area]
-        view = view.reset_index(drop=True)
-        table = view[["id", "severity", "area", "title", "amount"]].rename(
-            columns={"id": "ID", "severity": "Severity", "area": "Area", "title": "Title", "amount": "Amount"})
-        ev = st.dataframe(table, hide_index=True, on_select="rerun", selection_mode="single-row", key="find_tbl",
-                          column_config={"Amount": st.column_config.NumberColumn(format="$%.2f")}, height=520, **C.dfw())
-    rows = ev.selection.rows if ev and ev.selection else []
-    with right:
-        if not rows or rows[0] >= len(view):
-            st.info("Select a finding on the left to see the detail.")
-            return
-        detail(view.iloc[rows[0]])
-
-
-def detail(r) -> None:
-    with st.container(border=True):
-        st.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{C.esc(r.id)}** · {C.esc(r.area)} · {C.money(r.amount)}", unsafe_allow_html=True)
-        st.markdown(f"**{C.esc(r.title)}**")
-        st.markdown(f"**Policy clause {r.clause}**")
-        st.markdown(f"> {C.esc(C.clause_text(r.area, r.clause))}")
-        st.markdown("**Evidence**")
-        st.code(r.evidence, language=None)
-        st.caption(f"{r.source_file}, line {r.line_number}")
-        st.markdown("**Innocent explanations considered**")
-        st.markdown(C.esc(r.innocent_explanations))
-        st.markdown(f"**Skeptic verdict: {r.skeptic_verdict}**")
-        st.markdown(C.esc(r.skeptic_reason))
-        st.markdown("**Proposed fix**")
-        st.markdown(C.esc(r.proposed_fix))
-        st.markdown("**Audit trail**")
-        trail = C.full_trail(C.findings())
-        st.dataframe(trail[trail.finding == r.id][["time", "actor", "action", "detail"]], hide_index=True, **C.dfw())
-
 
 # --------------------------------------------------------------------------
 def style_gate(df: pd.DataFrame):
@@ -166,12 +120,12 @@ def payment_gate() -> None:
                          "Invoice": gdf.invoice, "Amount": gdf.amount.map(C.money), "Reason": gdf.reason})
     for i in range(1, 9):
         show[str(i)] = ["✓" if v == "1" else "✗" for v in gdf[f"c{i}"]]
-    widths = {"Line": 40, "Decision": 72, "Supplier": 118, "Invoice": 76, "Amount": 82, "Reason": 200}
+    widths = {"Line": 40, "Decision": 72, "Supplier": 118, "Invoice": 76, "Amount": 82, "Reason": 320}
     cfg = {k: st.column_config.Column(width=v) for k, v in widths.items()}
     cfg.update({str(i): st.column_config.Column(width=32) for i in range(1, 9)})
     ev = st.dataframe(style_gate(show), hide_index=True, on_select="rerun", selection_mode="multi-row",
                       key=f"gate_tbl_{run}", height=min(560, 36 * (len(show) + 1) + 4), column_config=cfg, **C.dfw())
-    st.caption("Checks: " + " · ".join(f"{i + 1} {c}" for i, c in enumerate(CHECKS)))
+    st.caption("Checks: " + " · ".join(f"{i + 1} {c}" for i, c in enumerate(gate.CHECKS)))
 
     rows = ev.selection.rows if ev and ev.selection else []
     sel_lines = [str(show.iloc[r].Line) for r in rows]
@@ -181,7 +135,10 @@ def payment_gate() -> None:
     from . import auth
     if auth.review_block_reason():
         st.caption(auth.review_block_reason())
-    if c2.button("Clear hold", disabled=not (holdable and reason.strip()) or not clearable or bool(auth.review_block_reason())):
+    clicked = c2.button("Clear hold", disabled=not holdable or not clearable or bool(auth.review_block_reason()))
+    if clicked and not reason.strip():
+        st.warning("Write a reason first: every cleared hold needs one for the audit trail.")
+    elif clicked:
         for l in holdable:
             row = gdf[gdf.line == l].iloc[0]
             S.cleared[l] = reason.strip()
@@ -206,7 +163,7 @@ def recovery_page() -> None:
     st.dataframe(show, hide_index=True, height=35 * (len(show) + 1) + 3,
                  column_config={"Claim": st.column_config.NumberColumn(format="dollar")}, **C.dfw())
     st.markdown(f"**Total recoverable: {C.money(rec.claim.sum())}**")
-    st.caption("Agents propose claims. A person approves them on the Review step.")
+    st.caption("Agents propose claims; a person decides on each one.")
 
 
 def subscriptions_page() -> None:
@@ -271,31 +228,6 @@ def live_activity() -> None:
 
 
 # --------------------------------------------------------------------------
-def evidence_viewer() -> None:
-    f = C.findings()
-    labels = {r.id: f"{r.id} · {r.area} · {r.title[:60]}" for r in f.itertuples()}
-    fid = st.selectbox("Finding", list(labels), format_func=labels.get)
-    r = f[f.id == fid].iloc[0]
-    lines = C.source_lines(r.source_file)
-    main_ok = lines[r.line_number - 1] == r.evidence if 0 < r.line_number <= len(lines) else False
-    if not main_ok:  # defensive: never show an unverified claim
-        st.error("Quote not found in the source file. This claim is hidden.")
-        return
-    left, right = st.columns(2)
-    with left, st.container(border=True):
-        st.markdown(f"{C.sev_badge(r.severity)} &nbsp; **{C.esc(r.id)}** · {C.esc(r.area)} · clause {C.esc(r.clause)}", unsafe_allow_html=True)
-        st.markdown("**Agent claim**")
-        st.markdown(C.esc(r.title))
-        st.markdown(f"**Clause {r.clause}**")
-        st.markdown(f"> {C.esc(C.clause_text(r.area, r.clause))}")
-        st.markdown(f'<div style="background:#e0f0e7;border:1px solid {C.RELEASE};color:#07161f;border-radius:6px;padding:.5rem .7rem">'
-                    f'<b>Quote check passed:</b> {r.matched_n} line(s) matched in {C.esc(r.source_file)}</div>', unsafe_allow_html=True)
-        st.caption(f"Main evidence on line {r.line_number}. Related lines are shown in light blue.")
-    with right:
-        st.markdown(f"**{r.source_file}**")
-        with st.container(height=470):
-            st.markdown(C.source_html(lines, list(r.matched_lines), main=int(r.line_number)), unsafe_allow_html=True)
-
 
 # --------------------------------------------------------------------------
 def guardrails() -> None:

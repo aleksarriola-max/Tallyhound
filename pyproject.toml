@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tallyhound"
-version = "0.5.0"
+version = "0.6.0"
 description = "Finance audit console: AI agents and rules propose findings, a person decides."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -29,6 +29,3 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E9", "F", "B", "PLE"]
 ignore = ["B008", "B905"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]

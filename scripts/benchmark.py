@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+import _quiet  # noqa: E402,F401  (silences Streamlit's "No runtime" warnings)
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 import pandas as pd  # noqa: E402
 
@@ -39,10 +40,12 @@ def main() -> None:
     p.add_argument("--url", default=llm.DEFAULT_URL)
     p.add_argument("--seeds", default="1-20")
     p.add_argument("--difficulty", default="easy,medium,hard")
-    p.add_argument("--out", default=str(ROOT / "docs"))
+    p.add_argument("--out", default="benchmark-results",
+                   help="folder for benchmark.md and benchmark.csv (default: benchmark-results/, not tracked by git). "
+                        "Use --out docs to update the published results.")
     a = p.parse_args()
     pol = {f"{r.clause}|{r.area}": r.text for r in pd.read_csv(ROOT / "data" / "policy.csv", dtype=str).itertuples()}
-    rows = []
+    rows, failed = [], 0
     for diff in a.difficulty.split(","):
         for seed in seeds(a.seeds):
             files, key_rows = challenge.generate(seed, diff)
@@ -54,6 +57,7 @@ def main() -> None:
                     job.thread.join()
                     if job.failed:
                         print(f"{diff} {seed} {engine} {model}: FAILED {job.failed[1]['msg']}")
+                        failed += 1
                         continue
                     prop = [dict(source_file=r["source_file"], line_number=r["line_number"],
                                  related_lines=r.get("related_lines", []), verdict=r.get("verdict", ""),
@@ -73,7 +77,7 @@ def main() -> None:
         sys.exit("Nothing ran.")
     df = pd.DataFrame(rows)
     out = Path(a.out)
-    out.mkdir(exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
     df.to_csv(out / "benchmark.csv", index=False)
     g = df.groupby(["engine", "model", "difficulty"], sort=False)
     md = ["# Benchmark", "", f"Generated {datetime.now():%Y-%m-%d %H:%M} on fresh challenge data "
@@ -89,6 +93,8 @@ def main() -> None:
            "three problems; the rules catch two of them and miss the reworded surcharge, so their hard-mode recall is 96%.", ""]
     (out / "benchmark.md").write_text("\n".join(md), encoding="utf-8")
     print(f"Wrote {out / 'benchmark.md'}")
+    if failed:
+        print(f"{failed} run(s) failed and are not in the results (is the model server running?).")
 
 
 if __name__ == "__main__":

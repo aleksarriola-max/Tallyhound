@@ -11,31 +11,108 @@ import io
 import re
 
 NAME = "invoices.txt"
+MATCH_CHARS = 400
+MAX_PDFS = 300                  # per upload
+MAX_PDF_PAGES = 200             # a PDF claiming more pages than this is not an invoice (and may be a "page-tree bomb")
 HEAD = re.compile(r"^\[PDF (.+)\]$")
-AMT = r"(-?\d{1,3}(?:[.,' ]\d{3})+[.,]\d{2}|-?\d+[.,]\d{2})(?!\d)"      # 1,234.56 / 1.234,56 / 1 234,56 / 99.00
+AMT = r"(?<![\d.,])(-?\d{1,3}(?:[.,' ]\d{3})+[.,]\d{2}|-?\d{1,12}[.,]\d{2})(?!\d)"      # 1,234.56 / 1.234,56 / 1 234,56 / 99.00
 # "Invoice No: 2026/045", "Inv. No. INV 77", "INVOICE #A-12", "Invoice: INV-5" - but not "Invoice: 01/09/2026" (a date)
 INV_NO = re.compile(r"\binv(?:oice)?\.?\s*(?:no\.?|number|num\.?|#)\s*[:#]?\s*([A-Z]{0,6}[ -]?\d[A-Z0-9/-]*)"
                     r"|\binvoice\s*:\s*([A-Z]{1,6}[ -]?\d[A-Z0-9/-]*)", re.I)
 DATE_LIKE = re.compile(r"^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$")
-TOTAL_DUE = re.compile(r"\b(?:total due|amount due|balance due|amount payable|total payable)\b(?:\s*\([^)]{0,30}\))?\s*:?\s*"
-                       r"(?:USD|EUR|GBP)?\s*[$€£]?\s*" + AMT, re.I)
-TOTAL = re.compile(r"\b(?:invoice total|total)\b(?:\s*\([^)]{0,30}\))?\s*:?\s*(?:USD|EUR|GBP)?\s*[$€£]?\s*" + AMT, re.I)
-BANK = re.compile(r"\b(?:account|acct)\.?\s*(?:no\.?|number|#)?\s*[:#]?\s*[*xX\s-]*(\d[\d\s-]{2,}\d)", re.I)
+# Each gap between label, qualifier, currency and amount is ONE character class, so no two parts compete for the same
+# spaces: overlapping \s* runs made a 250-character line take seconds (catastrophic backtracking).
+GAP = r"[\s:]*(?:\([^)]{0,30}\)[\s:]*)?(?:(?:USD|EUR|GBP)[\s:]*)?(?:[$€£][\s]*)?"
+TOTAL_DUE = re.compile(r"\b(?:total due|amount due|balance due|amount payable|total payable)\b" + GAP + AMT, re.I)
+TOTAL = re.compile(r"\b(?:invoice total|total)\b" + GAP + AMT, re.I)
+BANK = re.compile(r"\b(?:account|acct)\b\.?[\s:#*xX-]*(?:(?:no|number)\b\.?[\s:#*xX-]*)?(\d(?:[ -]?\d){3,33})", re.I)
 IBAN = re.compile(r"\bIBAN\b\s*:?\s*([A-Z]{2}\d{2}(?:\s?[A-Z0-9]){10,30})", re.I)
 NOT_BANK = re.compile(r"\b(your|customer|client|cust\.?)\s+(account|acct)|account\s+(ref|reference|manager)", re.I)
 BANK_CONTEXT = re.compile(r"\b(bank|iban|sort code|routing|swift|bic|pay(?:ment)?s? to|remit|beneficiary)\b", re.I)
 VENDOR = re.compile(r"^\s*(?:from|supplier|vendor)\s*[:]\s*(.+)$", re.I)
 
 
-def pdf_lines(data: bytes, max_pages: int = 5) -> list[str]:
-    """Text lines of a PDF (first pages only). Empty when the PDF has no text layer (a scan)."""
+def pdf_lines(data: bytes, max_pages: int = 5) -> list[str] | None:
+    """Text lines of a PDF (first pages only). Empty when the PDF has no text layer (a scan); None when it is refused
+    (it claims more than MAX_PDF_PAGES pages)."""
     from pypdf import PdfReader
     try:
         reader = PdfReader(io.BytesIO(data))
-        text = "\n".join((p.extract_text() or "") for p in reader.pages[:max_pages])
+        count = reader.trailer["/Root"]["/Pages"].get("/Count", 0)   # read the claim before walking the page tree
+        if not isinstance(count, int) or count < 1 or count > MAX_PDF_PAGES:
+            return None                                       # refused: not an invoice-sized PDF
+        text = "\n".join((reader.pages[i].extract_text() or "")[:20000] for i in range(min(max_pages, count)))
     except Exception:          # noqa: BLE001  a broken PDF must not stop the upload
         return []
     return [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+
+
+PDF_SECONDS = 8.0        # one PDF may take this long to read (includes starting the worker)
+PDF_TOTAL_SECONDS = 90.0  # all PDFs of one upload together
+PDF_MEMORY_MB = 512
+
+
+def read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
+    """Text lines of each PDF, read by a separate worker process (tallyhound/pdfworker.py) with a time and memory
+    limit, so a hostile PDF (a page-tree or decompression bomb) can never freeze the app for everyone else. A PDF that
+    takes longer than PDF_SECONDS gives None and the worker is restarted for the rest. Falls back to reading in this
+    process, with the page-count guard only, if a worker cannot be started."""
+    import base64
+    import json
+    import queue
+    import subprocess
+    import sys
+    import threading
+    import time as _t
+    from pathlib import Path
+    out: dict[str, list[str] | None] = {}
+    todo = list(items)
+    deadline = _t.time() + PDF_TOTAL_SECONDS
+    root = str(Path(__file__).resolve().parent.parent)
+    while todo:
+        if _t.time() >= deadline:
+            out.update({n: None for n, _ in todo})
+            break
+        try:
+            proc = subprocess.Popen([sys.executable, "-m", "tallyhound.pdfworker", str(PDF_MEMORY_MB)], cwd=root,
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except OSError:
+            out.update({n: pdf_lines(b) for n, b in todo})
+            break
+        got: queue.Queue = queue.Queue()
+
+        def drain(p=proc, q=got):
+            for x in p.stdout:
+                q.put(x)
+            q.put(None)                                # the worker ended
+
+        def feed(p=proc, batch=tuple(todo)):
+            try:
+                for n, b in batch:
+                    p.stdin.write(json.dumps({"name": n, "data": base64.b64encode(b).decode()}) + "\n")
+                    p.stdin.flush()
+                p.stdin.close()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+        threading.Thread(target=drain, daemon=True).start()
+        threading.Thread(target=feed, daemon=True).start()
+        try:
+            while todo:
+                wait = min(PDF_SECONDS, deadline - _t.time())
+                try:
+                    msg = got.get(timeout=max(wait, 0.01))
+                except queue.Empty:
+                    msg = None
+                if msg is None:                        # stuck or crashed on the PDF it was reading: skip that one
+                    out[todo[0][0]] = None
+                    todo = todo[1:]
+                    break                              # and start a fresh worker for the rest
+                res = json.loads(msg)
+                out[res["name"]] = res["lines"]
+                todo = [x for x in todo if x[0] != res["name"]]
+        finally:
+            proc.kill()
+    return out
 
 
 def combine(docs: list[tuple[str, list[str]]]) -> list[str]:
@@ -69,7 +146,8 @@ def blocks(lines: list[str]) -> list[dict]:
     """One dict per invoice: its name, and the line number (1-based) and value of each field found. A PDF that holds
     several invoices gives several blocks: a new invoice number after a total starts the next one."""
     out, cur = [], None
-    for n, ln in enumerate(lines, start=1):
+    for n, full in enumerate(lines, start=1):
+        ln = full[:MATCH_CHARS]                   # fields sit at the start of short lines; never scan a huge one
         m = HEAD.match(ln)
         if m:
             cur = dict(name=m.group(1), start=n)

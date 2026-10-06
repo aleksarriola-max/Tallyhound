@@ -59,6 +59,13 @@ def run(folder: Path, limits: dict | None = None) -> dict:
     return dict(files=files, notes=notes, hits=hits, gate=g)
 
 
+def safe_cell(text: str) -> str:
+    """Text from uploaded files that a spreadsheet would run as a formula ("=HYPERLINK(...)", "+cmd|...") gets a
+    leading apostrophe, so opening the CSV in Excel shows it as text."""
+    t = str(text)
+    return "'" + t if t[:1] in ("=", "+", "-", "@", "\t", "\r") else t
+
+
 def write_report(folder: Path, res: dict, remember: bool = True) -> tuple[Path, list]:
     out = folder / REPORT_DIR
     out.mkdir(exist_ok=True)
@@ -72,8 +79,9 @@ def write_report(folder: Path, res: dict, remember: bool = True) -> tuple[Path, 
         w.writerow(["new", "severity", "area", "clause", "amount", "title", "file", "line", "evidence"])
         for h in hits:
             lines = res["files"].get(h.source_file, [])
-            w.writerow(["yes" if h in new else "", h.severity, h.area, h.clause, f"{h.amount:.2f}", h.title, h.source_file,
-                        h.line_number, lines[h.line_number - 1] if 0 < h.line_number <= len(lines) else ""])
+            w.writerow(["yes" if h in new else "", h.severity, h.area, h.clause, f"{h.amount:.2f}", safe_cell(h.title),
+                        h.source_file, h.line_number,
+                        safe_cell(lines[h.line_number - 1] if 0 < h.line_number <= len(lines) else "")])
     g = res["gate"]
     held = g[g.decision == "HOLD"] if not g.empty else g
     md = [f"# Tallyhound report {stamp.replace('_', ' ')}", "",

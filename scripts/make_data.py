@@ -4,12 +4,15 @@ Run from the project root:  python scripts/make_data.py
 Every finding's evidence is an exact line in a file under data/source/, and its
 line_number is computed from the generated file, so the app can verify quotes.
 """
+import argparse
 import csv
 import random
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
+argparse.ArgumentParser(description="Regenerate the fictional sample company in data/. Deterministic: running it "
+                        "twice gives identical files (CI checks this).").parse_args()   # so --help shows help, not a run
 SRC = DATA / "source"
 SRC.mkdir(parents=True, exist_ok=True)
 rnd = random.Random(2026)
@@ -398,6 +401,7 @@ write_csv(DATA / "findings.csv",
 
 # sanity: counts promised by the spec
 import collections
+
 sev = collections.Counter(r[1] for r in rows)
 area = collections.Counter(r[2] for r in rows)
 assert sev == {"High": 7, "Medium": 12, "Low": 7}, sev
@@ -503,21 +507,21 @@ write_csv(DATA / "recovery.csv", ["supplier", "invoice", "source", "reason", "cl
 # --------------------------------------------------------------------------
 # Subscriptions: 15 tools, 911 licences, annual saving 25,850
 # --------------------------------------------------------------------------
-TOOLS = [  # name, licences, active, price, action, reduce_to
-    ("Adobe Acrobat", 60, 22, 180, "Reduce", 30),
-    ("Figma", 40, 9, 180, "Reduce", 15),
-    ("Miro", 35, 6, 120, "Reduce", 10),
-    ("Tableau Viewer", 25, 0, 300, "Cancel", 0),
-    ("Smartsheet", 8, 0, 300, "Cancel", 0),
-    ("Slack Business+", 120, 111, 96, "Keep", 0),
-    ("Zoom Workplace", 70, 58, 160, "Keep", 0),
-    ("Microsoft 365", 150, 142, 264, "Keep", 0),
-    ("Salesforce", 35, 33, 840, "Keep", 0),
-    ("DocuSign", 15, 12, 300, "Keep", 0),
-    ("1Password", 100, 96, 60, "Keep", 0),
-    ("Notion", 50, 41, 96, "Keep", 0),
-    ("Asana", 40, 34, 130, "Keep", 0),
-    ("Jira", 45, 40, 90, "Keep", 0),
+TOOLS = [  # invented product names; name, licences, active, price, action, reduce_to
+    ("Quillmark PDF", 60, 22, 180, "Reduce", 30),
+    ("Framewright Design", 40, 9, 180, "Reduce", 15),
+    ("Pinwall Canvas", 35, 6, 120, "Reduce", 10),
+    ("Dashwell Viewer", 25, 0, 300, "Cancel", 0),
+    ("Rowplan Sheets", 8, 0, 300, "Cancel", 0),
+    ("Hallway Chat Plus", 120, 111, 96, "Keep", 0),
+    ("Meetspace Rooms", 70, 58, 160, "Keep", 0),
+    ("Deskwork Suite", 150, 142, 264, "Keep", 0),
+    ("Ledgerline CRM", 35, 33, 840, "Keep", 0),
+    ("Inkstamp Sign", 15, 12, 300, "Keep", 0),
+    ("Keyhold Vault", 100, 96, 60, "Keep", 0),
+    ("Notewell Wiki", 50, 41, 96, "Keep", 0),
+    ("Taskferry", 40, 34, 130, "Keep", 0),
+    ("Ticketloom", 45, 40, 90, "Keep", 0),
 ]
 
 
@@ -547,12 +551,6 @@ write_csv(DATA / "subscriptions.csv",
 # --------------------------------------------------------------------------
 # Workflow cards, options, runs, events, guardrails, monitor, agents
 # --------------------------------------------------------------------------
-write_csv(DATA / "workflow_cards.csv", ["id", "name", "purpose", "picker", "default"], [
-    ["audit", "Monthly audit", "Find problems after the money is spent", "multi", "2026-09"],
-    ["gate", "Payment gate", "Stop risky payments before they go out", "single", "Payment run 2026-10-01"],
-    ["recovery", "Supplier recovery", "Find money to claim back", "single", "Q3 supplier invoices"],
-    ["subs", "Subscriptions", "Cut software waste", "single", "Software register"],
-])
 write_csv(DATA / "workflow_options.csv",
           ["workflow", "option", "preview_title", "preview", "est_min", "result_findings", "last_run", "file"], [
     ["audit", "2026-07", "Preview · 2026-07", "37 invoices · 37 payments · 18 POs · 22 expenses · 14 contracts · 0.3 MB", 8, 0, "Done", ""],
@@ -586,21 +584,21 @@ write_csv(DATA / "events.csv", ["time", "agent", "message"], [
     ["14:29:15", "Approvals", "6 findings from approvals.csv; all quotes matched"],
     ["14:28:21", "Payments", "6 findings from payments.csv; all quotes matched"],
     ["14:27:03", "Orchestrator", "Read 5 source files, 48 invoices and 48 payments"],
-    ["14:26:50", "Inbox watcher", "New folder detected: inbox/2026-09"],
+    ["14:26:50", "Folder check", "New month found in the watched folder: 2026-09"],
     ["14:20:11", "Payment gate", "Payment run 2026-10-01 checked: 8 HOLD, 6 RELEASE"],
     ["09:57:45", "Skeptic", "2026-07 audit finished with 0 findings (clean)"],
     ["09:50:02", "Orchestrator", "Started 2026-07 audit"],
 ])
 write_csv(DATA / "monitor.csv", ["item", "value"], [
-    ["Inbox watcher", "Watching inbox/"],
-    ["Local model", "Loaded, offline"],
-    ["Sandbox", "On, read-only inbox"],
-    ["Network", "0 attempts blocked"],
+    ["Folder check", "scripts/watch.py, run by your scheduler"],
+    ["Model", "Built-in rules; local model optional"],
+    ["Uploads", "Read in memory, never used as file paths"],
+    ["Cloud calls", "None"],
 ])
 write_csv(DATA / "guardrails.csv", ["name", "description", "metric"], [
-    ["Agents only propose", "Approve, reject, hold and release happen only on the Review step and the Payment gate.", "Human decides"],
-    ["Offline", "The model runs on the local GPU. No cloud calls.", "0 requests"],
-    ["Sandbox", "Agents read the inbox folder and write only to the results folder.", "Read-only inbox"],
+    ["Agents only propose", "Approve, reject, hold and release happen only when a person presses the button in Review.", "Human decides"],
+    ["Offline", "AI engines use a model on your own machine (Ollama, LM Studio, vLLM); the built-in rules use no model. No cloud calls.", "0 cloud requests"],
+    ["Uploads stay put", "Uploaded files are read in memory and never used as file paths. Only your saved work is stored.", "No file paths"],
     ["Quote check", "Each quoted line is matched to the source file before it is shown.", "{quote_pct}% matched"],
     ["Skeptic review", "A second agent tries to disprove every finding. Always on, locked.", "{n_findings} reviewed"],
     ["Audit trail", "Every proposal, verdict and decision is logged with time and actor.", "{n_findings} findings logged"],

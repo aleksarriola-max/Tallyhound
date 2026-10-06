@@ -6,7 +6,7 @@ time,agent,message
 14:29:15,Approvals,6 findings from approvals.csv; all quotes matched
 14:28:21,Payments,6 findings from payments.csv; all quotes matched
 14:27:03,Orchestrator,"Read 5 source files, 48 invoices and 48 payments"
-14:26:50,Inbox watcher,New folder detected: inbox/2026-09
+14:26:50,Folder check,New month found in the watched folder: 2026-09
 14:20:11,Payment gate,"Payment run 2026-10-01 checked: 8 HOLD, 6 RELEASE"
 09:57:45,Skeptic,2026-07 audit finished with 0 findings (clean)
 09:50:02,Orchestrator,Started 2026-07 audit

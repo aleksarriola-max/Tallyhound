@@ -3,8 +3,8 @@ import streamlit as st
 
 st.set_page_config(layout="wide", page_title="Tallyhound", page_icon=None)
 
-from tallyhound import common as C  # noqa: E402
 from tallyhound import auth, custom, layout, sim, store  # noqa: E402
+from tallyhound import common as C  # noqa: E402
 
 C.init_state()
 C.inject_css()
@@ -19,7 +19,7 @@ def ticker() -> None:
     s = st.session_state.sim
     if s and s["running"]:
         item = next((i for i in s["queue"] if i["status"] == "Running"), None)
-        st.caption(f"Run in progress{': ' + item['label'] if item else ''}")
+        st.caption(f"Run in progress{': ' + C.esc(item['label']) if item else ''}")
 
 
 running = bool(st.session_state.sim and st.session_state.sim["running"])

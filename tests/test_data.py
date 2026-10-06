@@ -43,5 +43,6 @@ def test_recovery_and_subscriptions_totals():
 
 
 def test_policy_clause_text_for_required_clauses():
-    assert C.clause_text("Vendors", "4.3") == "No payment may be released to a changed bank account until verification is recorded."
-    assert C.clause_text("Payments", "5.2") == "A single invoice may be paid once only."
+    P = C.policy()
+    assert P["4.3|Vendors"] == "No payment may be released to a changed bank account until verification is recorded."
+    assert P["5.2|Payments"] == "A single invoice may be paid once only."

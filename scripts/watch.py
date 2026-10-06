@@ -3,13 +3,14 @@
     python scripts/watch.py FOLDER [--alert]
 
 Exit codes: 0 everything was checked, 1 an alert could not be sent (it is retried next run), 3 some data was not
-checked (see "Data that was NOT checked" in the report). A missing folder also exits 1.
+checked (see "Data that was NOT checked" in the report), 2 the folder does not exist.
 """
 import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _quiet  # noqa: E402,F401  (silences Streamlit's "No runtime" warnings)
 import logging  # noqa: E402
 
 logging.getLogger("streamlit").setLevel(logging.ERROR)
@@ -21,7 +22,8 @@ p.add_argument("--alert", action="store_true", help="send Slack/email alerts for
 a = p.parse_args()
 folder = Path(a.folder)
 if not folder.is_dir():
-    sys.exit(f"Not a folder: {folder}")
+    print(f"Not a folder: {folder}", file=sys.stderr)
+    sys.exit(2)
 res = headless.run(folder)
 report, new = headless.write_report(folder, res, remember=False)
 held = int((res["gate"].decision == "HOLD").sum()) if not res["gate"].empty else 0

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _quiet  # noqa: E402,F401  (silences Streamlit's "No runtime" warnings)
 from tallyhound import challenge  # noqa: E402
 
 p = argparse.ArgumentParser()

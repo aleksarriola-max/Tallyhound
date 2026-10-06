@@ -31,8 +31,7 @@ def _start(choice: str) -> None:
     else:
         sel = {"audit": [choice]}
     skip = frozenset(a for a in run_analysis.AGENT_KEYS if not S.get(f"adv_{a}", True))
-    sim.start(sim.build_queue(sel, skip), fresh=bool(S.get("adv_fresh")))
-    S["_run_started"] = True
+    sim.start(sim.build_queue(sel, skip))
 
 
 @st.dialog("Check new files", width="large")
@@ -65,6 +64,10 @@ def run_dialog() -> None:
         st.rerun()                                    # close the dialog; the run shows on Home
     if blocked:
         st.caption("Your role cannot start runs.")
+
+
+APPROVE_HELP = ("Approve = this is a real problem to follow up; it goes into the workbook and memo. It does not pay or "
+                "approve any invoice. If it is not a problem, open Details and reject it with a reason.")
 
 
 def queue_findings():
@@ -109,22 +112,25 @@ def home() -> None:
     label = custom.active_label()
     warns = [x for x in custom.profile(label) if x["level"] == "warn"] if label else []
     m = st.columns(3)
-    m[0].metric("Cases to review", cases, help=f"{n} findings grouped into cases that are decided together")
+    m[0].metric("Cases to review", cases, help=f"Undecided cases, minor items included. {n} findings in all; "
+                "findings that point at the same line form one case and are decided together.")
+    if not label and not run:
+        st.caption("These are the sample company's results from its last run. Press Check new files to watch a run "
+                   "happen, or to upload your own files.")
     m[1].metric("Payments on hold", holds, help=f"{C.money(held_amt)} held in the payment run")
     m[2].metric("Data to confirm", len(warns), help="Things the data check could not decide on its own")
     if cases:
         st.markdown("**Top of the queue**")
-        for g in triage.cases(queue_findings())[:5]:
+        todo = [g for g in triage.cases(queue_findings()) if not all(x.id in S.decisions for x in g)]
+        for g in todo[:5]:                       # the next five undecided cases, so the list refills as you decide
             r = g[0]
-            if all(x.id in S.decisions for x in g):
-                continue
             st.markdown(f"{C.sev_badge(r.severity)} &nbsp; {C.esc(r.title)} &nbsp; "
                         f"<span class='th-muted'>{C.money(r.amount)}</span>", unsafe_allow_html=True)
         st.button("Open the review queue", on_click=C.goto, args=("Review",), key="home_review")
     elif n:
         st.success("Every case is decided. Download the results from Review.")
     for w in warns:
-        st.warning(f"`{w['file']}` - {w['message']}")
+        st.warning(f"`{w['file']}` - {C.esc(w['message'])}")
     if label and warns:
         st.caption("Confirm these under Settings > Data.")
     with st.expander("Recent runs", expanded=False):
@@ -183,7 +189,7 @@ def case_row(g: list) -> None:
             extra2 = f" <span class='th-muted'>({len(ids) - left} of {len(ids)} decided)</span>"
             c1.markdown(extra2, unsafe_allow_html=True)
         c3.button("Approve" if left == len(ids) else f"Approve {left}", key=f"appr_{r.id}", type="primary", on_click=review._decide_all, args=(ids, "Approved"),
-                  disabled=bool(blocked), help=blocked, **C.bw())
+                  disabled=bool(blocked), help=blocked or APPROVE_HELP, **C.bw())
     open_key = f"open_{r.id}"
     c4.button("Close" if S.get(open_key) else "Details", key=f"btn_{open_key}", on_click=_toggle, args=(open_key,),
               type="tertiary")
@@ -194,9 +200,18 @@ def case_row(g: list) -> None:
 
 def case_details(r, others, ids, d, blocked) -> None:
     S = st.session_state
-    st.caption(f"{r.id} · {r.area} · clause {r.clause} · {r.source_file} line {r.line_number} · priority {triage.priority(r)}")
-    review._code(r.evidence)
+    st.caption(f"{r.id} · {r.area} · {r.source_file} line {r.line_number} · priority {triage.priority(r)} "
+               "(severity, amount and the Skeptic's confidence)")
+    clause = C.policy().get(f"{r.clause}|{r.area}")
+    if clause:
+        st.markdown(f"**Policy clause {C.esc(r.clause)}:** {C.esc(clause)}")
     lines = C.source_lines(r.source_file)
+    head = lines[0] if lines and r.source_file.endswith(".csv") and int(r.line_number) != 1 else ""
+    review._code((head + "\n" if head else "") + str(r.evidence))      # the column names make a CSV line readable
+    rel = [int(x) for x in list(r.matched_lines) if int(x) != int(r.line_number) and 0 < int(x) <= len(lines)][:5]
+    if rel:
+        st.caption("Related " + ("line" if len(rel) == 1 else "lines") + " " + ", ".join(map(str, rel)) + ":")
+        review._code("\n".join(lines[x - 1] for x in rel))
     if lines:
         with st.expander("Show it in the file"):
             n = int(r.line_number)
@@ -214,7 +229,7 @@ def case_details(r, others, ids, d, blocked) -> None:
     a, b = st.columns([1, 2])
     a.text_input("Owner", value=note.get("owner", ""), key=f"own_{r.id}", placeholder="Who follows this up?")
     b.text_input("Note", value=note.get("note", ""), key=f"note_{r.id}")
-    st.button("Save owner and note", key=f"savenote_{r.id}", on_click=C.save_note, args=(r.id,), type="tertiary")
+    st.button("Save owner and note", key=f"savenote_{r.id}", on_click=C.save_note, args=(r.id,))
     if d:
         st.caption(f"{d['status']}" + (f": {C.esc(d['reason'])}" if d.get("reason") else ""))
         x1, x2, _ = st.columns([1, 1.3, 3])
@@ -232,11 +247,14 @@ def case_details(r, others, ids, d, blocked) -> None:
                       disabled=bool(blocked), type="tertiary")
             if len(done) == len(ids):
                 return
-        reason = st.text_input("Reason to reject (required)", key=f"rej_{r.id}")
+        st.text_input("Reason to reject (required)", key=f"rej_{r.id}",
+                      placeholder="Why is this not a problem? e.g. approved by phone, credit note received")
         who = review._entity(r)
         st.checkbox(f"Don't flag clause {r.clause} again for {who}", key=f"supp_{r.id}")
-        st.button("Reject", key=f"rejbtn_{r.id}", disabled=not reason.strip() or bool(blocked),
-                  on_click=review._reject, args=(r.id, reason.strip(), str(r.clause), r.source_file, who, ids))
+        if S.get(f"_rej_missing_{r.id}"):
+            st.warning("Write a reason first: every rejection needs one for the audit trail.")
+        st.button("Reject", key=f"rejbtn_{r.id}", disabled=bool(blocked),
+                  on_click=review.reject_clicked, args=(r.id, str(r.clause), r.source_file, who, ids))
 
 
 def findings_tab() -> None:
@@ -261,15 +279,24 @@ def findings_tab() -> None:
     conf_ids = [x.id for g in groups
                 if (todo := [x for x in g if x.id not in S.decisions]) and all(x.skeptic_verdict == "Confirmed" for x in todo)
                 for x in todo]
-    t2.button(f"Approve all confirmed ({len(conf_ids)})", on_click=review.bulk_approve, args=(conf_ids,),
-              disabled=not conf_ids or bool(why), key="bulk_all", **C.bw())
+    if S.get("_bulk_ask") and conf_ids:          # two steps: approving many findings at once is a deliberate act
+        y, n = t2.columns(2)
+        y.button(f"Yes, approve {len(conf_ids)}", type="primary", key="bulk_yes", disabled=bool(why), **C.bw(),
+                 on_click=lambda ids=tuple(conf_ids): (review.bulk_approve(list(ids)), S.pop("_bulk_ask", None)))
+        n.button("Cancel", key="bulk_no", on_click=lambda: S.pop("_bulk_ask", None), **C.bw())
+        st.caption(f"This approves the {len(conf_ids)} undecided findings that the Skeptic confirmed, each as one "
+                   "decision in the audit trail with the reason \"Bulk: confirmed by the Skeptic\".")
+    else:
+        t2.button(f"Approve all confirmed ({len(conf_ids)})", on_click=lambda: S.update(_bulk_ask=True),
+                  disabled=not conf_ids or bool(why), key="bulk_all", help=APPROVE_HELP, **C.bw())
 
     def minor(r) -> bool:
         return (float(r.amount) < L["materiality"] and r.severity != "High") or triage.demoted(str(r.clause))
     main = [g for g in groups if not all(minor(r) for r in g)]
     small = [g for g in groups if all(minor(r) for r in g)]
     done = sum(all(x.id in S.decisions for x in g) for g in main)
-    st.caption(f"{len(main)} cases ({done} decided), most important first.")
+    st.caption(f"{len(main)} cases ({done} decided), most important first: severity, amount and the Skeptic's "
+               "confidence together, so a large Medium can come before a small High.")
     limit = len(main) if S.get("rev_all") else 20
     for g in main[:limit]:
         case_row(g)

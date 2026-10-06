@@ -3,3 +3,12 @@ __pycache__/
 .venv/
 .tallyhound_state/
 *.egg-info/
+build/
+dist/
+.ruff_cache/
+.pytest_cache/
+benchmark-results/
+challenge-*.zip
+anonymised/
+tallyhound-reports/
+.env

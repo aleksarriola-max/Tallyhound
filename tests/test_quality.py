@@ -82,6 +82,7 @@ def test_regression_case(path):
 # ---- the review-queue guardrails
 def test_cases_group_findings_that_share_lines():
     import pandas as pd
+
     from tallyhound import triage
     f = pd.DataFrame([dict(id="F-1", severity="Medium", amount=13000.0, skeptic_verdict="Confirmed", source_file="a.csv",
                            line_number=9, matched_lines=[7, 8, 9], clause="1.4", title="split"),
