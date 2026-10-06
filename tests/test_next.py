@@ -117,7 +117,7 @@ def test_scorecard_makes_and_adds_a_challenge():
     at.radio(key="nav").set_value("Trust").run()
     assert not at.exception, [e.value for e in at.exception]
     at.button[[b.label for b in at.button].index("Make challenge")].click().run()
-    at.button[[b.label for b in at.button].index("Add to the Monthly audit picker")].click().run()
+    at.button[[b.label for b in at.button].index("Add to my data")].click().run()
     label = at.session_state.challenge["label"]
     assert label in at.session_state.uploads and at.session_state.answer_keys[label]
     at.selectbox(key="sc_pick").select(label).run()

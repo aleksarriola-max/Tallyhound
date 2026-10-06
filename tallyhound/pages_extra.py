@@ -110,9 +110,9 @@ def scorecard_page() -> None:
         d1, d2, _ = st.columns([2, 2, 3])
         d1.download_button("Download zip (with answer key)", challenge.to_zip(ch["files"], ch["key"], ch.get("pdfs")),
                            file_name=f"{ch['label']}.zip", mime="application/zip", **C.bw())
-        d2.button("Add to the Monthly audit picker", on_click=_add_challenge, **C.bw())
+        d2.button("Add to my data", on_click=_add_challenge, **C.bw())
         if ch["label"] in S.get("uploads", {}):
-            st.caption(f"Added. Pick \"{ch['label']}\" in the Monthly audit card on Run analysis and run it; "
+            st.caption(f"Added. On Home press Check new files and pick \"{ch['label']}\"; "
                        "it is then scored here.")
 
 

@@ -234,7 +234,7 @@ def test_uploads_survive_a_reload():
     sid = at.query_params["s"][0] if isinstance(at.query_params["s"], list) else at.query_params["s"]
     at.radio(key="nav").set_value("Trust").run()
     at.button[[b.label for b in at.button].index("Make challenge")].click().run()
-    at.button[[b.label for b in at.button].index("Add to the Monthly audit picker")].click().run()
+    at.button[[b.label for b in at.button].index("Add to my data")].click().run()
     at2 = AppTest.from_file(APP, default_timeout=60)
     at2.query_params["s"] = sid
     at2.run()
