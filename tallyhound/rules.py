@@ -14,10 +14,10 @@ from __future__ import annotations
 import csv
 import math
 import re
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from functools import lru_cache
-from itertools import combinations
 
 FILES = {"Payments": "payments.csv", "Approvals": "approvals.csv", "Vendors": "vendors.csv",
          "Contracts": "contracts.txt", "Expenses": "expenses.csv", "Invoices": "invoices.txt"}
@@ -199,7 +199,7 @@ def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
             g["inv"] = max(g["inv"], ia)
             if pa > 0 and g["lines"] and g["net"] > g["inv"] + tol:
                 out.append(Hit("Payments", "5.2", "High", pa, f"{inv.upper()} was paid more than once", "payments.csv", ln,
-                               [("payments.csv", x) for x in g["lines"]]))
+                               [("payments.csv", x) for x in g["lines"][-10:]]))       # the latest 10 is enough to judge
             if pa > 0:
                 g["lines"].append(ln)
             if pa > ia + tol and len(g["lines"]) == 1:
@@ -297,6 +297,32 @@ def cross_file(files: dict[str, list[str]]) -> list[Hit]:
     return out
 
 
+def _subset(pool: list[tuple[int, int]], target: int, kmin: int = 2, kmax: int = 6, budget: int = 200_000) -> list[int] | None:
+    """Line numbers of 2-6 payments (cents) that add up to target, or None. Depth-first over amounts sorted
+    small to large, so a branch stops as soon as it overshoots; a step budget keeps odd files from taking minutes."""
+    items = sorted(pool, key=lambda x: x[1])
+    steps = 0
+
+    def go(i: int, left: int, picked: list[int]) -> list[int] | None:
+        nonlocal steps
+        if left == 0 and len(picked) >= kmin:
+            return list(picked)
+        if len(picked) == kmax or left <= 0:
+            return None
+        for j in range(i, len(items)):
+            steps += 1
+            if steps > budget or items[j][1] > left:
+                return None
+            picked.append(items[j][0])
+            hit = go(j + 1, left - items[j][1], picked)
+            picked.pop()
+            if hit:
+                return hit
+        return None
+
+    return go(0, target, []) if target > 0 else None
+
+
 def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
     """Match the bank statement to recorded payments: one-to-one first, then credits to reversals, then batch
     transfers that pay several invoices at once. Bank debits that are clearly not supplier payments (fees, payroll,
@@ -314,32 +340,46 @@ def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
     pays = [(ln, r, _f(r["paid_amount"])) for ln, r in rows(P) if r.d("pay_date")]
     first, last = min(r.d("date") for _, r in bank), max(r.d("date") for _, r in bank)
     by_cents: dict[int, list] = {}
-    for pl, p, pa in pays:                      # index by amount so big files stay fast
-        by_cents.setdefault(round(pa * 100), []).append((pl, p))
+    for pl, p, pa in pays:                      # index by amount, then date, so big files stay fast
+        by_cents.setdefault(round(pa * 100), []).append((p.d("pay_date"), pl, p))
+    for v in by_cents.values():
+        v.sort(key=lambda x: (x[0], x[1]))
+    when = {k: [x[0] for x in v] for k, v in by_cents.items()}
     used: set[int] = set()
     unmatched = []
     for ln, r, amt in lines_:
         if amt > 0 and NON_AP_BANK.search(r["description"] + " " + r["reference"]):
             continue
         d, ref = r.d("date"), (r["reference"] + " " + r["description"]).lower()
-        cands = [(pl, p) for pl, p in by_cents.get(round(amt * 100), []) if pl not in used
-                 and -L["bank_days"] <= (d - p.d("pay_date")).days <= L["bank_days"]]
-        cands.sort(key=lambda c: (c[1]["payment_id"].lower() not in ref, c[1]["invoice_no"].lower() not in ref,
-                                  abs((d - c[1].d("pay_date")).days)))
-        if cands:
-            used.add(cands[0][0])
+        k = round(amt * 100)
+        bucket = by_cents.get(k, [])
+        if bucket:
+            lo = bisect_left(when[k], d - timedelta(days=L["bank_days"]))
+            hi = bisect_right(when[k], d + timedelta(days=L["bank_days"]))
+            bucket = bucket[lo:hi]
+        best, best_key = None, None
+        for pd_, pl, p in bucket:                # one pass; a reference match wins, then the nearest date
+            if pl in used:
+                continue
+            key = (p["payment_id"].lower() not in ref, p["invoice_no"].lower() not in ref, abs((d - pd_).days), pl)
+            if best_key is None or key < best_key:
+                best, best_key = pl, key
+                if key[:3] == (False, False, 0):
+                    break
+        if best is not None:
+            used.add(best)
         elif amt > 0:
             unmatched.append((ln, r, amt))
     out = []
+    by_day = sorted((p.d("pay_date"), pl, round(pa * 100)) for pl, p, pa in pays if pa > 0)
+    days = [x[0] for x in by_day]
     for ln, r, amt in unmatched:                 # batch transfers: several open payments adding up to the debit
         d = r.d("date")
-        pool = [(pl, pa) for pl, p, pa in pays if pl not in used and pa > 0
-                and 0 <= (d - p.d("pay_date")).days <= L["bank_days"]][:18]
-        target = round(amt * 100)
-        combo = next((c for k in range(2, min(6, len(pool)) + 1) for c in combinations(pool, k)
-                      if sum(round(pa * 100) for _, pa in c) == target), None)
+        lo, hi = bisect_left(days, d - timedelta(days=L["bank_days"])), bisect_right(days, d)
+        pool = [(pl, c) for _, pl, c in by_day[lo:hi] if pl not in used][:18]
+        combo = _subset(pool, round(amt * 100))
         if combo:
-            used.update(pl for pl, _ in combo)
+            used.update(combo)
         else:
             out.append(Hit("Payments", "5.5", "High", amt,
                            f"Bank payment of ${amt:,.2f} on {r['date']} ({r['description'].strip()}) has no recorded payment",

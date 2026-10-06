@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from . import common as C
 from . import auth, exports, guide
+from . import common as C
 
 
 def _code(text: str) -> None:
@@ -15,19 +15,30 @@ def _code(text: str) -> None:
 
 
 def _decide_all(ids: list[str], status: str, reason: str = "") -> None:
+    """Decide the undecided findings of a case. An earlier decision is never overwritten; undo it first."""
     for i in ids:
-        C.decide(i, status, reason)
+        if i not in st.session_state.decisions:
+            C.decide(i, status, reason)
 
 
 def _undo_all(ids: list[str]) -> None:
+    from . import learn
+    S = st.session_state
     for i in ids:
-        if i in st.session_state.decisions:
-            C.undo(i)
+        d = S.decisions.get(i)
+        if d is None:
+            continue
+        sup = d.get("suppression")
+        C.undo(i)
+        if sup and learn.is_suppressed(*sup) and not any(x.get("suppression") == sup for x in S.decisions.values()):
+            learn.remove(*sup)                 # the rejection that set it aside is undone, so the suppression goes too
+            C.log_action("Reviewer", "Suppression removed", i, f"clause {sup[0]} for {sup[2]}: its rejection was undone")
 
 
 def test_case_json(r, ids: list[str]) -> str:
     """A regression test for tests/cases/: the files, and the lines that must not be flagged again."""
     import json
+
     from . import custom
     label = custom.active_label()
     files = custom.view(label) if label else {n: C.read_source(n) for n in rules_files()}
@@ -103,10 +114,10 @@ def _entity(r) -> str:
 
 def _reject(fid: str, reason: str, clause: str, source_file: str, who: str, ids: list[str] | None = None) -> None:
     from . import learn
-    for i in ids or [fid]:
-        C.decide(i, "Rejected", reason)
+    _decide_all(ids or [fid], "Rejected", reason)
     if st.session_state.get(f"supp_{fid}"):
         learn.suppress(clause, source_file, who, reason)
+        st.session_state.decisions.get(fid, {})["suppression"] = [clause, source_file, who]
         C.log_action("Reviewer", "Suppression added", fid, f"clause {clause} for {who}: {reason}")
 
 
@@ -172,7 +183,7 @@ def step3() -> None:
                 st.caption("Shadow rules run without adding to the queue. Mark a few: once enough are real problems, "
                            "the rule can be promoted on the Policy page.")
                 for r in in_shadow.itertuples():
-                    k = f"{r.clause}|{r.id}"
+                    k = f"{r.clause}|{S.get('dataset') or 'sample'}|{r.source_file}:{r.line_number}"
                     c1, c2, c3 = st.columns([6, 1.3, 1.3], vertical_alignment="center")
                     mark = S.get("shadow_marks", {}).get(k)
                     c1.markdown(f"**{r.id}** clause {r.clause}: {C.esc(r.title)}" +

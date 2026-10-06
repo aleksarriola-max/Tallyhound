@@ -22,13 +22,13 @@ def sev_counts(df: pd.DataFrame) -> dict:
 # --------------------------------------------------------------------------
 def overview() -> None:
     f = C.findings()
-    name, (gdf, _) = next(iter(gate_runs().items()))
+    name, (gdf, clearable) = next(iter(gate_runs().items()))
     if C.custom_label():
         st.info("Findings, severity and the payment run are from your uploaded files" if name.startswith("Uploaded")
                 else "Findings and severity are from your uploaded files; the payment run is the sample company's")
         st.caption("Recoverable and Annual savings are the sample company's: recovery and subscriptions are not "
                    "analysed from uploads yet.")
-    gt = C.gate_totals(gdf) if not gdf.empty else dict(hold_amt=0.0)
+    gt = C.gate_totals(gdf, st.session_state.cleared if clearable else None) if not gdf.empty else dict(hold_amt=0.0)
     rec, subs = C.recovery(), C.subscriptions()
     m = st.columns(4)
     m[0].metric("Held in payment run", C.money(gt["hold_amt"]))
@@ -162,7 +162,7 @@ def payment_gate() -> None:
     h3.download_button("Export release file", data=rel[["line", "supplier", "invoice", "amount"]].to_csv(index=False),
                        file_name=f"release_{run.split()[-1]}.csv", mime="text/csv", **C.bw())
 
-    show = pd.DataFrame({"Line": gdf.line.astype(int), "Decision": gdf.final, "Supplier": gdf.supplier,
+    show = pd.DataFrame({"Line": gdf.line.astype(str), "Decision": gdf.final, "Supplier": gdf.supplier,
                          "Invoice": gdf.invoice, "Amount": gdf.amount.map(C.money), "Reason": gdf.reason})
     for i in range(1, 9):
         show[str(i)] = ["✓" if v == "1" else "✗" for v in gdf[f"c{i}"]]
@@ -174,8 +174,8 @@ def payment_gate() -> None:
     st.caption("Checks: " + " · ".join(f"{i + 1} {c}" for i, c in enumerate(CHECKS)))
 
     rows = ev.selection.rows if ev and ev.selection else []
-    sel_lines = [int(show.iloc[r].Line) for r in rows]
-    holdable = [l for l in sel_lines if gdf[gdf.line == str(l)].final.iloc[0] == "HOLD"]
+    sel_lines = [str(show.iloc[r].Line) for r in rows]
+    holdable = [l for l in sel_lines if gdf[gdf.line == l].final.iloc[0] == "HOLD"]
     c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
     reason = c1.text_input("Reason for clearing the hold (required)", key="clear_reason")
     from . import auth
@@ -183,8 +183,11 @@ def payment_gate() -> None:
         st.caption(auth.review_block_reason())
     if c2.button("Clear hold", disabled=not (holdable and reason.strip()) or not clearable or bool(auth.review_block_reason())):
         for l in holdable:
-            S.cleared[str(l)] = reason.strip()
-            C.log_action("Reviewer", "Hold cleared", f"Line {l}", reason.strip())
+            row = gdf[gdf.line == l].iloc[0]
+            S.cleared[l] = reason.strip()
+            C.log_action("Reviewer", "Hold cleared", f"Line {l}",
+                         f"{run}: {row.supplier} {row.invoice} {C.money(row.amount)} (failed: {row.failed_checks}). "
+                         f"Reason: {reason.strip()}")
         st.rerun()
     st.caption("Select HOLD lines in the table, give a reason, then clear the hold. Agents never release a payment." +
                ("" if clearable else " Clearing is only enabled for run 2026-10-01 in this demo."))
@@ -233,12 +236,17 @@ def live_feed_body() -> None:
 
 
 def trail_status() -> None:
-    ok, bad = C.verify_trail(st.session_state.audit_log)
-    n = sum("hash" in e for e in st.session_state.audit_log)
-    if ok:
-        st.success(f"Audit trail intact: {n} chained entries, each fingerprinted with the one before.")
+    log = st.session_state.audit_log
+    ok, bad = C.verify_trail(log)
+    off = C.decisions_mismatch(log, st.session_state.decisions)
+    if not ok:
+        st.error(f"Audit trail broken at entry {bad + 1}: an entry was changed or removed after it was written."
+                 if bad < len(log) else "Audit trail broken: entries were removed from the end, or the trail was replaced.")
+    elif off:
+        st.error(f"The recorded decisions do not match the audit trail for {len(off)} finding(s): {', '.join(off[:8])}.")
     else:
-        st.error(f"Audit trail broken at entry {bad + 1}: an entry was changed or removed after it was written.")
+        st.success(f"Audit trail intact: {len(log)} entries, each fingerprinted with the one before, the whole trail "
+                   "sealed, and every decision matches it.")
 
 
 def live_activity() -> None:

@@ -40,9 +40,17 @@ def suppress(clause: str, source_file: str, who: str, reason: str) -> None:
 
 
 def unsuppress(i: int) -> None:
+    from . import common as C
     S = st.session_state
     if 0 <= i < len(S.get("suppressions", [])):
-        S.suppressions.pop(i)
+        x = S.suppressions.pop(i)
+        C.log_action("Reviewer", "Suppression removed", "-", f"clause {x['clause']} for {x['entity']}")
+
+
+def remove(clause: str, source_file: str, who: str) -> None:
+    S = st.session_state
+    S.suppressions = [x for x in S.get("suppressions", [])
+                      if not (x["clause"] == clause and x["source_file"] == source_file and x["entity"] == who)]
 
 
 def is_suppressed(clause: str, source_file: str, who: str) -> bool:

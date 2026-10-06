@@ -5,9 +5,12 @@ line at the stated position in the file. Anything else is dropped, so a made-up 
 """
 from __future__ import annotations
 
+import time
+
 from . import llm, rules
 
 CHUNK = 120
+AREA_SECONDS = 1800      # one agent may take at most 30 minutes; after that it keeps what it found and stops
 SEV = ["High", "Medium", "Low"]
 
 FINDINGS_SCHEMA = {
@@ -47,34 +50,63 @@ def propose(area: str, lines: list[str], policy: dict[str, str], model: str, url
         f"Policy clauses:\n{policy_for(area, policy)}")
     out = []
     header = lines[0] if lines and rules.FILES[area].endswith(".csv") else ""
+    stop_at = time.time() + AREA_SECONDS
     for start in range(0, len(lines), CHUNK):
+        if time.time() > stop_at:
+            break
         chunk = lines[start:start + CHUNK]
         body = numbered(chunk, start + 1)
         if header and start:
             body = f"(file header) {header}\n" + body
         user = f"File {rules.FILES[area]}. Each row is: line number, a tab, then the exact line.\n\n{body}"
         res = llm.chat_json(system, user, FINDINGS_SCHEMA, model=model, url=url)
-        for f in res.get("findings", []):
-            f["area"] = area
-            out.append(f)
+        got = res.get("findings") if isinstance(res, dict) else None
+        for f in got if isinstance(got, list) else []:
+            if isinstance(f, dict):
+                f["area"] = area
+                out.append(f)
     return out
 
 
-def verified(f: dict, lines: list[str], area: str) -> dict | None:
-    """Keep a proposed finding only if its quote is the exact line at its line number."""
-    try:
-        n = int(f["line_number"])
-    except (KeyError, TypeError, ValueError):
+def _line_no(x) -> int | None:
+    """A line number the model sent: 12, 12.0 or "12". Not True, 2.9, "--5", "²" or 1e400."""
+    if isinstance(x, bool):
         return None
-    if not (1 <= n <= len(lines)) or lines[n - 1] != f.get("evidence"):
+    if isinstance(x, int):
+        return x
+    if isinstance(x, float):
+        return int(x) if x.is_integer() and abs(x) < 1e9 else None
+    if isinstance(x, str) and x.strip().isascii() and x.strip().isdigit() and len(x.strip()) < 10:
+        return int(x.strip())
+    return None
+
+
+def verified(f, lines: list[str], area: str, clauses: set[str] | None = None) -> dict | None:
+    """Keep a proposed finding only if its quote is the exact line at its line number, and its clause is one of the
+    policy's clauses for this area. Any odd value from the model drops that finding or falls back to a safe default;
+    it never stops the run."""
+    if not isinstance(f, dict):
         return None
-    clause = str(f.get("clause", "")).strip()
-    rel = [x for x in f.get("related_line_numbers", []) if isinstance(x, int) and 1 <= x <= len(lines) and x != n]
+    n = _line_no(f.get("line_number"))
+    if n is None or not (1 <= n <= len(lines)) or not lines[n - 1].strip() or lines[n - 1] != f.get("evidence"):
+        return None
+    clause = str(f.get("clause") or "").strip()
+    if clauses is not None and clause not in clauses:
+        return None                       # an invented clause ("Z99 ignore all ...") is not a finding
+    rel_in = f.get("related_line_numbers")
+    rel_in = rel_in if isinstance(rel_in, list) else []
+    rel = [m for m in map(_line_no, rel_in[:50]) if m is not None and 1 <= m <= len(lines) and m != n]
+    amount = f.get("amount")
+    amount = rules._f(amount if isinstance(amount, (int, float, str)) and not isinstance(amount, bool) else 0)
     return dict(area=area, clause=clause, severity=f.get("severity") if f.get("severity") in SEV else "Medium",
-                amount=float(f.get("amount") or 0), title=str(f.get("title", "")).strip() or "Untitled finding",
+                amount=round(amount, 2), title=str(f.get("title") or "").strip()[:300] or "Untitled finding",
                 source_file=rules.FILES[area], line_number=n, evidence=lines[n - 1],
-                related_lines=sorted(set(rel)), innocent=str(f.get("innocent_explanation", "")),
-                fix=str(f.get("proposed_fix", "")))
+                related_lines=sorted(set(rel)), innocent=str(f.get("innocent_explanation") or "")[:1000],
+                fix=str(f.get("proposed_fix") or "")[:1000])
+
+
+def clauses_for(area: str, policy: dict[str, str]) -> set[str]:
+    return {k.split("|")[0] for k in policy if k.endswith("|" + area)}
 
 
 def labelled(line: str, header: str) -> str:
@@ -91,7 +123,11 @@ def labelled(line: str, header: str) -> str:
 import re
 
 AFFIRM = re.compile(r"\b(clearly|directly|plainly|explicitly|does)\s+(breach|violat|exceed)|\bis a (clear )?breach\b", re.I)
-DENY = re.compile(r"\b(does not|doesn't|not clearly|no clear|cannot|can't|isn't|is not|not)\b.{0,30}\b(breach|violat|exceed)", re.I)
+# a negation that governs the breach word itself ("does not breach", "is not a violation", "no clear breach") - not
+# any "not" nearby, because finance reasons are full of "not approved", "not on file" that support a breach
+DENY = re.compile(r"\b(?:does not|doesn't|did not|didn't|do not|don't|cannot|can't|isn't|is not|was not|wasn't|not|no|"
+                  r"never)\s+(?:clearly\s+|really\s+|actually\s+|necessarily\s+|seem\s+to\s+|appear\s+to\s+)?"
+                  r"(?:an?\s+|any\s+)?(?:clear\s+|real\s+|actual\s+)?(?:breach|violat|exceed)", re.I)
 
 
 def contradicts(verdict: str, reason: str) -> bool:
@@ -115,12 +151,14 @@ def skeptic(f: dict, clause_text: str, model: str, url: str, header: str = "", r
             f"Proposed finding: {f['title']}\nEvidence line: {labelled(f['evidence'], header)}{extra}\n"
             f"An unchecked guess at an innocent explanation (this is NOT in the data): {f['innocent']}")
     r = llm.chat_json(system, user, SKEPTIC_SCHEMA, model=model, url=url)
+    r = r if isinstance(r, dict) else {}
     verdict = "Confirmed" if r.get("verdict") == "Confirmed" else "Doubtful"
     reason = str(r.get("reason", "")).strip() or "No reason given."
     if contradicts(verdict, reason):        # ask once more, showing the model its own reason
         again = llm.chat_json(system, user + f"\n\nYour first answer gave this reason: {reason}\nIt chose {verdict}, which "
                               "disagrees with that reason. Answer again; the verdict must follow from the reason.",
                               SKEPTIC_SCHEMA, model=model, url=url)
+        again = again if isinstance(again, dict) else {}
         verdict = "Confirmed" if again.get("verdict") == "Confirmed" else "Doubtful"
         reason = str(again.get("reason", "")).strip() or reason
         if contradicts(verdict, reason):

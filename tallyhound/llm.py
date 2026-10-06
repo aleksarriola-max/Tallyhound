@@ -147,6 +147,9 @@ def chat_tools(messages: list[dict], tools: list[dict], model: str = DEFAULT_MOD
                     fn["arguments"] = json.loads(fn["arguments"] or "{}")
                 except ValueError:
                     fn["arguments"] = {}
+        msg["_wire_calls"] = [dict(c, function=dict(c.get("function", {}),
+                                                    arguments=json.dumps(c.get("function", {}).get("arguments", {}))))
+                              for c in msg.get("tool_calls") or []]     # OpenAI wants arguments back as a JSON string
         msg.setdefault("content", "")
         if msg["content"] is None:
             msg["content"] = ""

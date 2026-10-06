@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import csv
 import json
+import time
 
 from . import agents, llm, rules
 
 MAX_STEPS = 16
 MAX_ROWS = 40
+MAX_FINDINGS = 60          # per agent: more than this is a model stuck in a loop, not an audit
 
 
 def _fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
@@ -57,23 +59,30 @@ class FileTools:
         more = f"\n... {len(nums) - MAX_ROWS} more" if len(nums) > MAX_ROWS else ""
         return "\n".join(f"{n}\t{self.lines[n - 1]}" for n in nums[:MAX_ROWS]) + more or "(no lines)"
 
-    def call(self, name: str, args: dict) -> str:
+    def call(self, name: str, args) -> str:
+        if not isinstance(args, dict):
+            return "Arguments must be an object, for example {\"line_numbers\": [3, 4]}."
         if name == "describe":
             if self.is_csv:
                 return f"Columns: {', '.join(self.head)}\nRows: {len(self.rows)}\n" + self._show(list(range(1, 6)))
             return f"Lines: {len(self.lines)}\n" + self._show(list(range(1, 9)))
         if name == "get_lines":
-            return self._show([int(x) for x in args.get("line_numbers", []) if str(x).lstrip("-").isdigit()])
+            nums = args.get("line_numbers")
+            nums = nums if isinstance(nums, list) else [nums]
+            return self._show([m for m in map(agents._line_no, nums[:200]) if m is not None])
         if name == "find_text":
             t = str(args.get("text", "")).lower()
             return self._show([i for i, ln in enumerate(self.lines, start=1) if t and t in ln.lower()])
         if name == "find_rows":
             col, op, val = args.get("column", ""), args.get("op", "eq"), str(args.get("value", ""))
+            if op not in OPS:
+                return f"Unknown op {op!r}. Use one of: {', '.join(OPS)}"
             if col not in self.head:
                 return f"No column {col!r}. Columns: {', '.join(self.head)}"
             return self._show([ln for ln, r in self.rows if _test(r[col], op, val)])
         if name == "duplicates":
-            cols = [c for c in args.get("columns", []) if c in self.head]
+            cols = args.get("columns")
+            cols = [c for c in (cols if isinstance(cols, list) else [cols]) if isinstance(c, str) and c in self.head]
             if not cols:
                 return f"Name columns from: {', '.join(self.head)}"
             groups: dict[tuple, list[int]] = {}
@@ -84,6 +93,9 @@ class FileTools:
             dup = [g for g in groups.values() if len(g) > 1]
             return "\n\n".join(self._show(g) for g in dup[:15]) or "(no duplicates)"
         return f"Unknown tool {name}"
+
+
+OPS = ("eq", "ne", "gt", "lt", "contains", "empty", "not_empty", "weekend")
 
 
 def _test(cell: str, op: str, val: str) -> bool:
@@ -118,9 +130,15 @@ def investigate(area: str, lines: list[str], policy: dict[str, str], model: str,
               f"been checked, call done.\n\nPolicy clauses:\n{agents.policy_for(area, policy)}")
     messages = [{"role": "system", "content": system}, {"role": "user", "content": "Start with describe."}]
     found: list[dict] = []
+    stop_at = time.time() + agents.AREA_SECONDS
     for _ in range(MAX_STEPS):
+        if time.time() > stop_at:
+            log(f"stopped: over {agents.AREA_SECONDS // 60} minutes")
+            break
         msg = llm.chat_tools(messages, spec, model=model, url=url)
         keep = {k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")}
+        if msg.get("_wire_calls"):
+            keep["tool_calls"] = msg["_wire_calls"]
         keep.setdefault("role", "assistant")
         messages.append(keep)
         calls = msg.get("tool_calls") or []
@@ -138,12 +156,17 @@ def investigate(area: str, lines: list[str], policy: dict[str, str], model: str,
             if fname == "done":
                 finished, result = True, "OK"
             elif fname == "report_finding":
-                found.append(dict(args, area=area))
-                result = "Recorded."
+                if not isinstance(args, dict):
+                    result = "report_finding needs an object with clause, severity, title, line_number and evidence."
+                elif len(found) >= MAX_FINDINGS:
+                    finished, result = True, f"Limit of {MAX_FINDINGS} findings reached; stopping."
+                else:
+                    found.append(dict(args, area=area))
+                    result = "Recorded."
             else:
                 result = tools.call(fname, args)
-            log(f"{fname}({json.dumps(args)[:80]})")
-            tool_msg = {"role": "tool", "content": result, "tool_name": fname}
+            log(f"{fname}({json.dumps(args, default=str)[:80]})")
+            tool_msg = {"role": "tool", "content": result[:6000], "tool_name": fname}
             if c.get("id"):
                 tool_msg["tool_call_id"] = c["id"]          # OpenAI-compatible servers need the call id
             messages.append(tool_msg)

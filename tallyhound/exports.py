@@ -70,7 +70,7 @@ def build_workbook(draft: bool = False) -> bytes:
         ["Rejected", "-" if draft else dc["rejected"]],
         ["Pending", len(f) if draft else dc["pending"]],
         ["Approved value", "-" if draft else round(dc["value"], 2)],
-        ["Audit trail", "Intact (hash chain verified)" if C.verify_trail(st.session_state.audit_log)[0] else "BROKEN - entries changed"],
+        ["Audit trail", _trail_word()],
     ], columns=["Item", "Value"])
     trail = C.full_trail(C.findings())
     buf = io.BytesIO()
@@ -88,6 +88,17 @@ def build_workbook(draft: bool = False) -> bytes:
             defuse_formulas(ws)
             _style(ws)
     return buf.getvalue()
+
+
+def _trail_word() -> str:
+    S = st.session_state
+    ok, _ = C.verify_trail(S.audit_log)
+    if not ok:
+        return "BROKEN - entries changed, removed or replaced"
+    if C.decisions_mismatch(S.audit_log, S.decisions):
+        return "BROKEN - decisions do not match the trail"
+    return (f"Intact: {len(S.audit_log)} reviewer entries for this data, chained and sealed, decisions match. "
+            "Agent rows above them are the run's own record and are not sealed.")
 
 
 def defuse_formulas(ws) -> None:
@@ -119,9 +130,11 @@ def build_memo() -> bytes:
         Spacer(1, 8),
     ]
     if not C.custom_label():
-        gt = C.gate_totals(C.gate("payment_run_2026-10-01.csv"))
+        gt = C.gate_totals(C.gate("payment_run_2026-10-01.csv"), st.session_state.cleared)
         story += [Paragraph(f"Payment gate (run 2026-10-01): {gt['hold_n']} lines on HOLD ({C.money(gt['hold_amt'])}), "
-                            f"{gt['rel_n']} lines to RELEASE ({C.money(gt['rel_amt'])}).", ss["Normal"]), Spacer(1, 8)]
+                            f"{gt['rel_n']} lines to RELEASE ({C.money(gt['rel_amt'])})"
+                            + (f", including {gt['cleared_n']} hold(s) cleared by a reviewer." if gt["cleared_n"] else "."),
+                            ss["Normal"]), Spacer(1, 8)]
     for label in ("Approved", "Rejected", "Pending"):
         part = f[f.decision == label]
         story.append(Paragraph(f"{label} ({len(part)})", ss["Heading3"]))

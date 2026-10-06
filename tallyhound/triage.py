@@ -52,7 +52,12 @@ CLEARS = {
 
 def priority(r) -> float:
     conf = {"Confirmed": 1.0, "Doubtful": 0.5}.get(str(r.skeptic_verdict), 0.8)
-    return round(SEV_W.get(r.severity, 1.0) * (1 + math.log10(max(float(r.amount), 1.0))) * conf, 2)
+    try:
+        amt = float(r.amount)
+    except (TypeError, ValueError):
+        amt = 0.0
+    amt = amt if math.isfinite(amt) else 0.0
+    return round(SEV_W.get(r.severity, 1.0) * (1 + math.log10(max(amt, 1.0))) * conf, 2)
 
 
 def cases(f: pd.DataFrame) -> list[list]:

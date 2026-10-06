@@ -117,7 +117,7 @@ Roles: *preparer* uploads and runs, *reviewer* approves, rejects and clears hold
 python scripts/watch.py "C:/Finance/AP inbox" --alert
 ```
 
-Runs the built-in checks and the payment gate on a folder (or the newest zip in it), writes `tallyhound-reports/report_<date>.md` and a CSV, and alerts via Slack (`TALLYHOUND_SLACK_WEBHOOK`) or email (`TALLYHOUND_SMTP_*`, see `tallyhound/headless.py`) when there are new findings or held payments. Schedule it with Windows Task Scheduler or cron.
+Runs the built-in checks and the payment gate on a folder (or the newest zip in it), writes `tallyhound-reports/report_<date>.md` and a CSV, and alerts via Slack (`TALLYHOUND_SLACK_WEBHOOK`) or email (`TALLYHOUND_SMTP_*`, see `tallyhound/headless.py`) when there are new findings, held payments or files it could not check. One channel failing does not stop the other, and a failed alert is sent again next run. Exit codes for the scheduler: 0 everything checked, 1 an alert could not be sent, 3 some data was not checked (listed under "Data that was NOT checked" in the report). Schedule it with Windows Task Scheduler or cron.
 
 ### Other model servers
 
@@ -135,7 +135,7 @@ Ollama is the default. For LM Studio, vLLM or llama.cpp, set the model server ad
 - **Smarter column matching** - suggestions are pre-filled from common export column names (QuickBooks, Xero, NetSuite, bank downloads), and a matching you save is reused automatically for files with the same header.
 - **Learning from reviewers** - when rejecting, tick "Don't flag this again for ..." to set that pattern aside on later runs (listed, and removable, on the Policy page). Repeated rejections just over a limit produce a suggested new limit.
 - **Trends and vendor risk** - findings per run over time, and who carries the most risk in the data under review.
-- **Tamper-evident audit trail** - every entry is chained to the one before by a SHA-256 fingerprint; Live activity and the exported workbook say whether the chain is intact. Saved work is kept in SQLite.
+- **Tamper-evident audit trail** - every entry is chained to the one before by a SHA-256 fingerprint, and the whole trail is sealed with a key only the server holds (`TALLYHOUND_TRAIL_KEY`, or a random key in `.tallyhound_state/trail.key`), so an edited, removed, added or cut-off entry shows, and so does a decision that disagrees with the trail. A re-run is one more entry, never a fresh trail. Live activity and the exported workbook say whether it is intact. Saved work is kept in SQLite.
 - **Policy page** - change the PO, director, meal and receipt limits and the split-order window; the rules use them on the next run.
 - **Column matching** - if an uploaded CSV uses other column names, match them to the expected fields once. Only the header is renamed, so quotes are still exact lines of your file. Dates in several formats and amounts like `$1,234.50` or `(12.00)` are understood.
 - **Owner and notes** - give each finding an owner and a note; both are saved and exported.

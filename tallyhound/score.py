@@ -11,16 +11,20 @@ import io
 
 
 def key_from_csv(text: str) -> list[dict]:
-    out = []
+    out, seen = [], set()
     for r in csv.DictReader(io.StringIO(text)):
         try:
             main = int(r["line_number"])
         except (KeyError, ValueError):
             continue
         rel = [int(x) for x in str(r.get("related_lines", "")).replace(",", ";").split(";") if x.strip().isdigit()]
-        out.append(dict(id=r.get("id", ""), clause=r.get("clause", ""), area=r.get("area", ""),
-                        source_file=r["source_file"].strip(), lines=sorted({main, *rel}), description=r.get("description", ""),
-                        expect=(r.get("expect") or "problem").strip()))
+        row = dict(id=r.get("id", ""), clause=r.get("clause", ""), area=r.get("area", ""),
+                   source_file=(r.get("source_file") or "").strip(), lines=sorted({main, *rel}),
+                   description=r.get("description", ""), expect=(r.get("expect") or "problem").strip().lower())
+        sig = (row["source_file"], tuple(row["lines"]), row["expect"])
+        if sig not in seen:                      # the same planted row twice would count twice
+            seen.add(sig)
+            out.append(row)
     return out
 
 
@@ -43,13 +47,28 @@ def matches(p: dict, k: dict) -> bool:
     return p["source_file"] == k["source_file"] and bool(_lines(p) & set(k["lines"]))
 
 
+def _credit(proposed: list[dict], key: list[dict]) -> list[bool]:
+    """Which planted problems were found. Each proposed finding is credited to at most one planted problem - the one
+    on its own line if there is one - so a single finding with a long list of related lines cannot "find" them all."""
+    found = [False] * len(key)
+    for p in proposed:
+        hits = [i for i, k in enumerate(key) if matches(p, k)]
+        if not hits:
+            continue
+        main = [i for i in hits if p["source_file"] == key[i]["source_file"] and int(p["line_number"]) in key[i]["lines"]]
+        pick = next((i for i in main + hits if not found[i]), None)
+        if pick is not None:
+            found[pick] = True
+    return found
+
+
 def score(proposed: list[dict], key: list[dict]) -> dict:
     """proposed: dicts with source_file, line_number, related_lines and optionally verdict.
     Key rows marked expect="trap" are legitimate look-alikes: a finding on one is a false alarm, counted separately."""
-    traps = [k for k in key if k.get("expect") == "trap"]
-    key = [k for k in key if k.get("expect") != "trap"]
+    traps = [k for k in key if str(k.get("expect", "")).lower() == "trap"]
+    key = [k for k in key if str(k.get("expect", "")).lower() != "trap"]
     trap_hit = [k for k in traps if any(matches(p, k) for p in proposed)]
-    found = [any(matches(p, k) for p in proposed) for k in key]
+    found = _credit(proposed, key)
     true = [any(matches(p, k) for k in key) for p in proposed]
     out = dict(planted=len(key), proposed=len(proposed), found=sum(found), true_pos=sum(true),
                false_alarms=len(proposed) - sum(true),
@@ -74,7 +93,7 @@ def per_issue(key: list[dict], runs: dict[str, list[dict]]) -> list[dict]:
     """One row per planted problem or trap, with what each run did with it."""
     rows = []
     for k in key:
-        trap = k.get("expect") == "trap"
+        trap = str(k.get("expect", "")).lower() == "trap"
         row = {"Planted": k["description"], "Kind": "Trap (legitimate)" if trap else "Problem", "Clause": k["clause"],
                "File": k["source_file"], "Line": k["lines"][0] if k["lines"] else ""}
         for name, proposed in runs.items():

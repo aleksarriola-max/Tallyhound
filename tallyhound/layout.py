@@ -158,16 +158,23 @@ def case_row(g: list) -> None:
     S = st.session_state
     r, others = g[0], g[1:]
     ids = [r.id] + [o.id for o in others]
-    d = S.decisions.get(r.id)
+    statuses = [S.decisions.get(i, {}).get("status") for i in ids]
+    left = statuses.count(None)
+    d = S.decisions.get(r.id) if left == 0 else None
     blocked = auth.review_block_reason()
     c1, c2, c3, c4 = st.columns([6.2, 1.4, 1.3, 1.1], vertical_alignment="center")
     extra = f" <span class='th-muted'>+{len(others)} related</span>" if others else ""
     c1.markdown(f"{C.sev_badge(r.severity)} &nbsp; {C.esc(r.title)}{extra}", unsafe_allow_html=True)
     c2.markdown(f"<div style='text-align:right;font-weight:600'>{C.money(r.amount)}</div>", unsafe_allow_html=True)
-    if d:
-        c3.markdown(C.badge(d["status"], C.RELEASE if d["status"] == "Approved" else C.HOLD), unsafe_allow_html=True)
+    if left == 0 and len(set(statuses)) == 1:
+        c3.markdown(C.badge(statuses[0], C.RELEASE if statuses[0] == "Approved" else C.HOLD), unsafe_allow_html=True)
+    elif left == 0:
+        c3.markdown(C.badge("Mixed", C.MUTED), unsafe_allow_html=True)
     else:
-        c3.button("Approve", key=f"appr_{r.id}", type="primary", on_click=review._decide_all, args=(ids, "Approved"),
+        if left < len(ids):
+            extra2 = f" <span class='th-muted'>({len(ids) - left} of {len(ids)} decided)</span>"
+            c1.markdown(extra2, unsafe_allow_html=True)
+        c3.button("Approve" if left == len(ids) else f"Approve {left}", key=f"appr_{r.id}", type="primary", on_click=review._decide_all, args=(ids, "Approved"),
                   disabled=bool(blocked), help=blocked, **C.bw())
     open_key = f"open_{r.id}"
     c4.button("Close" if S.get(open_key) else "Details", key=f"btn_{open_key}", on_click=_toggle, args=(open_key,),
@@ -209,6 +216,14 @@ def case_details(r, others, ids, d, blocked) -> None:
                                mime="application/json", key=f"case_{r.id}",
                                help="A regression test: put it in tests/cases/ so this false alarm can never come back.")
     else:
+        done = [i for i in ids if i in S.decisions]
+        if done:
+            st.caption(f"{len(done)} of {len(ids)} in this case already decided: "
+                       + ", ".join(f"{i} {S.decisions[i]['status']}" for i in done) + ". The buttons act on the rest.")
+            st.button(f"Undo those {len(done)}", key=f"undo_{r.id}", on_click=review._undo_all, args=(done,),
+                      disabled=bool(blocked), type="tertiary")
+            if len(done) == len(ids):
+                return
         reason = st.text_input("Reason to reject (required)", key=f"rej_{r.id}")
         who = review._entity(r)
         st.checkbox(f"Don't flag clause {r.clause} again for {who}", key=f"supp_{r.id}")
@@ -231,14 +246,18 @@ def findings_tab() -> None:
     t1, t2 = st.columns([3, 2], vertical_alignment="center")
     sev = t1.segmented_control("Severity", ["All", "High", "Medium", "Low"], default="All", key="rev_sev",
                                label_visibility="collapsed")
-    shown = f if sev in (None, "All") else f[f.severity == sev]
-    conf_ids = [r.id for r in shown.itertuples() if r.skeptic_verdict == "Confirmed" and r.id not in S.decisions]
+    # cases are built from every finding, then filtered, so a filter never splits a case
+    all_groups = triage.cases(f)
+    groups = all_groups if sev in (None, "All") else [g for g in all_groups if any(x.severity == sev for x in g)]
+    # bulk approval takes whole cases only: every undecided member Confirmed by the Skeptic
+    conf_ids = [x.id for g in groups
+                if (todo := [x for x in g if x.id not in S.decisions]) and all(x.skeptic_verdict == "Confirmed" for x in todo)
+                for x in todo]
     t2.button(f"Approve all confirmed ({len(conf_ids)})", on_click=review.bulk_approve, args=(conf_ids,),
               disabled=not conf_ids or bool(why), key="bulk_all", **C.bw())
 
     def minor(r) -> bool:
         return (float(r.amount) < L["materiality"] and r.severity != "High") or triage.demoted(str(r.clause))
-    groups = triage.cases(shown)
     main = [g for g in groups if not all(minor(r) for r in g)]
     small = [g for g in groups if all(minor(r) for r in g)]
     done = sum(all(x.id in S.decisions for x in g) for g in main)
@@ -257,7 +276,7 @@ def findings_tab() -> None:
         with st.expander(f"Shadow rules would have raised {len(in_shadow)} more"):
             st.caption("Mark a few. Once enough are real, the rule can be promoted under Settings > Rules.")
             for r in in_shadow.itertuples():
-                k = f"{r.clause}|{r.id}"
+                k = f"{r.clause}|{S.get('dataset') or 'sample'}|{r.source_file}:{r.line_number}"   # stable across runs and datasets
                 c1, c2, c3 = st.columns([6, 1.3, 1.6], vertical_alignment="center")
                 mark = S.get("shadow_marks", {}).get(k)
                 c1.markdown(f"clause {r.clause}: {C.esc(r.title)}" + ("" if mark is None else f" - {'real' if mark else 'not a problem'}"))

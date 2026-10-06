@@ -20,7 +20,7 @@ import streamlit as st
 KEYS = ["decisions", "audit_log", "cleared", "step", "fail_pending", "recent_extra", "tour_downloaded", "tour_off",
         "uploads", "custom", "by_dataset", "dataset", "extra_opts",
         "mappings", "answer_keys", "run_history", "limits", "notes", "suppressions", "presets",
-        "po_exempt_words", "po_exempt_vendors", "rule_override", "shadow", "shadow_marks", "date_order"]
+        "po_exempt_words", "po_exempt_vendors", "rule_override", "shadow", "shadow_marks", "date_order", "trail_seals"]
 MAX_AGE_DAYS = 14
 _SID = re.compile(r"^(?:[0-9a-f]{12}|[0-9a-f]{32})$")   # 12 = links made before the audit; new ones are 128-bit
 

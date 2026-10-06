@@ -146,6 +146,7 @@ def add_upload(label: str, files: dict[str, list[str]], key: list[dict] | None =
 def _apply_presets(label: str) -> None:
     """Reuse a saved column matching when a file has exactly the same header as one matched before."""
     import csv
+
     from . import columns
     S = st.session_state
     for name, lines in S.uploads[label].items():
@@ -264,27 +265,32 @@ class Job:
         if not lines:
             return
         if self.engine in ("rules", "rules+skeptic"):
+            if any(r["area"] == area for r in self.records):
+                return                       # already done before a retry
+            recs: list[dict] = []
             for h in rules.run_area(area, self.files, self.limits):
-                self.records.append(dict(
+                recs.append(dict(
                     area=h.area, clause=h.clause, severity=h.severity, amount=h.amount, title=h.title,
                     source_file=h.source_file, line_number=h.line_number, related_lines=[ln for _, ln in h.related],
                     innocent=rules.INNOCENT.get(h.clause, ""), fix=rules.FIXES.get(h.clause, ""),
                     **(dict(verdict="Confirmed",
                             reason=f"Fixed rule check, no AI. Clause {h.clause}: {self.policy.get(h.clause + '|' + h.area, '')}")
                        if self.engine == "rules" else {})))
-                r = self.records[-1]
+                r = recs[-1]
                 src = self.files.get(r["source_file"], [])          # cross-file checks quote other files
                 r["evidence"] = src[r["line_number"] - 1] if 0 < r["line_number"] <= len(src) else ""
+            self.records.extend(recs)
             return
+        if any(r["area"] == area for r in self.records):
+            return                           # already done before a retry
         if self.engine == "ollama-tools":
             from . import agents_tools
             raw = agents_tools.investigate(area, lines, self.policy, self.model, self.url)
         else:
             raw = agents.propose(area, lines, self.policy, self.model, self.url)
-        for f in raw:
-            v = agents.verified(f, lines, area)
-            if v:
-                self.records.append(v)
+        clauses = agents.clauses_for(area, self.policy)
+        keep = [v for v in (agents.verified(f, lines, area, clauses) for f in raw) if v]
+        self.records.extend(keep)            # all at once, so a failed or retried agent never leaves half a list
 
     def _skeptic(self, t: float) -> None:
         todo = [r for r in self.records if "verdict" not in r]
@@ -364,8 +370,14 @@ def finalize(label: str, job: Job) -> None:
         proposed=[dict(source_file=r["source_file"], line_number=r["line_number"], related_lines=r.get("related_lines", []),
                        verdict=r.get("verdict", ""), reason=r.get("reason", ""), clause=r["clause"], area=r["area"],
                        severity=r["severity"], amount=float(r.get("amount") or 0)) for r in recs]))
-    S.setdefault("by_dataset", {})[label] = dict(decisions={}, audit_log=[], cleared={}, notes={})
+    # keep the dataset's audit trail: a re-run is one more entry in it, never a fresh start
+    store = S.setdefault("by_dataset", {})
+    old_log = S.audit_log if S.get("dataset") == label else store.get(label, {}).get("audit_log", [])
+    store[label] = dict(decisions={}, audit_log=old_log, cleared={}, notes={})
     activate(label, force_load=True)
+    if S.audit_log:
+        C.log_action("Orchestrator", C.NEW_RUN, "-", f"{len(recs)} findings from {job.engine}; earlier decisions on "
+                     "this data no longer apply")
 
 
 # ---------------------------------------------------------------- which data is in review

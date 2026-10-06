@@ -1,7 +1,6 @@
 """Page: Run analysis (4 steps)."""
 from __future__ import annotations
 
-
 import pandas as pd
 import streamlit as st
 
@@ -210,6 +209,7 @@ def data_check(label: str) -> None:
 
 def _save_matching(label: str, name: str, missing: list[str]) -> None:
     import csv
+
     from . import columns, custom
     S = st.session_state
     m = custom.mapping(label).setdefault(name, {})
@@ -227,6 +227,7 @@ def _save_matching(label: str, name: str, missing: list[str]) -> None:
 def column_matching(label: str) -> None:
     """Let a person say which of their columns holds each field the checks need."""
     import csv
+
     from . import custom
     todo = custom.unmatched(label)
     if not todo:

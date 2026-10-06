@@ -164,11 +164,15 @@ def gate(file: str) -> pd.DataFrame:
     return df
 
 
-def gate_totals(df: pd.DataFrame) -> dict:
-    h = df[df.decision == "HOLD"]
-    r = df[df.decision == "RELEASE"]
+def gate_totals(df: pd.DataFrame, cleared: dict | None = None) -> dict:
+    """Counts and money on HOLD and to RELEASE. With cleared, holds a person has cleared count as released, so every
+    page and document reports the same final position."""
+    cleared = cleared or {}
+    held = (df.decision == "HOLD") & ~df.line.astype(str).isin(list(cleared))
+    h, r = df[held], df[~held]
     return dict(lines=len(df), total=df.amount.sum(), vendors=df.supplier.nunique(),
-                hold_n=len(h), hold_amt=h.amount.sum(), rel_n=len(r), rel_amt=r.amount.sum())
+                hold_n=len(h), hold_amt=h.amount.sum(), rel_n=len(r), rel_amt=r.amount.sum(),
+                cleared_n=int(((df.decision == "HOLD") & ~held).sum()))
 
 
 @st.cache_data
@@ -229,20 +233,53 @@ def base_trail(fdf: pd.DataFrame) -> pd.DataFrame:
 
 CHAIN_FIELDS = ("time", "actor", "action", "finding", "detail")
 GENESIS = "0" * 64
+NEW_RUN = "New run"          # an entry with this action means: the findings were replaced, earlier decisions are void
 
 
 def entry_hash(prev: str, e: dict) -> str:
     import hashlib
     import json
-    body = json.dumps({k: str(e.get(k, "")) for k in CHAIN_FIELDS}, sort_keys=True)
+    body = json.dumps({k: "" if e.get(k) is None else str(e.get(k)) for k in CHAIN_FIELDS}, sort_keys=True)
     return hashlib.sha256((prev + body).encode("utf-8")).hexdigest()
 
 
+def _trail_key() -> bytes:
+    """A secret only the server knows (TALLYHOUND_TRAIL_KEY, or a random key kept next to the saved work). Without
+    it nobody can produce a valid seal, so a trail cannot be edited, cut short or rebuilt from scratch unnoticed."""
+    import os
+    import secrets
+    from . import store
+    env = os.environ.get("TALLYHOUND_TRAIL_KEY")
+    if env:
+        return env.encode()
+    p = store.state_dir() / "trail.key"
+    try:
+        if not p.exists():
+            p.write_text(secrets.token_hex(32), encoding="utf-8")
+            p.chmod(0o600)
+        return p.read_text(encoding="utf-8").strip().encode()
+    except OSError:
+        return b"tallyhound-no-writable-disk"
+
+
+def seal_of(log: list[dict]) -> str:
+    import hashlib
+    import hmac
+    head = log[-1].get("hash", "") if log else GENESIS
+    return hmac.new(_trail_key(), f"{len(log)}|{head}".encode(), hashlib.sha256).hexdigest()
+
+
+def _ds_key() -> str:
+    return st.session_state.get("dataset") or "__sample__"
+
+
 def log_action(actor: str, action: str, finding: str, detail: str = "") -> None:
-    """Append to the audit trail. Each entry carries the fingerprint (SHA-256) of itself plus the entry before, so
-    changing or deleting any earlier entry breaks every fingerprint after it."""
+    """Append to the audit trail. Each entry carries the fingerprint (SHA-256) of itself plus the entry before, and
+    the whole trail carries a seal made with the server's secret key, so changing, removing, adding or reordering any
+    entry - including cutting entries off the end - shows."""
     from . import auth
-    log = st.session_state.audit_log
+    S = st.session_state
+    log = S.audit_log
     who = auth.current_user()
     if who and actor == "Reviewer":
         actor = f"Reviewer ({who})"
@@ -250,20 +287,49 @@ def log_action(actor: str, action: str, finding: str, detail: str = "") -> None:
     e["prev"] = log[-1].get("hash", GENESIS) if log else GENESIS
     e["hash"] = entry_hash(e["prev"], e)
     log.append(e)
+    S.setdefault("trail_seals", {})[_ds_key()] = seal_of(log)
 
 
-def verify_trail(log: list[dict]) -> tuple[bool, int | None]:
-    """(intact, index of the first broken entry). Entries saved before chaining existed are skipped."""
-    prev = None
+_CURRENT = object()
+
+
+def verify_trail(log: list[dict], seal=_CURRENT) -> tuple[bool, int | None]:
+    """(intact, index of the first broken entry). index == len(log) means the trail as a whole is not the one the
+    server sealed: entries were cut off the end, or the trail was replaced. An empty trail with no seal is intact."""
+    if seal is _CURRENT:
+        seal = st.session_state.get("trail_seals", {}).get(_ds_key())
+    prev = GENESIS
     for i, e in enumerate(log):
-        if "hash" not in e:
-            continue
-        if prev is not None and e.get("prev") != prev:
-            return False, i
-        if entry_hash(e.get("prev", GENESIS), e) != e["hash"]:
+        if not isinstance(e, dict) or "hash" not in e or e.get("prev") != prev or entry_hash(prev, e) != e["hash"]:
             return False, i
         prev = e["hash"]
+    if not log and not seal:
+        return True, None
+    import hmac
+    if not seal or not hmac.compare_digest(str(seal), seal_of(log)):
+        return False, len(log)
     return True, None
+
+
+def replay_decisions(log: list[dict]) -> dict[str, str]:
+    """The decisions the trail says were made (finding id -> Approved / Rejected)."""
+    out: dict[str, str] = {}
+    for e in log:
+        a = e.get("action")
+        if a in ("Approved", "Rejected"):
+            out[str(e.get("finding"))] = a
+        elif a == "Reset to pending":
+            out.pop(str(e.get("finding")), None)
+        elif a == NEW_RUN:
+            out = {}
+    return out
+
+
+def decisions_mismatch(log: list[dict], decisions: dict) -> list[str]:
+    """Finding ids whose recorded decision differs from what the trail says. Empty when they agree."""
+    want = replay_decisions(log)
+    have = {k: v.get("status") for k, v in decisions.items() if isinstance(v, dict)}
+    return sorted(k for k in set(want) | set(have) if want.get(k) != have.get(k))
 
 
 def full_trail(fdf: pd.DataFrame) -> pd.DataFrame:

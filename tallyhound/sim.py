@@ -44,7 +44,9 @@ def build_queue(selection: dict, skip: frozenset = frozenset()) -> list[dict]:
 def start(queue: list[dict], fresh: bool = False) -> None:
     S = st.session_state
     if fresh:
-        S.decisions, S.audit_log, S.cleared = {}, [], {}
+        S.decisions, S.cleared = {}, {}
+        if S.get("audit_log"):
+            C.log_action("Orchestrator", C.NEW_RUN, "-", "Fresh run; earlier decisions no longer apply")
     S.sim = dict(queue=queue, running=True, stop=False, log=[])
     S.step = 1
     log("Orchestrator", f"Queue created with {len(queue)} item(s)")
