@@ -1,0 +1,10 @@
+supplier,invoice,source,reason,claim,status
+Ashby Components,ASH-6702,Invoice line 4,Unit price above contract (4.15 vs 3.90),1240.00,Proposed
+Ashby Components,ASH-6719,Credit note CN-311,Credit note issued but not applied,862.50,Proposed
+Corwin Plastics,COR-6655,Invoice line 2,"Short delivery: 150 units billed, 112 received",1508.75,Proposed
+Corwin Plastics,COR-6671,Invoice line 1,Early-payment discount (2 percent) not taken,315.20,Proposed
+Dellmore Packaging,DEL-6810,Credit note CN-402,Returned pallets not credited,945.00,Proposed
+Dellmore Packaging,DEL-6824,Invoice line 3,Duplicate line billed twice,722.16,Proposed
+Elstree Fasteners,ELS-6903,Invoice line 5,Price above contract (0.42 vs 0.38),384.00,Proposed
+Elstree Fasteners,ELS-6911,Credit note CN-077,Rebate for Q3 volume not applied,614.00,Proposed
+Dellmore Packaging,DEL-6830,Invoice line 2,Freight charged on a free-delivery order,273.00,Proposed

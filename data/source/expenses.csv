@@ -1,0 +1,31 @@
+claim_id,date,employee,category,amount,receipt_ref,notes,people
+E-1001,2026-09-01,A. Patel,TRAVEL,160.43,RC-70000,Business purpose recorded,
+E-1002,2026-09-03,R. Chen,MEAL,57.10,RC-70001,Business purpose recorded,1
+E-1003,2026-09-07,S. Duarte,SUPPLIES,230.84,RC-70002,Business purpose recorded,
+E-1004,2026-09-07,M. Okafor,TAXI,52.76,RC-70003,Business purpose recorded,
+E-1005,2026-09-09,T. Brandt,TRAINING,163.44,RC-70004,Business purpose recorded,
+E-1042,2026-09-10,A. Patel,MEAL,156.00,RC-80412,Client dinner,1
+E-1006,2026-09-11,C. Yoon,TRAVEL,62.50,RC-70005,Business purpose recorded,
+E-1007,2026-09-14,A. Patel,MEAL,34.30,RC-70006,Business purpose recorded,1
+E-1008,2026-09-15,R. Chen,SUPPLIES,152.44,RC-70007,Business purpose recorded,
+E-1009,2026-09-17,S. Duarte,TAXI,58.02,RC-70008,Business purpose recorded,
+E-1050,2026-09-15,S. Duarte,TRAVEL,412.00,,Hotel two nights,
+E-1010,2026-09-21,M. Okafor,TRAINING,229.49,RC-70009,Business purpose recorded,
+E-1011,2026-09-21,T. Brandt,TRAVEL,133.32,RC-70010,Business purpose recorded,
+E-1012,2026-09-23,C. Yoon,MEAL,55.46,RC-70011,Business purpose recorded,1
+E-1013,2026-09-25,A. Patel,SUPPLIES,58.32,RC-70012,Business purpose recorded,
+E-1014,2026-09-01,R. Chen,TAXI,29.59,RC-70013,Business purpose recorded,
+E-1055,2026-09-17,R. Chen,SUPPLIES,89.00,RC-80440,Monthly gym membership,
+E-1015,2026-09-03,S. Duarte,TRAINING,153.47,RC-70014,Business purpose recorded,
+E-1016,2026-09-07,M. Okafor,TRAVEL,231.24,RC-70015,Business purpose recorded,
+E-1017,2026-09-07,T. Brandt,MEAL,63.55,RC-70016,Business purpose recorded,1
+E-1018,2026-09-09,C. Yoon,SUPPLIES,135.99,RC-70017,Business purpose recorded,
+E-1077,2026-09-21,R. Chen,TAXI,64.00,TX-88213,Airport taxi,
+E-1081,2026-09-22,S. Duarte,TAXI,64.00,TX-88213,Airport taxi,
+E-1019,2026-09-11,A. Patel,TAXI,22.39,RC-70018,Business purpose recorded,
+E-1020,2026-09-14,R. Chen,TRAINING,170.40,RC-70019,Business purpose recorded,
+E-1021,2026-09-15,S. Duarte,TRAVEL,226.36,RC-70020,Business purpose recorded,
+E-1022,2026-09-17,M. Okafor,MEAL,58.74,RC-70021,Business purpose recorded,1
+E-1090,2026-09-20,M. Okafor,SUPPLIES,38.50,RC-80455,,
+E-1023,2026-09-21,T. Brandt,SUPPLIES,222.15,RC-70022,Business purpose recorded,
+E-1024,2026-09-21,C. Yoon,TAXI,33.91,RC-70023,Business purpose recorded,

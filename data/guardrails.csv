@@ -1,0 +1,7 @@
+name,description,metric
+Agents only propose,"Approve, reject, hold and release happen only on the Review step and the Payment gate.",Human decides
+Offline,The model runs on the local GPU. No cloud calls.,0 requests
+Sandbox,Agents read the inbox folder and write only to the results folder.,Read-only inbox
+Quote check,Each quoted line is matched to the source file before it is shown.,{quote_pct}% matched
+Skeptic review,"A second agent tries to disprove every finding. Always on, locked.",{n_findings} reviewed
+Audit trail,"Every proposal, verdict and decision is logged with time and actor.",{n_findings} findings logged

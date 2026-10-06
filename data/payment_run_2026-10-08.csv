@@ -1,0 +1,6 @@
+line,supplier,invoice,amount,decision,reason,failed_checks,c1,c2,c3,c4,c5,c6,c7,c8
+1,Ashby Components,ASH-7201,14220.00,RELEASE,All 8 checks passed,-,1,1,1,1,1,1,1,1
+2,Corwin Plastics,COR-7301,8640.50,RELEASE,All 8 checks passed,-,1,1,1,1,1,1,1,1
+3,Dellmore Packaging,DEL-7401,3115.00,RELEASE,All 8 checks passed,-,1,1,1,1,1,1,1,1
+4,Fairholt Logistics,FAI-7601,5780.00,HOLD,"Bank account changed 2026-10-02, no verification",7,1,1,1,1,1,1,0,1
+5,Hanford Tooling,HAN-7801,6905.75,RELEASE,All 8 checks passed,-,1,1,1,1,1,1,1,1

@@ -1,0 +1,8 @@
+agent,role
+Orchestrator,Reads the files and hands work to the other agents
+Payments,"Duplicates, wrong amounts, weekend and undated payments"
+Approvals,"POs, self-approval, split orders and approval limits"
+Vendors,"Inactive vendors, bank changes, duplicate vendor records"
+Contracts,"Rates, surcharges and terms against signed contracts"
+Expenses,"Limits, receipts, personal items and duplicate claims"
+Skeptic,Tries to disprove every finding before a person sees it

@@ -1,0 +1,5 @@
+id,name,purpose,picker,default
+audit,Monthly audit,Find problems after the money is spent,multi,2026-09
+gate,Payment gate,Stop risky payments before they go out,single,Payment run 2026-10-01
+recovery,Supplier recovery,Find money to claim back,single,Q3 supplier invoices
+subs,Subscriptions,Cut software waste,single,Software register

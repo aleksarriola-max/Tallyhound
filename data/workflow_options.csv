@@ -1,0 +1,8 @@
+workflow,option,preview_title,preview,est_min,result_findings,last_run,file
+audit,2026-07,Preview · 2026-07,37 invoices · 37 payments · 18 POs · 22 expenses · 14 contracts · 0.3 MB,8,0,Done,
+audit,2026-08,Preview · 2026-08,43 invoices · 43 payments · 20 POs · 26 expenses · 14 contracts · 0.3 MB,8,13,Done,
+audit,2026-09,Preview · 2026-09,48 invoices · 48 payments · 21 POs · 29 expenses · 14 contracts · 0.3 MB,8,26,Done,
+gate,Payment run 2026-10-01,Preview · Payment run 2026-10-01,,2,8,Done,payment_run_2026-10-01.csv
+gate,Payment run 2026-10-08,Preview · Payment run 2026-10-08,,2,1,Done,payment_run_2026-10-08.csv
+recovery,Q3 supplier invoices,Preview · analysis date 2026-10-20,12 invoices · 27 item lines · 4 suppliers · 3 credit notes,4,9,Never run,
+subs,Software register,Preview · analysis date 2026-10-31,15 tools · 911 user logins,3,6,Never run,

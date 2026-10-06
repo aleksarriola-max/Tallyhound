@@ -1,0 +1,22 @@
+[CONTRACT C-100 | Ashby Components | Clause 2.1] Prices are fixed for the term as per the schedule.
+[INVOICE ASH-6200 | Ashby Components | 2026-09-01] Line 1: Contracted supply 4000.00
+[CONTRACT C-101 | Corwin Plastics | Clause 2.1] Prices are fixed for the term as per the schedule.
+[INVOICE COR-6201 | Corwin Plastics | 2026-09-02] Line 1: Contracted supply 4100.00
+[CONTRACT C-014 | Sarnia Print Services | Clause 7.1] Surcharges of any kind are excluded from the contract price.
+[INVOICE SRS-50946 | Sarnia Print Services | 2026-09-12] Line 3: Handling surcharge 1340.00
+[CONTRACT C-102 | Dellmore Packaging | Clause 2.1] Prices are fixed for the term as per the schedule.
+[INVOICE DEL-6202 | Dellmore Packaging | 2026-09-03] Line 1: Contracted supply 4200.00
+[CONTRACT C-103 | Elstree Fasteners | Clause 2.1] Prices are fixed for the term as per the schedule.
+[INVOICE ELS-6203 | Elstree Fasteners | 2026-09-04] Line 1: Contracted supply 4300.00
+[CONTRACT C-022 | Hanford Tooling | Rate card] Machinist rate is 92.00 per hour.
+[INVOICE HAN-7650 | Hanford Tooling | 2026-09-16] Line 1: Machinist 110 hours at 118.00 per hour = 12980.00
+[CONTRACT C-104 | Fairholt Logistics | Clause 2.1] Prices are fixed for the term as per the schedule.
+[INVOICE FAI-6204 | Fairholt Logistics | 2026-09-05] Line 1: Contracted supply 4400.00
+[CONTRACT C-105 | Gilbey Mills | Clause 2.1] Prices are fixed for the term as per the schedule.
+[CONTRACT C-031 | Pellam Cleaning | Term] This contract ends on 2026-08-31.
+[INVOICE PEL-2209 | Pellam Cleaning | 2026-09-12] Service period 2026-09-01 to 2026-09-12 1450.00
+[INVOICE GIL-6205 | Gilbey Mills | 2026-09-06] Line 1: Contracted supply 4500.00
+[CONTRACT C-018 | Fairholt Logistics | Clause 7.1] Charges not listed in the price schedule may not be billed.
+[INVOICE FAI-7420 | Fairholt Logistics | 2026-09-14] Line 2: Fuel surcharge 8 percent 1112.40
+[CONTRACT C-040 | Veridian Software | Renewal] Auto-renews on 2026-09-30 unless cancelled 30 days before.
+[INVOICE VER-8801 | Veridian Software | 2026-10-01] Annual renewal 4800.00 - no notice of cancellation on file
