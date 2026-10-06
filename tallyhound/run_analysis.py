@@ -222,7 +222,7 @@ def recent_runs() -> None:
     S = st.session_state
     base = C.read_csv("recent_runs.csv")
     extra = pd.DataFrame(S.recent_extra, columns=base.columns) if S.recent_extra else base.iloc[0:0]
-    df = pd.concat([extra, base], ignore_index=True)
+    df = pd.concat([extra, base], ignore_index=True).astype(str)
     ev = st.dataframe(df, hide_index=True, on_select="rerun", selection_mode="single-row", key="recent_tbl", **C.dfw())
     rows = ev.selection.rows if ev and ev.selection else []
     pick = df.iloc[rows[0]] if rows else None
