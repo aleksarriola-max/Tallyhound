@@ -71,7 +71,7 @@ Uploads come from outside, so they are treated as hostile (`tests/test_audit.py`
 - **Zip limits**: 50 MB per zip and per file, 100 MB once unpacked (stops zip bombs), 300,000 lines; password-protected or corrupt entries become a note, not a crash. Two files for the same slot are reported, never merged.
 - **Encodings**: UTF-8, UTF-16 and Windows-1252 (Excel's "Save as CSV") keep their accents.
 - **Unreadable values are reported**: an amount like `nan` or a date like `31/31/2026` is listed in the data check instead of silently counting as zero.
-- **Model address**: only http(s), never link-local addresses such as the cloud metadata service, no redirects, replies capped at 20 MB.
+- **Model address**: only http(s), never link-local addresses such as the cloud metadata service, no redirects, replies capped at 20 MB. On a public copy (Streamlit Community Cloud is detected automatically, or set `TALLYHOUND_PUBLIC=1`) only `localhost` is accepted, so the demo can't be used to reach the network it runs on; set `TALLYHOUND_PUBLIC=0` on your own server.
 - **Sessions and sign-in**: saved work is keyed by a random 128-bit id in the page address (share it only with people who should see that work); five wrong passwords lock a name for a minute; with sign-in on, only an admin can reset (it erases the audit trail).
 
 ## Benchmark

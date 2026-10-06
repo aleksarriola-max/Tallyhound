@@ -36,7 +36,8 @@ def _start(choice: str) -> None:
 @st.dialog("Check new files", width="large")
 def run_dialog() -> None:
     S = st.session_state
-    up = st.file_uploader("Upload a zip of your files", type="zip")
+    up = st.file_uploader("Upload a zip of your files", type="zip", disabled=not auth.can("run"),
+                          help=None if auth.can("run") else "Only a preparer or admin can add files.")
     st.caption("Any of payments.csv, approvals.csv, vendors.csv, contracts.txt, expenses.csv, bank_statement.csv, "
                "payment_run.csv and invoice PDFs. Read in memory, never written to disk.")
     label = run_analysis.add_zip(up) if up is not None else None

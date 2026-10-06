@@ -191,3 +191,34 @@ def test_exports_survive_hostile_names_and_keep_formulas_as_text():
     import html
     Paragraph(html.escape("Smith & Sons <b"), getSampleStyleSheet()["Normal"])
     assert not at.exception
+
+
+# ---- public demo
+def test_public_demo_only_talks_to_a_model_on_its_own_server(monkeypatch):
+    monkeypatch.setenv("TALLYHOUND_PUBLIC", "1")
+    for url in ("http://10.0.0.5:11434", "http://192.168.1.20:11434", "http://ollama:11434", "http://example.com/v1"):
+        assert llm.check_url(url), url
+    for url in ("http://localhost:11434", "http://127.0.0.1:1234/v1", "http://[::1]:11434"):
+        assert llm.check_url(url) is None, url
+    monkeypatch.setenv("TALLYHOUND_PUBLIC", "0")
+    assert llm.check_url("http://192.168.1.20:11434") is None      # your own computer or server: allowed
+
+
+def test_streamlit_cloud_is_detected_as_public(monkeypatch):
+    monkeypatch.delenv("TALLYHOUND_PUBLIC", raising=False)
+    monkeypatch.setattr(llm, "__file__", "/mount/src/tallyhound/tallyhound/llm.py")
+    assert llm.public()
+    monkeypatch.setattr(llm, "__file__", "/home/me/tallyhound/tallyhound/llm.py")
+    assert not llm.public()
+
+
+def test_preparer_only_upload_when_sign_in_is_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("TALLYHOUND_USERS", str(tmp_path / "users.json"))
+    monkeypatch.setattr(auth, "ITER", 1000)
+    auth.add_user("rev", "reviewer", "pw-one-two-three")
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state.user, at.session_state.role = "rev", "reviewer"
+    at.run()
+    at.button(key="open_run").click().run()
+    assert not at.exception
+    assert at.button(key="run_go").disabled

@@ -27,6 +27,18 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPEN = urllib.request.build_opener(_NoRedirect)
 
 
+LOOPBACK = ("localhost", "127.0.0.1", "::1")
+
+
+def public() -> bool:
+    """True on a public hosted copy: Streamlit Community Cloud (apps live under /mount/src) or TALLYHOUND_PUBLIC=1.
+    TALLYHOUND_PUBLIC=0 turns it off, for example on your own server behind a firewall."""
+    flag = os.environ.get("TALLYHOUND_PUBLIC", "").strip()
+    if flag in ("0", "1"):
+        return flag == "1"
+    return __file__.replace("\\", "/").startswith("/mount/src/")
+
+
 def check_url(url: str) -> str | None:
     """Why this model address is refused, or None. Only http(s), and never link-local addresses such as the cloud
     metadata service (169.254.169.254), so a visitor to a hosted copy cannot make the server fetch them."""
@@ -43,6 +55,10 @@ def check_url(url: str) -> str | None:
         return "The model address must start with http:// or https://."
     if host.lower() in ("metadata", "metadata.google.internal"):
         return "That address is not allowed."
+    if public() and host.lower().strip("[]") not in LOOPBACK:
+        # a public demo must not be a way into the network it runs on; named hosts are refused too, so a name that
+        # resolves to a safe address at check time and an internal one at fetch time (DNS rebinding) cannot slip in
+        return "On the public demo the model must run on this server (localhost). Run Tallyhound on your own computer to use another address."
     try:
         addrs = {i[4][0] for i in socket.getaddrinfo(host, None)}
     except (socket.gaierror, UnicodeError, OSError):

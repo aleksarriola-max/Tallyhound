@@ -113,7 +113,7 @@ def step1() -> None:
             st.caption(f"Runs one at a time on the local GPU - total est. {sim.total_est(sel)} min")
 
         with st.expander("Add new data", expanded=False):
-            up = st.file_uploader("Zip file", type="zip", label_visibility="collapsed", disabled=running)
+            up = st.file_uploader("Zip file", type="zip", label_visibility="collapsed", disabled=running or not auth.can("run"))
             st.caption("Upload a zip with any of: payments.csv, approvals.csv, vendors.csv, contracts.txt, expenses.csv. "
                        "The columns must match the sample files in data/source/. The zip is read in memory and never written to disk.")
             if up is not None:
@@ -150,8 +150,11 @@ def engine_settings(running: bool) -> None:
         c2.text_input("Model server address", value=llm.DEFAULT_URL, key="adv_url", disabled=running,
                       help="Ollama: http://localhost:11434. LM Studio, vLLM or llama.cpp: their address ending in /v1, "
                            "for example http://localhost:1234/v1")
-        have = llm.models(S.get("adv_url") or llm.DEFAULT_URL)
-        if not have:
+        refused = llm.check_url(S.get("adv_url") or llm.DEFAULT_URL)
+        have = [] if refused else llm.models(S.get("adv_url") or llm.DEFAULT_URL)
+        if refused:
+            st.warning(refused)
+        elif not have:
             st.warning("Ollama is not reachable from here. The hosted demo cannot see your computer; run the app "
                        "locally (streamlit run app.py) with Ollama running.")
         elif (S.get("adv_model") or llm.DEFAULT_MODEL) not in have:
