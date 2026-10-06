@@ -187,7 +187,7 @@ def test_a_run_that_finds_nothing_shows_every_page(tmp_path, monkeypatch):
     at.button(key="open_run").click().run()
     at.button(key="run_go").click().run()
     for _ in range(20):
-        if at.session_state.get("dataset") == "v":
+        if ("dataset" in at.session_state and at.session_state["dataset"]) == "v":
             break
         time.sleep(1)
         at.run()
@@ -261,3 +261,33 @@ def test_without_a_writable_disk_the_trail_key_is_secret_not_a_constant(monkeypa
     monkeypatch.setattr(C, "_EPHEMERAL_KEY", None)
     k = C._trail_key()
     assert len(k) == 32 and b"tallyhound" not in k and C._trail_key() == k
+
+
+# ---- the two judgment calls, decided
+def test_three_decimal_amounts_follow_the_files_decimal_style():
+    eu = ["id,amount", '1,"1.234"', '2,"99,50"']
+    us = ["id,amount", "1,1.234", "2,99.50"]
+    assert [rules._f(r["amount"]) for _, r in rules.rows(eu)] == [1234.0, 99.5]
+    assert [rules._f(r["amount"]) for _, r in rules.rows(us)] == [1.234, 99.5]   # and the data check warns about it
+
+
+def test_payment_without_vendor_id_to_an_unknown_payee_is_flagged():
+    vend = [VEND_H, "V-1,Ashby Components,1,ACTIVE,****1,,YES,2025-01-01,YES,,"]
+    pays = [PAY_H, "P1,2026-09-01,2026-08-20,,Ashby Components UK,INV-1,500.00,500.00",
+            "P2,2026-09-01,2026-08-20,,J Smith Consulting,INV-2,900.00,900.00"]
+    got = [(h.clause, h.line_number) for h in rules.cross_file({"payments.csv": pays, "vendors.csv": vend})]
+    assert got == [("4.1", 3)]
+
+
+@pytest.mark.parametrize("run", range(5))
+def test_anonymised_month_gives_the_same_findings_every_run(tmp_path, run):
+    files, _ = challenge.generate(2 + run, "medium")
+    src = tmp_path / "src"
+    src.mkdir()
+    for n, v in files.items():
+        (src / n).write_text("\n".join(v) + "\n")
+    subprocess.run([sys.executable, str(ROOT / "scripts" / "anonymise.py"), str(src), "--out", str(tmp_path / "o")],
+                   check=True, capture_output=True)
+    out = {p.name: p.read_text().splitlines() for p in (tmp_path / "o").iterdir()}
+    key = lambda fs: sorted((h.clause, h.source_file, h.line_number) for h in rules.analyze(fs))  # noqa: E731
+    assert key(files) == key(out)

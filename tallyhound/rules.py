@@ -136,7 +136,22 @@ def rows(lines: list[str]) -> list[tuple[int, Row]]:
         r = Row(zip(head, vals + [""] * (len(head) - len(vals))))
         r.dayfirst = dayfirst
         out.append((i, r))
+    for col in (c for c in head if "amount" in c.lower()):
+        if decimal_comma([r[col] for _, r in out]):
+            for _, r in out:                       # in a decimal-comma file "1.234" is one thousand two hundred ...
+                if EU_THOUSANDS.match(r[col].strip()):
+                    r[col] = r[col].strip().replace(".", "")
     return out
+
+
+EU_THOUSANDS = re.compile(r"^-?\d{1,3}(\.\d{3})+$")
+
+
+def decimal_comma(values: list[str]) -> bool:
+    """True when a column writes decimals with a comma (1.234,56 / 99,00) and never with a point (99.00)."""
+    v = [str(x).strip() for x in values if str(x).strip()]
+    return any(re.search(r"\d,\d{2}(\s*[A-Za-z€£$)-]*)?$", x) for x in v) and \
+        not any(re.search(r"\d\.\d{2}(\s*[A-Za-z€£$)-]*)?$", x) for x in v)
 
 
 def missing_columns(name: str, lines: list[str]) -> list[str]:
@@ -362,8 +377,16 @@ def cross_file(files: dict[str, list[str]]) -> list[Hit]:
     for ln, r in rows(P):
         vid = r.get("vendor_id", "").strip().upper()
         if not vid:                              # no id on the payment: use the name, when it fits exactly one vendor
-            same = by_name.get(norm_name(r["supplier"]), [])
+            n = norm_name(r["supplier"])
+            same = by_name.get(n, [])
             vid = same[0] if len(same) == 1 else ""
+            near = same or [k for k in by_name if k and n and (n.startswith(k + " ") or k.startswith(n + " "))]
+            if not near and n and _f(r["paid_amount"]) > 0:
+                # not even a longer or shorter form of a known name: money went to someone the master does not know
+                out.append(Hit("Payments", "4.1", "Low", _f(r["paid_amount"]),
+                               f"{r['payment_id']} paid {r['supplier'].strip()}, who has no vendor id and is not in the "
+                               "vendor master", "payments.csv", ln))
+                continue
         if not vid or _f(r["paid_amount"]) <= 0:
             continue
         if vid not in master:

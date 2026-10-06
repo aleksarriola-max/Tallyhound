@@ -134,7 +134,7 @@ def test_upload_run_review_and_export_end_to_end():
     assert at.selectbox(key="run_choice").value == "mine"
     at.button(key="run_go").click().run()
     for _ in range(40):
-        if at.session_state.get("dataset") == "mine":
+        if ("dataset" in at.session_state and at.session_state["dataset"]) == "mine":
             break
         time.sleep(1)
         at.run()

@@ -469,6 +469,12 @@ def profile(label: str) -> list[dict]:
                 bad = [i for i, r in R if r[col].strip() and r[col].strip().upper() not in ("N/A", "NA", "-")
                        and ((is_amt and rules._f(r[col]) == 0.0 and not _re.fullmatch(r"[\s$€£(]*-?0+([.,]0+)?\)?", r[col]))
                             or (is_date and r.d(col) is None))]
+                odd = [i for i, r in R if is_amt and rules.EU_THOUSANDS.match(r[col].strip())] if is_amt else []
+                if odd:
+                    out.append(dict(file=name, level="warn", kind="amounts",
+                                    message=f"{len(odd)} {col} value(s) like {R[[i for i, _ in R].index(odd[0])][1][col].strip()} "
+                                            f"have three decimals (line {', '.join(map(str, odd[:5]))}) - is that "
+                                            "one thousand and something? Check the export before trusting those rows"))
                 if bad:
                     out.append(dict(file=name, level="warn", kind="unreadable",
                                     message=f"{len(bad)} {col} value(s) could not be read (line {', '.join(map(str, bad[:5]))}"

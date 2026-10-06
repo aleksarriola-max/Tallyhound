@@ -59,7 +59,7 @@ def test_hostile_upload_walks_every_page_without_errors_or_raw_html():
     at.button(key="open_run").click().run()
     at.button(key="run_go").click().run()
     for _ in range(60):
-        if at.session_state.get("dataset") == label:
+        if ("dataset" in at.session_state and at.session_state["dataset"]) == label:
             break
         time.sleep(1)
         at.run()

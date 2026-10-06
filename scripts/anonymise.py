@@ -56,11 +56,11 @@ def _h(s: str, n: int = 8) -> int:
     return int(hmac.new(KEY, s.strip().lower().encode(), hashlib.sha256).hexdigest()[:n], 16)
 
 
-def fake_base(base: str) -> str:
+def fake_base(base: str, salt: int = 0) -> str:
     if re.fullmatch(r"[A-Za-z]\. ?[A-Za-z]+", base.strip()):
-        h = _h(base)
-        return f"{FIRST[h % 12][0]}. {LAST[(h // 12) % 12]}"
-    h = _h(KEEP.sub("", base))
+        h = _h(f"{base}|{salt}")
+        return f"{FIRST[h % 12][0]}. {LAST[(h // 12) % 12]}{'' if salt < 12 else f'-{salt}'}"
+    h = _h(f"{KEEP.sub('', base)}|{salt}" if salt else KEEP.sub("", base))
     keep = " ".join(m.group(0) for m in KEEP.finditer(base))
     return " ".join(x for x in (f"{LAST[h % 12]} {FIRST[(h // 12) % 12]} {h % 97:02d}", keep) if x)
 
@@ -78,7 +78,20 @@ def build_names(files: dict[str, list[str]]) -> dict[str, str]:
     for ln in files.get("contracts.txt", []) + files.get("invoices.txt", []):
         for m in re.finditer(r"\| ([^|\]]+?) \|", ln):
             names.add(SUFFIX.sub("", m.group(1).strip()))
-    return {n: fake_base(n) for n in sorted(names, key=len, reverse=True) if len(n) > 2}
+    from tallyhound import rules
+    mapping: dict[str, str] = {}
+    for n in sorted((x for x in names if len(x) > 2), key=lambda x: (-len(x), x)):
+        # two different people or companies must never get fakes that match each other ("P. Herrera" and "D. Abara"
+        # both becoming "E. Hazel" would invent a self-approval); the same person under two spellings may share one
+        for salt in range(500):
+            fake = fake_base(n, salt)
+            clash = any((f == fake or rules.same_person(f, fake) or rules.norm_name(f) == rules.norm_name(fake))
+                        and not (rules.same_person(r, n) or rules.norm_name(r) == rules.norm_name(n))
+                        for r, f in mapping.items())
+            if not clash:
+                break
+        mapping[n] = fake
+    return mapping
 
 
 def replace_names(text: str, mapping: dict[str, str]) -> str:
