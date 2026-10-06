@@ -6,27 +6,29 @@ every hit is only a proposal for a person to review.
 from __future__ import annotations
 
 import csv
+from functools import lru_cache
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 FILES = {"Payments": "payments.csv", "Approvals": "approvals.csv", "Vendors": "vendors.csv",
-         "Contracts": "contracts.txt", "Expenses": "expenses.csv"}
+         "Contracts": "contracts.txt", "Expenses": "expenses.csv", "Invoices": "invoices.txt"}
 REQUIRED = {
     "payments.csv": ["payment_id", "pay_date", "invoice_date", "supplier", "invoice_no", "invoice_amount", "paid_amount"],
     "approvals.csv": ["record_id", "doc_no", "date", "vendor", "amount", "requested_by", "approved_by", "approver_role", "po_no"],
     "vendors.csv": ["vendor_id", "name", "tax_id", "status", "bank_changed_on", "bank_verified", "w9_on_file", "last_paid_on",
                     "last_paid_amount"],
     "payment_run.csv": ["line", "supplier", "invoice", "amount"],
+    "bank_statement.csv": ["date", "description", "amount"],
     "expenses.csv": ["claim_id", "date", "employee", "category", "amount", "receipt_ref", "notes", "people"],
 }
 
 
-LIMITS = dict(po_limit=2500.0, director_limit=10000.0, meal_limit=75.0, receipt_limit=25.0, split_days=3)
+LIMITS = dict(po_limit=2500.0, director_limit=10000.0, meal_limit=75.0, receipt_limit=25.0, split_days=3, bank_days=5)
 LIMIT_LABELS = dict(po_limit="Purchase order needed above ($)", director_limit="Director approval needed above ($)",
                     meal_limit="Meal limit per person ($)", receipt_limit="Receipt needed above ($)",
-                    split_days="Split-order window (days)")
+                    split_days="Split-order window (days)", bank_days="Bank clearing window (days)")
 
 
 class Row(dict):
@@ -69,6 +71,7 @@ def missing_columns(name: str, lines: list[str]) -> list[str]:
     return [c for c in REQUIRED[name] if c not in head]
 
 
+@lru_cache(maxsize=65536)
 def _d(s: str) -> date | None:
     """Dates as YYYY-MM-DD, YYYY/MM/DD, MM/DD/YYYY or DD.MM.YYYY. Anything else counts as no date."""
     from datetime import datetime
@@ -191,6 +194,45 @@ def cross_file(files: dict[str, list[str]]) -> list[Hit]:
     return out
 
 
+def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
+    """Match the bank statement to recorded payments. Money that left the bank with no recorded payment is the
+    serious case; a recorded payment missing from the bank is usually timing, so it is Low."""
+    B, P = files.get("bank_statement.csv"), files.get("payments.csv")
+    if not B or not P or missing_columns("bank_statement.csv", B) or missing_columns("payments.csv", P):
+        return []
+    bank = [(ln, r) for ln, r in rows(B) if _d(r["date"])]
+    if not bank:
+        return []
+    negative = any(_f(r["amount"]) < 0 for _, r in bank)
+    # money out is negative when the file has signs; when every amount is positive, every line is money out
+    debits = [(ln, r, abs(_f(r["amount"]))) for ln, r in bank if not negative or _f(r["amount"]) < 0]
+    pays = [(ln, r, _f(r["paid_amount"])) for ln, r in rows(P) if _d(r["pay_date"])]
+    first, last = min(_d(r["date"]) for _, r in bank), max(_d(r["date"]) for _, r in bank)
+    by_cents: dict[int, list] = {}
+    for pl, p, pa in pays:                      # index by amount so big files stay fast
+        by_cents.setdefault(round(pa * 100), []).append((pl, p))
+    used: set[int] = set()
+    out = []
+    for ln, r, amt in debits:
+        d, ref = _d(r["date"]), (r["reference"] + " " + r["description"]).lower()
+        cands = [(pl, p) for pl, p in by_cents.get(round(amt * 100), []) if pl not in used
+                 and 0 <= (d - _d(p["pay_date"])).days <= L["bank_days"]]
+        cands.sort(key=lambda c: (c[1]["payment_id"].lower() not in ref, c[1]["invoice_no"].lower() not in ref,
+                                  (d - _d(c[1]["pay_date"])).days))
+        if cands:
+            used.add(cands[0][0])
+        else:
+            out.append(Hit("Payments", "5.5", "High", amt,
+                           f"Bank payment of ${amt:,.2f} on {r['date']} ({r['description'].strip()}) has no recorded payment",
+                           "bank_statement.csv", ln))
+    for pl, p, pa in pays:
+        pdte = _d(p["pay_date"])
+        if pl not in used and first <= pdte and pdte + timedelta(days=L["bank_days"]) <= last:
+            out.append(Hit("Payments", "5.5", "Low", pa,
+                           f"{p['payment_id']} (${pa:,.2f} to {p['supplier']}) is not on the bank statement", "payments.csv", pl))
+    return out
+
+
 def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     R, out, tax = rows(lines), [], {}
     for ln, r in R:
@@ -285,6 +327,7 @@ INNOCENT = {
     "5.2": "The first payment may have bounced and been legitimately re-sent.",
     "5.3": "An advance payment may have been agreed with the supplier.",
     "5.4": "The bank may have processed an earlier instruction on a non-working day.",
+    "5.5": "The payment may be recorded under another reference, or the bank date may fall outside the window.",
     "1.1": "The purchase order may exist outside this export.",
     "1.2": "A deputy may have approved under an agreed cover arrangement.",
     "1.3": "A director may have approved by email outside the system.",
@@ -297,6 +340,9 @@ INNOCENT = {
     "7.2": "A rate change may have been agreed after the contract copy was filed.",
     "7.3": "The contract may have been extended in writing.",
     "7.4": "A renewal may have been agreed on purpose.",
+    "8.3": "The second copy may be a reminder rather than a new bill.",
+    "8.2": "The supplier may really have changed banks and told Treasury separately.",
+    "8.1": "An approval may exist under a slightly different invoice number.",
     "6.3": "The item may have been bought for a business purpose.",
     "6.1": "The meal may have included guests not recorded in the claim.",
     "6.2": "The receipt may exist but was not entered in the claim.",
@@ -308,6 +354,7 @@ FIXES = {
     "5.2": "Ask the bank to recall the second payment and block repeat payment of this invoice.",
     "5.3": "Check the invoice and the approval date before releasing similar payments.",
     "5.4": "Remind Treasury that payments release on working days only.",
+    "5.5": "Find who authorised the bank payment; if nobody did, ask the bank to recall it.",
     "1.1": "Ask the requester for the purchase order, or record an approved exception.",
     "1.2": "Have a different, authorised person re-approve it.",
     "1.3": "Get director sign-off recorded against the document.",
@@ -320,6 +367,9 @@ FIXES = {
     "7.2": "Dispute the difference and ask for a corrected invoice.",
     "7.3": "Check for a written extension; otherwise refuse the invoice.",
     "7.4": "Decide whether to keep the contract and record the decision.",
+    "8.3": "Pay the invoice once and mark the copy as a duplicate.",
+    "8.2": "Do not pay; call the supplier on the number in the vendor master to confirm the bank details.",
+    "8.1": "Hold the invoice until it is matched to an approved record.",
     "6.3": "Do not reimburse personal items.",
     "6.1": "Ask the employee for the attendee list or reduce the claim to the limit.",
     "6.2": "Ask for the receipt before reimbursing.",
@@ -334,9 +384,12 @@ def run_area(area: str, files: dict[str, list[str]], limits: dict | None = None)
     lines = files.get(name)
     if not lines or missing_columns(name, lines):
         return []
+    if area == "Invoices":
+        from . import invoices
+        return invoices.check(files)
     out = CHECKS[area](lines, L)
     if area == "Payments":
-        out += cross_file(files)
+        out += cross_file(files) + reconcile(files, L)
     return out
 
 

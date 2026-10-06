@@ -31,7 +31,8 @@ TRADES = ["Components", "Plastics", "Packaging", "Fasteners", "Logistics", "Tool
           "Metals", "Software", "Electrical"]
 ISSUES = ["pay_dup", "pay_over", "pay_noinv", "pay_early", "pay_weekend", "app_self", "app_nopo", "app_director",
           "app_split", "app_poafter", "ven_bank", "ven_inactive", "ven_w9", "ven_duptax", "exp_meal", "exp_norec",
-          "exp_duprec", "exp_weekend", "exp_personal", "con_surcharge", "con_rate", "con_term", "con_renew"]
+          "exp_duprec", "exp_weekend", "exp_personal", "con_surcharge", "con_rate", "con_term", "con_renew",
+          "bank_unrecorded", "bank_uncleared", "inv_bank", "inv_total", "inv_unknown", "inv_dup"]
 COUNTS = {"easy": 8, "medium": 14, "hard": len(ISSUES)}
 
 
@@ -45,6 +46,9 @@ class _Gen:
         self.rows = {k: [] for k in HEADERS}
         self.contracts: list[list[dict]] = []      # pairs of text lines kept together
         self.key: list[dict] = []
+        self.bank_extra: list[dict] = []           # bank lines with no recorded payment (planted)
+        self.inv_issues: list[str] = []            # invoice-PDF problems, built after the clean month
+        self.pdfs: dict[str, bytes] = {}
         self.n = {"pay": 6000, "app": 300, "ven": 5000, "exp": 2000, "doc": 7000, "po": 4000, "con": 200, "rc": 50000}
         self.names = [f"{a} {b}" for a in NAMES for b in TRADES]
         self.r.shuffle(self.names)
@@ -220,6 +224,21 @@ class _Gen:
             note = "Yoga classes for myself" if hard else "Monthly gym membership"
             e = self.expense(category="SUPPLIES", amount=f"{self.amt(40, 120):.2f}", notes=note)
             self.plant(kind, "6.3", "Expenses", "expenses.csv", e, [], f"Personal item claimed: {note.lower()}")
+        elif kind.startswith("inv_"):
+            self.inv_issues.append(kind)
+        elif kind == "bank_unrecorded":
+            day = self.wd(8, 28)
+            who = r.choice(PEOPLE) if hard else self.names.pop()
+            b = dict(date=day.isoformat(), description=f"TRANSFER {who.upper()}", amount=f"-{self.amt(900, 4800):.2f}",
+                     reference=f"TRF{r.randint(100000, 999999)}")
+            self.bank_extra.append(b)
+            self.plant(kind, "5.5", "Payments", "bank_statement.csv", b, [], f"Bank transfer to {who} with no recorded payment")
+        elif kind == "bank_uncleared":
+            v = r.choice(self.paid_vendors)
+            inv = self.approval(v["name"], self.amt(900, 7000), self.wd(10, 18))    # mid-month: inside the statement
+            p = self.payment(v, inv)
+            p["_nobank"] = True
+            self.plant(kind, "5.5", "Payments", "payments.csv", p, [], f"{p['payment_id']} recorded but not on the bank statement")
         elif kind == "con_surcharge":
             v = self.names.pop()
             if hard:   # no word "surcharge": the fixed rules miss it, a careful reader does not
@@ -246,6 +265,40 @@ class _Gen:
                                       f"Annual renewal {self.amt(1200, 6000):.2f} - no notice of cancellation on file",
                                       day=date(2026, 10, 1))
             self.plant(kind, "7.4", "Contracts", "contracts.txt", i, [c], f"{v} auto-renewed with no decision on file")
+
+    # -------- supplier invoice PDFs: one per open invoice, some with planted problems
+    def invoice_docs(self) -> list[tuple[str, list[str], str | None]]:
+        docs = []
+
+        def doc(v, no, day, po, total, acct):
+            return [v["name"], f"From: {v['name']}", f"Invoice No: {no}", f"Invoice date: {day}", f"PO: {po}",
+                    "Description: Goods as ordered", f"Total due: ${total:,.2f}", f"Pay to account: ****{acct}"]
+        issues = list(self.inv_issues)
+        for i, (v, a) in enumerate(self.open_invoices):
+            acct, total, kind = v["bank_acct"][-4:], float(a["amount"]), None
+            if issues and i >= 3:                    # open invoices 0-2 are also on the payment run; keep those clean
+                kind = issues.pop(0)
+                if kind == "inv_bank":
+                    acct = f"{(int(acct) + (1 if self.hard else 4321)) % 10000:04d}"
+                elif kind == "inv_total":
+                    total += 0.1 if self.hard else round(self.r.uniform(120, 600), 2)
+                elif kind == "inv_unknown":
+                    a = dict(a, doc_no=f"{a['doc_no']}-X")
+            docs.append((f"{a['doc_no']}.pdf", doc(v, a["doc_no"], a["date"], a["po_no"], total, acct), kind))
+            if kind == "inv_dup":
+                docs.append((f"{a['doc_no']}-copy.pdf", doc(v, a["doc_no"], a["date"], a["po_no"], total, acct), "inv_dup_copy"))
+        return docs
+
+    # -------- the bank statement: one debit per recorded payment, a day or two later
+    def bank_rows(self) -> list[dict]:
+        out = []
+        for p in self.rows["payments.csv"]:
+            if p.get("_nobank"):
+                continue
+            d = date.fromisoformat(p["pay_date"]) + timedelta(days=self.r.randint(0, 2))
+            out.append(dict(date=d.isoformat(), description=f"PAYMENT {p['supplier'].upper()}",
+                            amount=f"-{float(p['paid_amount']):.2f}", reference=p["payment_id"]))
+        return out + self.bank_extra
 
     # -------- the proposed payment run for the Payment gate (four lines should be held)
     def payment_run(self) -> list[str]:
@@ -293,12 +346,62 @@ class _Gen:
                 where[id(item)] = len(lines)
         files["contracts.txt"] = lines
         files["payment_run.csv"] = self.payment_run()
+        from . import invoices
+        docs = self.invoice_docs()
+        for name, lines_, _ in docs:
+            self.pdfs[name] = invoices.render_pdf(lines_)
+        extracted = sorted((name, invoices.pdf_lines(self.pdfs[name])) for name, _, _ in docs)
+        files[invoices.NAME] = invoices.combine(extracted)
+        start = {}
+        for n, ln in enumerate(files[invoices.NAME], start=1):
+            m = invoices.HEAD.match(ln)
+            if m:
+                start[m.group(1)] = n
+
+        def find(doc_name: str, prefix: str) -> int:
+            i = start[doc_name]
+            while not files[invoices.NAME][i].startswith(prefix):
+                i += 1
+            return i + 1
+        inv_key = []
+        for name, _, kind in docs:
+            no_line = find(name, "Invoice No")
+            if kind == "inv_bank":
+                inv_key.append(("8.2", find(name, "Pay to account"), [no_line], f"{name}: bank details differ from the vendor master"))
+            elif kind == "inv_total":
+                inv_key.append(("8.1", find(name, "Total due"), [no_line], f"{name}: total differs from the approved amount"))
+            elif kind == "inv_unknown":
+                inv_key.append(("8.1", no_line, [], f"{name}: invoice has no approval record"))
+            elif kind == "inv_dup":
+                inv_key.append(("8.3", find(name.replace(".pdf", "-copy.pdf"), "Invoice No"), [no_line], f"{name} submitted twice"))
+        bank = self.bank_rows()
+        self.r.shuffle(bank)
+        bank.sort(key=lambda x: x["date"])
+        buf = io.StringIO()
+        w = csv.writer(buf, lineterminator="\n")
+        w.writerow(["date", "description", "amount", "reference"])
+        for i, row in enumerate(bank, start=2):
+            w.writerow([row["date"], row["description"], row["amount"], row["reference"]])
+            where[id(row)] = i
+        files["bank_statement.csv"] = buf.getvalue().splitlines()
         key = []
         for n, k in enumerate(self.key, start=1):
             key.append(dict(id=f"K-{n:02d}", clause=k["clause"], area=k["area"], source_file=k["source_file"],
                             line_number=where[id(k["main"])],
                             related_lines=";".join(str(where[id(x)]) for x in k["related"]), description=k["description"]))
+        for clause, line, rel, desc in inv_key:
+            key.append(dict(id=f"K-{len(key) + 1:02d}", clause=clause, area="Invoices", source_file=invoices.NAME,
+                            line_number=line, related_lines=";".join(map(str, rel)), description=desc))
         return files, key
+
+
+def generate_full(seed: int = 1, difficulty: str = "medium") -> tuple[dict[str, list[str]], list[dict], dict[str, bytes]]:
+    """Like generate, plus the invoice PDFs (name -> bytes) for writing a zip."""
+    if difficulty not in COUNTS:
+        raise ValueError("difficulty must be easy, medium or hard")
+    g = _Gen(seed, difficulty)
+    files, key = g.build(COUNTS[difficulty])
+    return files, key, g.pdfs
 
 
 def generate(seed: int = 1, difficulty: str = "medium") -> tuple[dict[str, list[str]], list[dict]]:
@@ -316,10 +419,15 @@ def key_csv(key: list[dict]) -> str:
     return buf.getvalue()
 
 
-def to_zip(files: dict[str, list[str]], key: list[dict]) -> bytes:
+def to_zip(files: dict[str, list[str]], key: list[dict], pdfs: dict[str, bytes] | None = None) -> bytes:
+    """A zip as a person would upload it: CSVs, contracts.txt, invoice PDFs in invoices/, and answer_key.csv."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, lines in files.items():
+            if name == "invoices.txt" and pdfs:
+                continue
             z.writestr(name, "\n".join(lines) + "\n")
+        for name, data in (pdfs or {}).items():
+            z.writestr(f"invoices/{name}", data)
         z.writestr("answer_key.csv", key_csv(key))
     return buf.getvalue()

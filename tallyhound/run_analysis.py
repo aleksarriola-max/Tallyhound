@@ -10,7 +10,7 @@ from . import common as C
 from . import guide, review, sim
 
 CARD_HEIGHT = 300
-AGENT_KEYS = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses"]
+AGENT_KEYS = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses", "Invoices"]
 
 
 def run_page() -> None:
@@ -104,9 +104,10 @@ def step1() -> None:
         if running:
             b1.button("Stop after current", on_click=sim.request_stop, **C.bw())
         else:
-            b1.button(f"Run selected ({n})", type="primary", disabled=n == 0,
+            from . import auth
+            b1.button(f"Run selected ({n})", type="primary", disabled=n == 0 or not auth.can("run"),
                       on_click=start_run, args=(False,), **C.bw())
-            b2.button("Run all", on_click=start_run, args=(True,), **C.bw())
+            b2.button("Run all", on_click=start_run, args=(True,), disabled=not auth.can("run"), **C.bw())
         if n == 0 and not running:
             st.caption("Tick at least one workflow")
         else:
@@ -147,7 +148,9 @@ def engine_settings(running: bool) -> None:
     if S.get("adv_engine") in ("Ollama agents", "Built-in rules + Ollama Skeptic", "Ollama agents with tools"):
         c1, c2 = st.columns(2)
         c1.text_input("Model", value=llm.DEFAULT_MODEL, key="adv_model", disabled=running)
-        c2.text_input("Ollama address", value=llm.DEFAULT_URL, key="adv_url", disabled=running)
+        c2.text_input("Model server address", value=llm.DEFAULT_URL, key="adv_url", disabled=running,
+                      help="Ollama: http://localhost:11434. LM Studio, vLLM or llama.cpp: their address ending in /v1, "
+                           "for example http://localhost:1234/v1")
         have = llm.models(S.get("adv_url") or llm.DEFAULT_URL)
         if not have:
             st.warning("Ollama is not reachable from here. The hosted demo cannot see your computer; run the app "
@@ -179,7 +182,8 @@ def add_zip(up) -> None:
 
 
 def _save_matching(label: str, name: str, missing: list[str]) -> None:
-    from . import custom
+    import csv
+    from . import columns, custom
     S = st.session_state
     m = custom.mapping(label).setdefault(name, {})
     for col in missing:
@@ -188,6 +192,9 @@ def _save_matching(label: str, name: str, missing: list[str]) -> None:
             m[col] = ""
         elif v != "(choose)":
             m[col] = v
+    lines = S_lines(label, name)
+    if lines and S.get(f"mapremember_{label}_{name}", True):
+        S.setdefault("presets", {})[columns.signature(name, next(csv.reader([lines[0]])))] = dict(m)
 
 
 def column_matching(label: str) -> None:
@@ -200,13 +207,19 @@ def column_matching(label: str) -> None:
     st.markdown("**Match your columns**")
     st.caption("Some files use different column names. Pick which of your columns holds each field. Choose "
                "\"(not in file)\" when you do not have it; checks that need it then find nothing for that field.")
+    from . import columns
     for name, missing in todo.items():
         head = next(csv.reader([S_lines(label, name)[0]])) if S_lines(label, name) else []
+        guess = columns.suggest(missing, head)
         with st.container(border=True):
-            st.markdown(f"`{name}`")
+            st.markdown(f"`{name}`" + (" - suggestions pre-filled, please check them" if guess else ""))
             cols = st.columns(min(4, len(missing)))
+            opts = ["(choose)", "(not in file)", *head]
             for i, col in enumerate(missing):
-                cols[i % len(cols)].selectbox(col, ["(choose)", "(not in file)", *head], key=f"map_{label}_{name}_{col}")
+                cols[i % len(cols)].selectbox(col, opts, index=opts.index(guess[col]) if col in guess else 0,
+                                              key=f"map_{label}_{name}_{col}")
+            st.checkbox("Remember this matching for files with the same columns", value=True,
+                        key=f"mapremember_{label}_{name}")
             st.button("Save column matching", key=f"mapsave_{label}_{name}", on_click=_save_matching,
                       args=(label, name, missing))
 

@@ -5,4 +5,5 @@ Approvals,"POs, self-approval, split orders and approval limits"
 Vendors,"Inactive vendors, bank changes, duplicate vendor records"
 Contracts,"Rates, surcharges and terms against signed contracts"
 Expenses,"Limits, receipts, personal items and duplicate claims"
+Invoices,Supplier invoice PDFs against approvals and the vendor master's bank details
 Skeptic,Tries to disprove every finding before a person sees it

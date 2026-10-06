@@ -47,6 +47,14 @@ Agents and rules only ever **propose**. Every quote is checked against the uploa
 
 ![Tamper demo](docs/tamper.png)
 
+## Benchmark
+
+`python scripts/benchmark.py` runs the engines on fresh challenge months and writes [docs/benchmark.md](docs/benchmark.md). Built-in rules, 20 months per difficulty: easy 100%, medium 100%, hard 89% of planted problems found, with no false alarms. That is strong but expected: the generator plants problems shaped like the rules' checks, and hard mode hides three on purpose. The AI engines are benchmarked on your own machine:
+
+```bash
+python scripts/benchmark.py --engines rules,rules+skeptic,ollama,ollama-tools --models qwen3.5:9b --seeds 1-3
+```
+
 ## Run it
 
 ```bash
@@ -54,7 +62,39 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Needs Python 3.10+ and Streamlit 1.40 or newer. Best viewed in a window at least 1280px wide, though it also works on narrower screens.
+Needs Python 3.10+ and Streamlit 1.40 or newer (`pip install -e .` also works). Best viewed in a window at least 1280px wide, though it also works on narrower screens.
+
+### On a server (Docker)
+
+```bash
+docker compose up --build                              # app on http://localhost:8501, plus Ollama
+docker compose exec ollama ollama pull qwen3.5:9b      # once
+```
+
+Saved work lives in a Docker volume. The app is bound to 127.0.0.1; put a proper reverse proxy with HTTPS in front before opening it to a network.
+
+### Sign-in and segregation of duties
+
+Off by default (so the public demo stays open). Create users to turn it on:
+
+```bash
+python scripts/add_user.py alice reviewer
+python scripts/add_user.py bob preparer
+```
+
+Roles: *preparer* uploads and runs, *reviewer* approves, rejects and clears holds, *admin* does both and changes the policy. Whoever started a run cannot approve its findings. Passwords are stored only as salted PBKDF2 hashes in `.tallyhound_state/users.json`.
+
+### Weekly folder check with alerts
+
+```bash
+python scripts/watch.py "C:/Finance/AP inbox" --alert
+```
+
+Runs the built-in checks and the payment gate on a folder (or the newest zip in it), writes `tallyhound-reports/report_<date>.md` and a CSV, and alerts via Slack (`TALLYHOUND_SLACK_WEBHOOK`) or email (`TALLYHOUND_SMTP_*`, see `tallyhound/headless.py`) when there are new findings or held payments. Schedule it with Windows Task Scheduler or cron.
+
+### Other model servers
+
+Ollama is the default. For LM Studio, vLLM or llama.cpp, set the model server address under Advanced to their OpenAI-compatible address ending in `/v1` (for example `http://localhost:1234/v1`).
 
 ## How it works
 
@@ -63,6 +103,12 @@ Needs Python 3.10+ and Streamlit 1.40 or newer. Best viewed in a window at least
 - **Skeptic review** - a second agent tries to disprove every finding. In this demo the verdicts are pre-written.
 - **Skeptic self-check** - if the Skeptic's verdict contradicts its own reason, it is asked once more; if it still disagrees with itself the finding is marked Unclear for a person to judge.
 - **Payment gate on uploads** - add a `payment_run.csv` (line, supplier, invoice, amount; vendor_id and bank_last4 if you have them) and the eight checks run against your vendor master, approvals and past payments. Checks that need a file you did not upload are listed as not checked. Challenge zips include a payment run with four lines that should be held.
+- **Invoice PDFs** - put supplier invoices (PDFs with a text layer) in the zip. They are read into `invoices.txt` and checked: no approval record, total different from the approved amount, the same invoice twice, and bank details that differ from the vendor master. Scanned PDFs without text are listed as skipped (they need OCR first).
+- **Bank reconciliation** - add `bank_statement.csv` (date, description, amount, optional reference). Money that left the bank with no recorded payment is High; recorded payments missing from the statement are Low.
+- **Smarter column matching** - suggestions are pre-filled from common export column names (QuickBooks, Xero, NetSuite, bank downloads), and a matching you save is reused automatically for files with the same header.
+- **Learning from reviewers** - when rejecting, tick "Don't flag this again for ..." to set that pattern aside on later runs (listed, and removable, on the Policy page). Repeated rejections just over a limit produce a suggested new limit.
+- **Trends and vendor risk** - findings per run over time, and who carries the most risk in the data under review.
+- **Tamper-evident audit trail** - every entry is chained to the one before by a SHA-256 fingerprint; Live activity and the exported workbook say whether the chain is intact. Saved work is kept in SQLite.
 - **Policy page** - change the PO, director, meal and receipt limits and the split-order window; the rules use them on the next run.
 - **Column matching** - if an uploaded CSV uses other column names, match them to the expected fields once. Only the header is renamed, so quotes are still exact lines of your file. Dates in several formats and amounts like `$1,234.50` or `(12.00)` are understood.
 - **Owner and notes** - give each finding an owner and a note; both are saved and exported.
@@ -95,11 +141,20 @@ tallyhound/
   score.py             the Scorecard maths
   challenge.py         challenge generator with answer keys
   pages_extra.py       Scorecard and Policy pages
+  invoices.py          invoice PDF reading and checks
+  columns.py           column-matching suggestions
+  learn.py             suppressions and limit hints
+  auth.py              optional sign-in, roles, segregation of duties
+  headless.py          folder check and alerts without the app
   store.py             saves and restores decisions across reloads
   guide.py             the guided tour checklist
 data/*.csv             all sample data (nothing is hard-coded in the app)
 data/source/           the fake source files that findings quote
 scripts/make_data.py   regenerates all data
+scripts/benchmark.py   scores engines on fresh challenge data
+scripts/watch.py       scheduled folder check with alerts
+scripts/add_user.py    creates users (turns sign-in on)
+Dockerfile, docker-compose.yml
 tests/                 automated tests
 ```
 
@@ -113,6 +168,8 @@ pytest
 The tests check that the data keeps its promises (26 findings, every quote verifiable, payment gate and recovery totals), that every page renders, and that the review and export flow works. A GitHub Action runs them on every push.
 
 ## Notes
+
+- License: MIT. A project page is in `docs/index.html` and a write-up in `docs/WRITEUP.md`.
 
 - The hosted demo is public, so anyone with the link can use it and download the files. Everything in it is fictional.
 - Saved work lives in `.tallyhound_state/` on the server (set `TALLYHOUND_STATE_DIR` to move it). On Streamlit Community Cloud the disk is cleared when the app restarts, so saved work is kept for reloads but not forever.

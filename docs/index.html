@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tallyhound</title>
+<meta name="description" content="A finance audit console where AI agents and rules propose findings, every quote is checked against the source file, and a person decides.">
+<style>
+  :root { --ink:#07161f; --teal-dark:#0a3a4f; --teal:#12a1b2; --sky:#b3e0f7; --paper:#f2f9ff; --muted:#4f6672; --hold:#9f2a2f; --ok:#2b7a55; --card:#ffffff; --line:#d5e9f5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#e6f2f8; --paper:#0b1a22; --card:#11252f; --muted:#9fb6c2; --line:#1f3b4a; --teal-dark:#7fd3e0; --sky:#1d4558; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--paper); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+  header { padding: 56px 0 28px; }
+  .kicker { letter-spacing:.2em; font-size:.78rem; font-weight:700; color:var(--teal); text-transform:uppercase; }
+  h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); line-height:1.05; margin:.3rem 0 .8rem; color:var(--teal-dark); letter-spacing:.02em; }
+  .lead { font-size:1.15rem; max-width: 720px; color:var(--ink); }
+  .cta { display:flex; gap:12px; flex-wrap:wrap; margin:22px 0 8px; }
+  .btn { display:inline-block; padding:.7rem 1.1rem; border-radius:8px; font-weight:600; text-decoration:none; border:1px solid var(--teal-dark); color:var(--teal-dark); }
+  .btn.primary { background:var(--teal-dark); color:var(--paper); }
+  section { padding: 28px 0; border-top:1px solid var(--line); }
+  h2 { font-size:1.5rem; margin:0 0 .6rem; color:var(--teal-dark); }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .card b { display:block; margin-bottom:4px; }
+  .num { font-size:2rem; font-weight:800; color:var(--teal-dark); }
+  img { max-width:100%; border:1px solid var(--line); border-radius:8px; display:block; }
+  .shot { margin: 12px 0 4px; }
+  .cap { color:var(--muted); font-size:.9rem; margin-bottom:14px; }
+  table { border-collapse:collapse; width:100%; font-size:.95rem; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  .flow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .step { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:.35rem .8rem; font-size:.92rem; }
+  .arrow { color:var(--muted); }
+  footer { padding:28px 0 48px; color:var(--muted); font-size:.9rem; border-top:1px solid var(--line); }
+  code { background:var(--card); border:1px solid var(--line); padding:.05rem .35rem; border-radius:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="kicker">Finance audit console</div>
+    <h1>Tallyhound</h1>
+    <p class="lead">AI agents and fixed rules read your payables data and <strong>propose</strong> problems. Every quote is checked against the source file before anyone sees it, a second agent tries to disprove each finding, and a person makes every decision.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://tallyhound-kfzkutbxmxdsrynlmppoll.streamlit.app/">Try the live demo</a>
+      <a class="btn" href="https://github.com/aleksarriola-max/Tallyhound">Source on GitHub</a>
+    </div>
+  </header>
+
+  <section>
+    <h2>Why you can trust what it shows</h2>
+    <div class="grid">
+      <div class="card"><b>Quote check</b>A finding is shown only if its evidence is an exact line of your file at the stated line number. An invented quote is dropped. Anyone can try to fool it on the Guardrails page.</div>
+      <div class="card"><b>Skeptic</b>A second agent challenges every finding. If its verdict contradicts its own reasoning, it is asked again, and marked Unclear for a person if it still disagrees with itself.</div>
+      <div class="card"><b>People decide</b>Nothing is approved, rejected, held or released by software. With sign-in on, whoever ran the analysis cannot approve its findings.</div>
+      <div class="card"><b>Tamper-evident trail</b>Each audit-trail entry carries a fingerprint of itself and the one before, so a changed or deleted entry shows.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Measured, not claimed</h2>
+    <p>The Scorecard grades every engine against an answer key of planted problems. The challenge generator makes fresh fictional months; hard mode hides three problems from the fixed rules on purpose, so it shows whether the AI adds anything.</p>
+    <div class="grid">
+      <div class="card"><div class="num">100%</div>Built-in rules, medium challenges: planted problems found, with no false alarms (20 fresh months).</div>
+      <div class="card"><div class="num">89%</div>Built-in rules, hard challenges: the three problems written to evade fixed rules are missed, by design.</div>
+      <div class="card"><div class="num">25 / 26</div>Sample company: problems the rules find. The one missed needs staff records that are not in the files.</div>
+    </div>
+    <p class="cap">AI engine results are measured on your own computer with <code>python scripts/benchmark.py --engines ollama,ollama-tools</code>; see docs/benchmark.md.</p>
+    <img class="shot" src="scorecard.png" alt="Scorecard page with recall and precision per engine">
+  </section>
+
+  <section>
+    <h2>What it checks</h2>
+    <div class="grid">
+      <div class="card"><b>Payments</b>Paid twice, paid more than invoiced, paid before the invoice, weekend releases, and a bank statement that does not match the books.</div>
+      <div class="card"><b>Approvals</b>Self-approval, missing POs, POs raised after the invoice, manager approving above the director limit, split orders.</div>
+      <div class="card"><b>Vendors</b>Unverified bank changes, inactive vendors paid, duplicate tax IDs, missing tax forms.</div>
+      <div class="card"><b>Invoices (PDF)</b>Invoices nobody approved, totals that differ, duplicates, and bank details that differ from the vendor master.</div>
+      <div class="card"><b>Contracts</b>Surcharges the contract excludes, rates above the rate card, billing after the term, silent renewals.</div>
+      <div class="card"><b>Payment gate</b>Eight checks per line of a proposed payment run decide HOLD or RELEASE before money leaves.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>How it flows</h2>
+    <div class="flow">
+      <span class="step">Zip of CSVs and invoice PDFs</span><span class="arrow">&rarr;</span>
+      <span class="step">Column matching</span><span class="arrow">&rarr;</span>
+      <span class="step">Rules and local AI agents</span><span class="arrow">&rarr;</span>
+      <span class="step">Quote check</span><span class="arrow">&rarr;</span>
+      <span class="step">Skeptic</span><span class="arrow">&rarr;</span>
+      <span class="step">Person reviews</span><span class="arrow">&rarr;</span>
+      <span class="step">Excel, PDF memo, audit trail</span>
+    </div>
+    <img class="shot" src="review.png" alt="Review step with a finding, its quoted line and the Skeptic's verdict">
+    <p class="cap">The AI runs on your own machine through Ollama (or LM Studio, vLLM). No cloud calls; the Docker setup keeps everything on one server.</p>
+  </section>
+
+  <section>
+    <h2>Run it</h2>
+    <table>
+      <tr><th>Try it</th><td>Open the <a href="https://tallyhound-kfzkutbxmxdsrynlmppoll.streamlit.app/">live demo</a> and follow the guided tour.</td></tr>
+      <tr><th>On your computer</th><td><code>pip install -r requirements.txt</code> then <code>streamlit run app.py</code></td></tr>
+      <tr><th>On a server</th><td><code>docker compose up --build</code> (app and Ollama together)</td></tr>
+      <tr><th>Every week</th><td><code>python scripts/watch.py FOLDER --alert</code> from a scheduler, with Slack or email alerts</td></tr>
+    </table>
+  </section>
+
+  <footer>All demo data is fictional (Bramblecourt Instruments Ltd). Tallyhound proposes; people decide. MIT licensed.</footer>
+</div>
+</body>
+</html>

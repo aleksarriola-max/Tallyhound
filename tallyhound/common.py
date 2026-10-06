@@ -19,8 +19,8 @@ HOLD, RELEASE = "#9f2a2f", "#2b7a55"
 MUTED = "#5b6b73"
 
 NAV = ["Run analysis", "Overview", "Findings", "Payment gate", "Recovery",
-       "Subscriptions", "Live activity", "Evidence viewer", "Scorecard", "Policy", "Guardrails"]
-STEPS = ["1  Choose data (Folder or zip)", "2  Run (Seven agents)",
+       "Subscriptions", "Live activity", "Evidence viewer", "Scorecard", "Trends", "Policy", "Guardrails"]
+STEPS = ["1  Choose data (Folder or zip)", "2  Run (Eight agents)",
          "3  Review (Approve / reject)", "4  Download (Excel and memo)"]
 
 
@@ -55,7 +55,8 @@ def read_csv(name: str) -> pd.DataFrame:
 
 @st.cache_data
 def read_source(name: str) -> list[str]:
-    return (SRC / name).read_text(encoding="utf-8").splitlines()
+    p = SRC / name
+    return p.read_text(encoding="utf-8").splitlines() if p.exists() else []
 
 
 @st.cache_data
@@ -99,7 +100,7 @@ def check_findings(df: pd.DataFrame, getter) -> tuple[pd.DataFrame, pd.DataFrame
         main = [i + 1 for i, ln in enumerate(lines) if ln == r.evidence]
         rel_txt = [x for x in str(r.related_evidence).split(" || ") if x]
         rel = [i + 1 for t in rel_txt for i, ln in enumerate(lines) if ln == t]
-        ok = r.line_number in main and len(rel) == len(rel_txt)
+        ok = r.line_number in main and all(any(ln == t for ln in lines) for t in rel_txt)
         keep.append(ok)
         matched_lines.append(sorted(set(main + rel)))
         matched_n.append(len(main) + len(rel))
@@ -219,13 +220,47 @@ def base_trail(fdf: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+CHAIN_FIELDS = ("time", "actor", "action", "finding", "detail")
+GENESIS = "0" * 64
+
+
+def entry_hash(prev: str, e: dict) -> str:
+    import hashlib
+    import json
+    body = json.dumps({k: str(e.get(k, "")) for k in CHAIN_FIELDS}, sort_keys=True)
+    return hashlib.sha256((prev + body).encode("utf-8")).hexdigest()
+
+
 def log_action(actor: str, action: str, finding: str, detail: str = "") -> None:
-    st.session_state.audit_log.append(dict(time=datetime.now().strftime("%H:%M:%S"), actor=actor,
-                                           action=action, finding=finding, detail=detail))
+    """Append to the audit trail. Each entry carries the fingerprint (SHA-256) of itself plus the entry before, so
+    changing or deleting any earlier entry breaks every fingerprint after it."""
+    from . import auth
+    log = st.session_state.audit_log
+    who = auth.current_user()
+    if who and actor == "Reviewer":
+        actor = f"Reviewer ({who})"
+    e = dict(time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"), actor=actor, action=action, finding=finding, detail=detail)
+    e["prev"] = log[-1].get("hash", GENESIS) if log else GENESIS
+    e["hash"] = entry_hash(e["prev"], e)
+    log.append(e)
+
+
+def verify_trail(log: list[dict]) -> tuple[bool, int | None]:
+    """(intact, index of the first broken entry). Entries saved before chaining existed are skipped."""
+    prev = None
+    for i, e in enumerate(log):
+        if "hash" not in e:
+            continue
+        if prev is not None and e.get("prev") != prev:
+            return False, i
+        if entry_hash(e.get("prev", GENESIS), e) != e["hash"]:
+            return False, i
+        prev = e["hash"]
+    return True, None
 
 
 def full_trail(fdf: pd.DataFrame) -> pd.DataFrame:
-    human = pd.DataFrame(st.session_state.audit_log, columns=["time", "actor", "action", "finding", "detail"])
+    human = pd.DataFrame(st.session_state.audit_log, columns=["time", "actor", "action", "finding", "detail", "prev", "hash"])
     return pd.concat([base_trail(fdf), human], ignore_index=True)
 
 

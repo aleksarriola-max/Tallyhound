@@ -1,0 +1,29 @@
+# Tallyhound + a local Ollama. Only this machine can open the app (127.0.0.1).
+#   docker compose up --build
+#   docker compose exec ollama ollama pull qwen3.5:9b      # once, to download the model
+services:
+  tallyhound:
+    build: .
+    ports:
+      - "127.0.0.1:8501:8501"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - tallyhound-data:/data
+    depends_on:
+      - ollama
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    # For an NVIDIA GPU, uncomment (needs the NVIDIA Container Toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+volumes:
+  tallyhound-data:
+  ollama-models:

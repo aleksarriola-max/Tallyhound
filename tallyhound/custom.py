@@ -13,10 +13,12 @@ import streamlit as st
 from . import agents, llm, rules
 from . import common as C
 
-MAX_ZIP_MB = 20
-MAX_LINES = 5000
+MAX_ZIP_MB = 50
+MAX_LINES = 300_000
 STEMS = {"payments": "payments.csv", "approvals": "approvals.csv", "vendors": "vendors.csv",
-         "contracts": "contracts.txt", "expenses": "expenses.csv", "payment_run": "payment_run.csv"}
+         "contracts": "contracts.txt", "expenses": "expenses.csv", "payment_run": "payment_run.csv",
+         "bank_statement": "bank_statement.csv", "bank": "bank_statement.csv",
+         "invoices": "invoices.txt"}
 SEV_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 COLS = ["id", "severity", "area", "clause", "amount", "title", "skeptic_verdict", "evidence", "related_evidence",
         "source_file", "line_number", "innocent_explanations", "skeptic_reason", "proposed_fix"]
@@ -34,11 +36,23 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         return {}, ["That file is not a valid zip."]
     files: dict[str, list[str]] = {}
     total = 0
+    pdfs: list[tuple[str, list[str]]] = []
     for info in zf.infolist():
         base = info.filename.replace("\\", "/").rsplit("/", 1)[-1]
         if info.is_dir() or base.startswith(".") or "__MACOSX" in info.filename:
             continue
         stem = base.rsplit(".", 1)[0].lower()
+        if base.lower().endswith(".pdf"):
+            from . import invoices
+            if info.file_size > MAX_ZIP_MB * 1024 * 1024:
+                notes.append(f"Skipped {base}: too large.")
+                continue
+            lines = invoices.pdf_lines(zf.read(info))
+            if lines:
+                pdfs.append((base, lines))
+            else:
+                notes.append(f"{base} has no readable text (a scan?). It was skipped; scanned PDFs need OCR first.")
+            continue
         if stem == "answer_key" and base.lower().endswith(".csv"):
             files["answer_key.csv"] = zf.read(info).decode("utf-8-sig", errors="replace").splitlines()
             notes.append("Found answer_key.csv: the Scorecard page will grade runs on this data.")
@@ -60,6 +74,10 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         if missing:
             notes.append(f"{match} is missing columns: {', '.join(missing)}. Match its columns below, or it is skipped.")
         files[match] = lines
+    if pdfs:
+        from . import invoices
+        files[invoices.NAME] = invoices.combine(sorted(pdfs))
+        notes.append(f"Read {len(pdfs)} invoice PDF(s) into invoices.txt for the Invoices agent.")
     return files, notes
 
 
@@ -72,6 +90,9 @@ def add_upload(label: str, files: dict[str, list[str]], key: list[dict] | None =
     if key_lines and key is None:
         key = score.key_from_csv("\n".join(key_lines))
     S.setdefault("uploads", {})[label] = files
+    _apply_presets(label)
+    from . import store
+    store.save_uploads()
     if key:
         S.setdefault("answer_keys", {})[label] = key
     elif is_sample(files):
@@ -79,9 +100,22 @@ def add_upload(label: str, files: dict[str, list[str]], key: list[dict] | None =
     S.extra_opts.setdefault("audit", {})[label] = f"{len(files)} of 5 files: " + ", ".join(sorted(files))
 
 
+def _apply_presets(label: str) -> None:
+    """Reuse a saved column matching when a file has exactly the same header as one matched before."""
+    import csv
+    from . import columns
+    S = st.session_state
+    for name, lines in S.uploads[label].items():
+        if lines and rules.missing_columns(name, lines):
+            saved = S.get("presets", {}).get(columns.signature(name, next(csv.reader([lines[0]]))))
+            if saved:
+                mapping(label)[name] = dict(saved)
+
+
 def is_sample(files: dict[str, list[str]]) -> bool:
     """True when the upload is exactly the sample company's files, so the sample answer key applies."""
-    return bool(files) and all(files[n] == C.read_source(n) for n in files if n in STEMS.values())
+    names = [n for n in files if n in ("payments.csv", "approvals.csv", "vendors.csv", "contracts.txt", "expenses.csv")]
+    return bool(names) and all(files[n] == C.read_source(n) for n in names)
 
 
 # ---------------------------------------------------------------- column matching
@@ -277,10 +311,11 @@ def finalize(label: str, job: Job) -> None:
         r["id"] = f"F-{i:02d}"
     S.setdefault("custom", {})[label] = recs
     S.setdefault("run_history", []).append(dict(
-        label=label, engine=job.engine, model=job.model if job.engine != "rules" else "",
+        label=label, engine=job.engine, model=job.model if job.engine != "rules" else "", user=S.get("user") or "",
         time=datetime.now().strftime("%Y-%m-%d %H:%M"),
         proposed=[dict(source_file=r["source_file"], line_number=r["line_number"], related_lines=r.get("related_lines", []),
-                       verdict=r.get("verdict", ""), reason=r.get("reason", ""), clause=r["clause"]) for r in recs]))
+                       verdict=r.get("verdict", ""), reason=r.get("reason", ""), clause=r["clause"], area=r["area"],
+                       severity=r["severity"], amount=float(r.get("amount") or 0)) for r in recs]))
     S.setdefault("by_dataset", {})[label] = dict(decisions={}, audit_log=[], cleared={}, notes={})
     activate(label, force_load=True)
 
@@ -329,4 +364,15 @@ def frame(label: str) -> tuple[pd.DataFrame, pd.DataFrame]:
             source_file=r["source_file"], line_number=r["line_number"], innocent_explanations=r.get("innocent", ""),
             skeptic_reason=r.get("reason", ""), proposed_fix=r.get("fix", "")))
     df = pd.DataFrame(rows, columns=COLS)
-    return C.check_findings(df, lambda n: files.get(n, []))
+    ok, hidden = C.check_findings(df, lambda n: files.get(n, []))
+    if not st.session_state.get("show_suppressed") and st.session_state.get("suppressions"):
+        from . import learn
+        vf = view(label)
+        keep = [not learn.is_suppressed(str(r.clause), r.source_file, learn.entity(
+            r.source_file, r.evidence, vf.get(r.source_file, [""])[0] if r.source_file.endswith(".csv") else ""))
+            for r in ok.itertuples()]
+        st.session_state["_n_suppressed"] = len(ok) - sum(keep)
+        ok = ok[keep].reset_index(drop=True)
+    else:
+        st.session_state["_n_suppressed"] = 0
+    return ok, hidden

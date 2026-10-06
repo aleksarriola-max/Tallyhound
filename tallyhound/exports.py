@@ -69,6 +69,7 @@ def build_workbook(draft: bool = False) -> bytes:
         ["Rejected", "-" if draft else dc["rejected"]],
         ["Pending", len(f) if draft else dc["pending"]],
         ["Approved value", "-" if draft else round(dc["value"], 2)],
+        ["Audit trail", "Intact (hash chain verified)" if C.verify_trail(st.session_state.audit_log)[0] else "BROKEN - entries changed"],
     ], columns=["Item", "Value"])
     trail = C.full_trail(C.findings())
     buf = io.BytesIO()

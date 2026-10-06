@@ -21,9 +21,14 @@ def sev_counts(df: pd.DataFrame) -> dict:
 
 # --------------------------------------------------------------------------
 def overview() -> None:
-    C.sample_only_notice()
     f = C.findings()
-    gt = C.gate_totals(C.gate(GATE_FILE))
+    name, (gdf, _) = next(iter(gate_runs().items()))
+    if C.custom_label():
+        st.info("Findings, severity and the payment run are from your uploaded files" if name.startswith("Uploaded")
+                else "Findings and severity are from your uploaded files; the payment run is the sample company's")
+        st.caption("Recoverable and Annual savings are the sample company's: recovery and subscriptions are not "
+                   "analysed from uploads yet.")
+    gt = C.gate_totals(gdf) if not gdf.empty else dict(hold_amt=0.0)
     rec, subs = C.recovery(), C.subscriptions()
     m = st.columns(4)
     m[0].metric("Held in payment run", C.money(gt["hold_amt"]))
@@ -32,8 +37,8 @@ def overview() -> None:
     m[3].metric("Open findings", len(f))
 
     st.subheader("Findings by area")
-    areas = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses"]
-    cols = st.columns(5)
+    areas = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses"] + (["Invoices"] if (f.area == "Invoices").any() else [])
+    cols = st.columns(len(areas))
     for col, a in zip(cols, areas):
         sub = f[f.area == a]
         sc = sev_counts(sub)
@@ -173,7 +178,10 @@ def payment_gate() -> None:
     holdable = [l for l in sel_lines if gdf[gdf.line == str(l)].final.iloc[0] == "HOLD"]
     c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
     reason = c1.text_input("Reason for clearing the hold (required)", key="clear_reason")
-    if c2.button("Clear hold", disabled=not (holdable and reason.strip()) or not clearable):
+    from . import auth
+    if auth.review_block_reason():
+        st.caption(auth.review_block_reason())
+    if c2.button("Clear hold", disabled=not (holdable and reason.strip()) or not clearable or bool(auth.review_block_reason())):
         for l in holdable:
             S.cleared[str(l)] = reason.strip()
             C.log_action("Reviewer", "Hold cleared", f"Line {l}", reason.strip())
@@ -224,7 +232,17 @@ def live_feed_body() -> None:
     st.caption("Refreshes every 3 seconds.")
 
 
+def trail_status() -> None:
+    ok, bad = C.verify_trail(st.session_state.audit_log)
+    n = sum("hash" in e for e in st.session_state.audit_log)
+    if ok:
+        st.success(f"Audit trail intact: {n} chained entries, each fingerprinted with the one before.")
+    else:
+        st.error(f"Audit trail broken at entry {bad + 1}: an entry was changed or removed after it was written.")
+
+
 def live_activity() -> None:
+    trail_status()
     left, right = st.columns([3, 2])
     with left:
         st.subheader("Event feed")

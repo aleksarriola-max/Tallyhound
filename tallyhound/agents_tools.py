@@ -120,7 +120,9 @@ def investigate(area: str, lines: list[str], policy: dict[str, str], model: str,
     found: list[dict] = []
     for _ in range(MAX_STEPS):
         msg = llm.chat_tools(messages, spec, model=model, url=url)
-        messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")})
+        keep = {k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")}
+        keep.setdefault("role", "assistant")
+        messages.append(keep)
         calls = msg.get("tool_calls") or []
         if not calls:
             break
@@ -141,7 +143,10 @@ def investigate(area: str, lines: list[str], policy: dict[str, str], model: str,
             else:
                 result = tools.call(fname, args)
             log(f"{fname}({json.dumps(args)[:80]})")
-            messages.append({"role": "tool", "content": result, "tool_name": fname})
+            tool_msg = {"role": "tool", "content": result, "tool_name": fname}
+            if c.get("id"):
+                tool_msg["tool_call_id"] = c["id"]          # OpenAI-compatible servers need the call id
+            messages.append(tool_msg)
         if finished:
             break
     return found

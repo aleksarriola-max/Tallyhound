@@ -421,6 +421,10 @@ write_csv(DATA / "policy.csv", ["clause", "area", "text"], [
     ["5.2", "Payments", "A single invoice may be paid once only."],
     ["5.3", "Payments", "Every payment must reference an approved invoice dated on or before the payment date."],
     ["5.4", "Payments", "Payments are released on working days only."],
+    ["5.5", "Payments", "Every payment that leaves the bank must match a recorded, approved payment."],
+    ["8.1", "Invoices", "Every supplier invoice must match an approved invoice record, number and amount."],
+    ["8.2", "Invoices", "Bank details on an invoice must match the vendor master; changes go through verification."],
+    ["8.3", "Invoices", "An invoice number may be submitted once only."],
     ["6.1", "Expenses", "Meals are limited to $75.00 per person."],
     ["6.2", "Expenses", "A receipt is required for any claim over $25.00."],
     ["6.3", "Expenses", "Personal items are not reimbursable."],
@@ -571,6 +575,7 @@ write_csv(DATA / "agents.csv", ["agent", "role"], [
     ["Vendors", "Inactive vendors, bank changes, duplicate vendor records"],
     ["Contracts", "Rates, surcharges and terms against signed contracts"],
     ["Expenses", "Limits, receipts, personal items and duplicate claims"],
+    ["Invoices", "Supplier invoice PDFs against approvals and the vendor master's bank details"],
     ["Skeptic", "Tries to disprove every finding before a person sees it"],
 ])
 write_csv(DATA / "events.csv", ["time", "agent", "message"], [

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tallyhound"
+version = "0.5.0"
+description = "Finance audit console: AI agents and rules propose findings, a person decides."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = ["streamlit>=1.40", "pandas", "altair", "openpyxl", "reportlab", "pypdf"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/aleksarriola-max/Tallyhound"
+Demo = "https://tallyhound-kfzkutbxmxdsrynlmppoll.streamlit.app/"
+
+[tool.setuptools]
+packages = ["tallyhound"]
