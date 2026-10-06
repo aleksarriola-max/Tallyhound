@@ -219,38 +219,43 @@ def init_state() -> None:
 CSS = f"""
 <style>
 .block-container {{ padding-top: 3.6rem; padding-bottom: 3rem; max-width: 1500px; }}
-.lw-banner {{ background:{SKY}; color:{INK}; font-weight:700; letter-spacing:.22em; text-align:center;
+.th-banner {{ background:{SKY}; color:{INK}; font-weight:700; letter-spacing:.22em; text-align:center;
   padding:.45rem .5rem; border-radius:4px; font-size:.82rem; margin-bottom:.6rem; }}
-.lw-header {{ display:flex; align-items:baseline; gap:.9rem; flex-wrap:wrap; }}
-.lw-title {{ font-family:'Arial Narrow','Roboto Condensed','Helvetica Neue',Arial,sans-serif; font-stretch:condensed;
+.th-header {{ display:flex; align-items:baseline; gap:.9rem; flex-wrap:wrap; }}
+.th-title {{ font-family:'Arial Narrow','Roboto Condensed','Helvetica Neue',Arial,sans-serif; font-stretch:condensed;
   font-weight:800; font-size:2rem; letter-spacing:.06em; color:{TEAL_DARK}; }}
-.lw-co {{ color:{INK}; font-size:1rem; }}
-.lw-strip {{ display:flex; gap:1.2rem; flex-wrap:wrap; font-size:.82rem; color:{INK}; margin:.15rem 0 1rem; }}
-.lw-dot {{ display:inline-block; width:.55rem; height:.55rem; border-radius:50%; background:{RELEASE}; margin-right:.35rem; }}
-.lw-badge {{ display:inline-block; padding:.08rem .55rem; border-radius:999px; color:#fff; font-size:.74rem;
+.th-co {{ color:{INK}; font-size:1rem; }}
+.th-strip {{ display:flex; gap:1.2rem; flex-wrap:wrap; font-size:.82rem; color:{INK}; margin:.15rem 0 1rem; }}
+.th-dot {{ display:inline-block; width:.55rem; height:.55rem; border-radius:50%; background:{RELEASE}; margin-right:.35rem; }}
+.th-badge {{ display:inline-block; padding:.08rem .55rem; border-radius:999px; color:#fff; font-size:.74rem;
   font-weight:700; letter-spacing:.03em; white-space:nowrap; }}
-.lw-chip {{ display:inline-block; padding:.05rem .5rem; border-radius:4px; font-size:.74rem; font-weight:700;
+.th-chip {{ display:inline-block; padding:.05rem .5rem; border-radius:4px; font-size:.74rem; font-weight:700;
   border:1px solid; white-space:nowrap; }}
-.lw-preview {{ background:{PAPER}; border:1px solid {SKY}; border-radius:6px; padding:.5rem .7rem; font-size:.85rem; }}
-.lw-preview b {{ display:block; font-size:.76rem; color:{TEAL_DARK}; letter-spacing:.03em; margin-bottom:.15rem; }}
-.lw-muted {{ color:{MUTED}; font-size:.82rem; }}
-.lw-src {{ background:#fff; border:1px solid {SKY}; border-radius:6px; padding:.4rem 0; font-family:ui-monospace,Menlo,Consolas,monospace;
+.th-preview {{ background:{PAPER}; border:1px solid {SKY}; border-radius:6px; padding:.5rem .7rem; font-size:.85rem; }}
+.th-preview b {{ display:block; font-size:.76rem; color:{TEAL_DARK}; letter-spacing:.03em; margin-bottom:.15rem; }}
+.th-muted {{ color:{MUTED}; font-size:.82rem; }}
+.th-src {{ background:#fff; border:1px solid {SKY}; border-radius:6px; padding:.4rem 0; font-family:ui-monospace,Menlo,Consolas,monospace;
   font-size:.78rem; line-height:1.5; overflow-x:auto; }}
-.lw-row {{ white-space:pre; padding:0 .6rem 0 0; }}
-.lw-ln {{ display:inline-block; width:3rem; text-align:right; padding-right:.8rem; color:{MUTED}; user-select:none; }}
-.lw-row.hit {{ background:#ffe9a8; }}
-.lw-row.rel {{ background:#e1f1fb; }}
+.th-row {{ white-space:pre; padding:0 .6rem 0 0; }}
+.th-ln {{ display:inline-block; width:3rem; text-align:right; padding-right:.8rem; color:{MUTED}; user-select:none; }}
+.th-row.hit {{ background:#ffe9a8; }}
+.th-row.rel {{ background:#e1f1fb; }}
 /* sidebar */
 section[data-testid="stSidebar"] {{ background:{TEAL_DARK}; }}
 section[data-testid="stSidebar"] * {{ color:{PAPER}; }}
 section[data-testid="stSidebar"] hr {{ border-color: rgba(179,224,247,.3); }}
-.lw-guard {{ border:1px solid rgba(179,224,247,.4); border-radius:6px; padding:.6rem .7rem; font-size:.82rem; margin-top:1.5rem; }}
-.lw-guard b {{ letter-spacing:.06em; }}
+.th-guard {{ border:1px solid rgba(179,224,247,.4); border-radius:6px; padding:.6rem .7rem; font-size:.82rem; margin-top:1.5rem; }}
+.th-guard b {{ letter-spacing:.06em; }}
 [class*="st-key-step_btn_"] button {{ padding:.35rem .4rem; }}
 [class*="st-key-step_btn_"] button p {{ font-size:.82rem; white-space:nowrap; }}
 div[data-testid="stMetricValue"] {{ color:{TEAL_DARK}; }}
 button[data-testid="stBaseButton-primary"] {{ background:{TEAL_DARK}; border-color:{TEAL_DARK}; color:#fff; }}
 button[data-testid="stBaseButton-primary"]:hover {{ background:{TEAL}; border-color:{TEAL}; color:#fff; }}
+@media (max-width: 1150px) {{
+  section[data-testid="stMain"] [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .6rem; }}
+  section[data-testid="stMain"] [data-testid="stColumn"] {{ min-width: 260px; }}
+  [class*="st-key-step_btn_"] button p {{ white-space: normal; }}
+}}
 </style>
 """
 
@@ -260,7 +265,7 @@ def inject_css() -> None:
 
 
 def badge(text: str, color: str) -> str:
-    return f'<span class="lw-badge" style="background:{color}">{html.escape(text)}</span>'
+    return f'<span class="th-badge" style="background:{color}">{html.escape(text)}</span>'
 
 
 def sev_badge(sev: str) -> str:
@@ -268,15 +273,15 @@ def sev_badge(sev: str) -> str:
 
 
 def chip(text: str, color: str) -> str:
-    return f'<span class="lw-chip" style="color:{color};border-color:{color}">{html.escape(text)}</span>'
+    return f'<span class="th-chip" style="color:{color};border-color:{color}">{html.escape(text)}</span>'
 
 
 def banner_and_header(last_run: str = "14:32") -> None:
-    st.markdown('<div class="lw-banner">FICTIONAL TEST DATA - not a real company</div>', unsafe_allow_html=True)
-    st.markdown('<div class="lw-header"><span class="lw-title">TALLYHOUND</span>'
-                '<span class="lw-co">Bramblecourt Instruments Ltd (fictional)</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="th-banner">FICTIONAL TEST DATA - not a real company</div>', unsafe_allow_html=True)
+    st.markdown('<div class="th-header"><span class="th-title">TALLYHOUND</span>'
+                '<span class="th-co">Bramblecourt Instruments Ltd (fictional)</span></div>', unsafe_allow_html=True)
     items = ["Model loaded", "Offline", "Sandbox on", f"Last run {last_run}"]
-    st.markdown('<div class="lw-strip">' + "".join(f'<span><span class="lw-dot"></span>{i}</span>' for i in items) + "</div>",
+    st.markdown('<div class="th-strip">' + "".join(f'<span><span class="th-dot"></span>{i}</span>' for i in items) + "</div>",
                 unsafe_allow_html=True)
 
 
@@ -284,5 +289,5 @@ def source_html(lines: list[str], hits: list[int], main: int | None = None) -> s
     out = []
     for i, ln in enumerate(lines, start=1):
         cls = "hit" if i == main else ("rel" if i in hits else "")
-        out.append(f'<div class="lw-row {cls}"><span class="lw-ln">{i}</span>{html.escape(ln)}</div>')
-    return '<div class="lw-src">' + "".join(out) + "</div>"
+        out.append(f'<div class="th-row {cls}"><span class="th-ln">{i}</span>{html.escape(ln)}</div>')
+    return '<div class="th-src">' + "".join(out) + "</div>"

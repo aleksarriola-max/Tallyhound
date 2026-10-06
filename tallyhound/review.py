@@ -29,7 +29,7 @@ def finding_card(r) -> None:
         if d:
             color = C.RELEASE if d["status"] == "Approved" else C.HOLD
             c1, c2 = st.columns([5, 1], vertical_alignment="center")
-            c1.markdown(C.badge(d["status"], color) + (f" &nbsp; <span class='lw-muted'>{d['reason']}</span>" if d["reason"] else ""),
+            c1.markdown(C.badge(d["status"], color) + (f" &nbsp; <span class='th-muted'>{d['reason']}</span>" if d["reason"] else ""),
                         unsafe_allow_html=True)
             c2.button("Undo", key=f"undo_{r.id}", on_click=C.undo, args=(r.id,))
         else:

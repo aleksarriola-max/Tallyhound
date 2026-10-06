@@ -1,7 +1,22 @@
 # Tallyhound
 
-A finance audit console built with Streamlit. Local AI agents *propose* findings about accounts-payable data;
-a person approves or rejects every one. **All data is fictional** (Bramblecourt Instruments Ltd).
+A finance audit console built with Streamlit. AI agents **propose** findings about accounts-payable data; a person approves or rejects every one. All data is fictional (Bramblecourt Instruments Ltd).
+
+**Live demo:** https://tallyhound-kfzkutbxmxdsrynlmppoll.streamlit.app/
+
+![Run analysis](docs/run-analysis.png)
+
+## Why it exists
+
+Audit tools that act on their own are hard to trust. Tallyhound is built around one rule: **agents only propose, people decide.** Every finding carries evidence you can check, and nothing is approved, rejected, held or released without a person clicking a button.
+
+| Review findings | Payment gate |
+|---|---|
+| ![Review](docs/review.png) | ![Payment gate](docs/payment-gate.png) |
+
+| Evidence viewer | Overview |
+|---|---|
+| ![Evidence viewer](docs/evidence-viewer.png) | ![Overview](docs/overview.png) |
 
 ## Run it
 
@@ -10,27 +25,45 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Needs Python 3.10+ and Streamlit 1.40 or newer.
+Needs Python 3.10+ and Streamlit 1.40 or newer. Best viewed in a window at least 1280px wide, though it also works on narrower screens.
 
-## What is in here
+## How it works
 
-- `app.py` - page setup, sidebar navigation and the run ticker.
-- `lw/` - the app code: `run_analysis.py` (4-step flow), `review.py` (Review and Download steps),
-  `pages.py` (Overview, Findings, Payment gate, Recovery, Subscriptions, Live activity, Evidence viewer, Guardrails),
-  `sim.py` (simulated agent run), `exports.py` (Excel and PDF), `common.py` (data, styling, state).
-- `data/*.csv` - all sample data. Nothing is hard-coded in the app.
-- `data/source/` - the fake source files that every finding quotes. The app checks each quote against these files.
-- `scripts/make_data.py` - regenerates all the data (`python scripts/make_data.py`).
+- **Run analysis** - a four-step flow: choose data, run the agents, review, download.
+- **Quote check** - a finding is shown only if its evidence appears word for word, at the stated line, in its source file under `data/source/`. Anything else is hidden.
+- **Skeptic review** - a second agent tries to disprove every finding. In this demo the verdicts are pre-written.
+- **Payment gate** - eight checks per payment line decide HOLD or RELEASE. Clearing a hold needs a typed reason.
+- **Exports** - Step 4 builds an Excel workbook (with an audit trail sheet) and a PDF memo from your decisions.
+- **Simulated run** - the agent run is a timer, about 20 seconds per queue item. The Expenses agent fails once on purpose so you can try Retry.
 
-## How it behaves
+## Project layout
 
-- **Agents only propose.** Approve, reject, hold and release happen only in the UI (Review step, Payment gate).
-- **Quote check.** A finding is shown only if its evidence line is found, word for word, in its source file at the stated line.
-- **Simulated run.** The run uses a simple timer (about 20 seconds per queue item). The Expenses agent fails once on purpose
-  so you can use Retry / "Rerun this agent".
-- **Exports.** Step 4 builds an Excel workbook (openpyxl) and a PDF memo (reportlab) from your decisions.
+```
+app.py                 page setup, sidebar navigation, run ticker
+tallyhound/
+  run_analysis.py      the four-step flow (Choose, Run)
+  review.py            Review and Download steps
+  pages.py             Overview, Findings, Payment gate, Recovery, Subscriptions,
+                       Live activity, Evidence viewer, Guardrails
+  sim.py               simulated agent run
+  exports.py           Excel and PDF builders
+  common.py            data loading, quote check, styling, session state
+data/*.csv             all sample data (nothing is hard-coded in the app)
+data/source/           the fake source files that findings quote
+scripts/make_data.py   regenerates all data
+tests/                 automated tests
+```
 
-## Fictional-data checks built into the data
+## Tests
 
-26 findings (High 7, Medium 12, Low 7), payment run 2026-10-01 with 8 HOLD ($64,165.30) and 6 RELEASE,
-recoverable $6,864.61, subscription savings $25,850 across 15 tools and 911 user logins.
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The tests check that the data keeps its promises (26 findings, every quote verifiable, payment gate and recovery totals), that every page renders, and that the review and export flow works. A GitHub Action runs them on every push.
+
+## Notes
+
+- The hosted demo is public, so anyone with the link can use it and download the files. Everything in it is fictional.
+- Decisions live in the browser session, so a page reload resets them.

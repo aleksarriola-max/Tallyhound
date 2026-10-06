@@ -52,14 +52,14 @@ def workflow_card(card, running: bool) -> None:
                 head = f"Preview · {len(picked)} months"
             else:
                 head, body = C.option_preview(card.id, picked[0])
-            st.markdown(f'<div class="lw-preview"><b>{head}</b>{body}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="th-preview"><b>{head}</b>{body}</div>', unsafe_allow_html=True)
             est = "Est. ~8 min per month" if card.id == "audit" else f"Est. ~{int(C.opt_row(card.id, picked[0])['est_min'])} min"
             last = C.opt_row(card.id, picked[0])["last_run"]
         else:
-            st.markdown('<div class="lw-preview"><b>Preview</b>Pick something to run</div>', unsafe_allow_html=True)
+            st.markdown('<div class="th-preview"><b>Preview</b>Pick something to run</div>', unsafe_allow_html=True)
             est, last = "Est. -", "Never run"
         color = C.RELEASE if last == "Done" else C.MUTED
-        st.markdown(f'<span class="lw-muted">{est}</span> &nbsp; {C.chip("Last run: " + last, color)}',
+        st.markdown(f'<span class="th-muted">{est}</span> &nbsp; {C.chip("Last run: " + last, color)}',
                     unsafe_allow_html=True)
 
 
@@ -174,7 +174,7 @@ def queue_body(selection: dict) -> None:
                 st.markdown(C.chip(f"Done ({it['findings']} findings)", C.RELEASE), unsafe_allow_html=True)
             elif it["status"] == "Failed":
                 bad = next(a for a in it["agents"] if a["status"] == "Failed")
-                st.markdown(C.chip("Failed", C.HOLD) + f" &nbsp;<span class='lw-muted'>{bad['name']} agent</span>",
+                st.markdown(C.chip("Failed", C.HOLD) + f" &nbsp;<span class='th-muted'>{bad['name']} agent</span>",
                             unsafe_allow_html=True)
                 if st.button("Retry", key=f"retry_{it['label']}"):
                     sim.retry()
@@ -235,7 +235,7 @@ def agents_body() -> None:
     colors = {"Waiting": C.MUTED, "Running": C.TEAL, "Done": C.RELEASE, "Failed": C.HOLD, "Skipped": C.MUTED}
     for a in agents:
         c1, c2, c3, c4 = st.columns([3, 1.2, 4, 0.8], vertical_alignment="center")
-        c1.markdown(f"**{a['name']}**<br><span class='lw-muted'>{roles.get(a['name'], '')}</span>", unsafe_allow_html=True)
+        c1.markdown(f"**{a['name']}**<br><span class='th-muted'>{roles.get(a['name'], '')}</span>", unsafe_allow_html=True)
         c2.markdown(C.chip(a["status"], colors[a["status"]]), unsafe_allow_html=True)
         c3.progress(a["pct"] / 100 if a["status"] != "Skipped" else 0.0)
         c4.markdown(f"{a['secs'] // 60}:{a['secs'] % 60:02d}")

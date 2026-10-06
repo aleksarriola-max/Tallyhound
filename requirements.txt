@@ -1,4 +1,5 @@
 streamlit>=1.40
 pandas
+altair
 openpyxl
 reportlab
