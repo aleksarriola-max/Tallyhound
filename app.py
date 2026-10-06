@@ -4,7 +4,7 @@ import streamlit as st
 st.set_page_config(layout="wide", page_title="Tallyhound", page_icon=None)
 
 from tallyhound import common as C  # noqa: E402
-from tallyhound import custom, pages, run_analysis, sim, store  # noqa: E402
+from tallyhound import custom, pages, pages_extra, run_analysis, sim, store  # noqa: E402
 
 C.init_state()
 C.inject_css()
@@ -53,6 +53,8 @@ PAGES = {
     "Subscriptions": pages.subscriptions_page,
     "Live activity": pages.live_activity,
     "Evidence viewer": pages.evidence_viewer,
+    "Scorecard": pages_extra.scorecard_page,
+    "Policy": pages_extra.policy_page,
     "Guardrails": pages.guardrails,
 }
 PAGES[st.session_state.nav]()

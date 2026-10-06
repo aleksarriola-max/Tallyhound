@@ -22,6 +22,19 @@ REQUIRED = {
 }
 
 
+LIMITS = dict(po_limit=2500.0, director_limit=10000.0, meal_limit=75.0, receipt_limit=25.0, split_days=3)
+LIMIT_LABELS = dict(po_limit="Purchase order needed above ($)", director_limit="Director approval needed above ($)",
+                    meal_limit="Meal limit per person ($)", receipt_limit="Receipt needed above ($)",
+                    split_days="Split-order window (days)")
+
+
+class Row(dict):
+    """A CSV row; a column that is not in the file reads as an empty string."""
+
+    def __missing__(self, key):
+        return ""
+
+
 @dataclass
 class Hit:
     area: str
@@ -44,7 +57,7 @@ def rows(lines: list[str]) -> list[tuple[int, dict]]:
         if not ln.strip():
             continue
         vals = next(csv.reader([ln]))
-        out.append((i, dict(zip(head, vals + [""] * (len(head) - len(vals))))))
+        out.append((i, Row(zip(head, vals + [""] * (len(head) - len(vals))))))
     return out
 
 
@@ -56,20 +69,27 @@ def missing_columns(name: str, lines: list[str]) -> list[str]:
 
 
 def _d(s: str) -> date | None:
-    try:
-        return date.fromisoformat(s.strip())
-    except ValueError:
-        return None
+    """Dates as YYYY-MM-DD, YYYY/MM/DD, MM/DD/YYYY or DD.MM.YYYY. Anything else counts as no date."""
+    from datetime import datetime
+    s = str(s).strip()[:10]
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            pass
+    return None
 
 
 def _f(s: str) -> float:
+    t = str(s).strip().replace(",", "").replace("$", "").replace("£", "").replace("€", "")
+    neg = t.startswith("(") and t.endswith(")")
     try:
-        return float(str(s).replace(",", "").replace("$", ""))
+        return -float(t.strip("()")) if neg else float(t)
     except ValueError:
         return 0.0
 
 
-def payments(lines: list[str]) -> list[Hit]:
+def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     R, out, seen = rows(lines), [], {}
     for ln, r in R:
         key = (r["supplier"].strip().lower(), r["invoice_no"].strip().lower())
@@ -93,23 +113,84 @@ def payments(lines: list[str]) -> list[Hit]:
     return out
 
 
-def approvals(lines: list[str]) -> list[Hit]:
+def approvals(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     out = []
-    for ln, r in rows(lines):
+    R = rows(lines)
+    for ln, r in R:
         amt = _f(r["amount"])
         label = r["doc_no"] or r["record_id"]
         if r["requested_by"].strip() and r["requested_by"].strip().lower() == r["approved_by"].strip().lower():
             out.append(Hit("Approvals", "1.2", "High", amt, f"{label} raised and approved by the same person", "approvals.csv", ln))
-        if amt > 2500 and not r["po_no"].strip():
+        if amt > L["po_limit"] and not r["po_no"].strip():
             out.append(Hit("Approvals", "1.1", "Medium", amt, f"{label} for ${amt:,.2f} has no purchase order", "approvals.csv", ln))
-        if amt > 10000 and r["approver_role"].strip().lower() != "director":
+        if amt > L["director_limit"] and r["approver_role"].strip().lower() != "director":
             out.append(Hit("Approvals", "1.3", "Medium", amt,
                            f"{label} for ${amt:,.2f} approved by a {r['approver_role'] or 'non-director'}, not a director",
                            "approvals.csv", ln))
+    out += _split_orders(R, L) + _po_after_invoice(R)
     return out
 
 
-def vendors(lines: list[str]) -> list[Hit]:
+def _split_orders(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
+    """Several invoices from one vendor, each under the director limit and without a PO, close together in time,
+    adding up to more than the director limit."""
+    out, groups = [], {}
+    for ln, r in R:
+        if r["type"].strip().upper() in ("", "INVOICE") and not r["po_no"].strip() and _d(r["date"]) \
+                and _f(r["amount"]) <= L["director_limit"]:
+            groups.setdefault(r["vendor"].strip().lower(), []).append((ln, r))
+    for items in groups.values():
+        items.sort(key=lambda x: _d(x[1]["date"]))
+        for i in range(len(items)):
+            win = [x for x in items[i:] if (_d(x[1]["date"]) - _d(items[i][1]["date"])).days <= L["split_days"]]
+            total = sum(_f(x[1]["amount"]) for x in win)
+            if len(win) >= 2 and total > L["director_limit"]:
+                last = max(win, key=lambda x: x[0])
+                out.append(Hit("Approvals", "1.4", "Medium", round(total, 2),
+                               f"{len(win)} {last[1]['vendor']} invoices without a PO within {L['split_days']} days, "
+                               f"total ${total:,.2f} - possible split to avoid director approval", "approvals.csv", last[0],
+                               [("approvals.csv", x[0]) for x in win if x[0] != last[0]]))
+                break
+    return out
+
+
+def _po_after_invoice(R: list[tuple[int, Row]]) -> list[Hit]:
+    """A purchase order dated after the invoice it covers."""
+    out = []
+    pos = {r["doc_no"].strip().lower(): (ln, r) for ln, r in R if r["type"].strip().upper() == "PO"}
+    for ln, r in R:
+        if r["type"].strip().upper() != "INVOICE":
+            continue
+        hit = pos.get(r["po_no"].strip().lower())
+        if hit and _d(hit[1]["date"]) and _d(r["date"]) and _d(hit[1]["date"]) > _d(r["date"]):
+            days = (_d(hit[1]["date"]) - _d(r["date"])).days
+            out.append(Hit("Approvals", "1.1", "Medium", _f(r["amount"]),
+                           f"{hit[1]['doc_no']} raised {days} days after invoice {r['doc_no']}", "approvals.csv", hit[0],
+                           [("approvals.csv", ln)]))
+    return out
+
+
+def cross_file(files: dict[str, list[str]]) -> list[Hit]:
+    """Checks that need two files: payments to vendors that are missing from, or inactive in, the vendor master."""
+    P, V = files.get("payments.csv"), files.get("vendors.csv")
+    if not P or not V or missing_columns("payments.csv", P) or missing_columns("vendors.csv", V):
+        return []
+    master = {r["vendor_id"].strip(): (ln, r) for ln, r in rows(V)}
+    out = []
+    for ln, r in rows(P):
+        vid = r.get("vendor_id", "").strip()
+        if not vid:
+            continue
+        if vid not in master:
+            out.append(Hit("Payments", "4.1", "Medium", _f(r["paid_amount"]),
+                           f"{r['payment_id']} paid vendor {vid}, which is not in the vendor master", "payments.csv", ln))
+        elif master[vid][1]["status"].strip().upper() != "ACTIVE":
+            out.append(Hit("Payments", "4.1", "Medium", _f(r["paid_amount"]),
+                           f"{r['payment_id']} paid {master[vid][1]['status'].lower()} vendor {vid}", "payments.csv", ln))
+    return out
+
+
+def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     R, out, tax = rows(lines), [], {}
     for ln, r in R:
         paid = _f(r["last_paid_amount"])
@@ -135,7 +216,7 @@ def rows_by_line(R: list[tuple[int, dict]], ln: int) -> dict:
     return next(r for n, r in R if n == ln)
 
 
-def contracts(lines: list[str]) -> list[Hit]:
+def contracts(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     out = []
     contract = {}   # vendor -> list of (line, text)
     for i, ln in enumerate(lines, start=1):
@@ -172,14 +253,14 @@ def contracts(lines: list[str]) -> list[Hit]:
     return out
 
 
-def expenses(lines: list[str]) -> list[Hit]:
+def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     out, seen = [], {}
     for ln, r in rows(lines):
         amt = _f(r["amount"])
         people = int(_f(r["people"])) if r["people"].strip() else 1
-        if r["category"].strip().upper() == "MEAL" and people and amt / max(people, 1) > 75:
-            out.append(Hit("Expenses", "6.1", "Low", amt, f"Meal at ${amt / people:,.2f} per person (limit $75.00)", "expenses.csv", ln))
-        if amt > 25 and not r["receipt_ref"].strip():
+        if r["category"].strip().upper() == "MEAL" and people and amt / max(people, 1) > L["meal_limit"]:
+            out.append(Hit("Expenses", "6.1", "Low", amt, f"Meal at ${amt / people:,.2f} per person (limit ${L['meal_limit']:,.2f})", "expenses.csv", ln))
+        if amt > L["receipt_limit"] and not r["receipt_ref"].strip():
             out.append(Hit("Expenses", "6.2", "Medium", amt, f"Claim {r['claim_id']} of ${amt:,.2f} has no receipt", "expenses.csv", ln))
         if re.search(r"gym|membership|personal|netflix|spa\b|haircut", r["notes"], re.I):
             out.append(Hit("Expenses", "6.3", "Low", amt, f"Personal item claimed: {r['notes'].strip().lower()}", "expenses.csv", ln))
@@ -206,6 +287,7 @@ INNOCENT = {
     "1.1": "The purchase order may exist outside this export.",
     "1.2": "A deputy may have approved under an agreed cover arrangement.",
     "1.3": "A director may have approved by email outside the system.",
+    "1.4": "The invoices may be for separate, unrelated jobs.",
     "4.1": "The vendor record may have been closed after the payment was agreed.",
     "4.2": "Two entities may legitimately share a tax ID (a parent and a branch).",
     "4.3": "The supplier may have been verified by phone outside the system.",
@@ -228,6 +310,7 @@ FIXES = {
     "1.1": "Ask the requester for the purchase order, or record an approved exception.",
     "1.2": "Have a different, authorised person re-approve it.",
     "1.3": "Get director sign-off recorded against the document.",
+    "1.4": "Treat the invoices as one order and get director approval.",
     "4.1": "Check why an inactive vendor was paid; recover the payment if it was wrong.",
     "4.2": "Merge the vendor records and check no payment was made twice.",
     "4.3": "Hold payments until Treasury records a call-back verification.",
@@ -244,16 +327,20 @@ FIXES = {
 }
 
 
-def run_area(area: str, files: dict[str, list[str]]) -> list[Hit]:
+def run_area(area: str, files: dict[str, list[str]], limits: dict | None = None) -> list[Hit]:
+    L = {**LIMITS, **(limits or {})}
     name = FILES[area]
     lines = files.get(name)
     if not lines or missing_columns(name, lines):
         return []
-    return CHECKS[area](lines)
+    out = CHECKS[area](lines, L)
+    if area == "Payments":
+        out += cross_file(files)
+    return out
 
 
-def analyze(files: dict[str, list[str]]) -> list[Hit]:
+def analyze(files: dict[str, list[str]], limits: dict | None = None) -> list[Hit]:
     out = []
     for area in FILES:
-        out += run_area(area, files)
+        out += run_area(area, files, limits)
     return out

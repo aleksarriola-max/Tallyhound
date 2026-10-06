@@ -174,6 +174,44 @@ def add_zip(up) -> None:
     st.success(f"Added \"{label}\" to the Monthly audit picker: {len(files)} of 5 files. "
                "Pick it there and press Run selected.")
     st.dataframe(pd.DataFrame([dict(file=n, lines=len(v)) for n, v in sorted(files.items())]), hide_index=True, **C.dfw())
+    column_matching(label)
+
+
+def _save_matching(label: str, name: str, missing: list[str]) -> None:
+    from . import custom
+    S = st.session_state
+    m = custom.mapping(label).setdefault(name, {})
+    for col in missing:
+        v = S.get(f"map_{label}_{name}_{col}", "(choose)")
+        if v == "(not in file)":
+            m[col] = ""
+        elif v != "(choose)":
+            m[col] = v
+
+
+def column_matching(label: str) -> None:
+    """Let a person say which of their columns holds each field the checks need."""
+    import csv
+    from . import custom
+    todo = custom.unmatched(label)
+    if not todo:
+        return
+    st.markdown("**Match your columns**")
+    st.caption("Some files use different column names. Pick which of your columns holds each field. Choose "
+               "\"(not in file)\" when you do not have it; checks that need it then find nothing for that field.")
+    for name, missing in todo.items():
+        head = next(csv.reader([S_lines(label, name)[0]])) if S_lines(label, name) else []
+        with st.container(border=True):
+            st.markdown(f"`{name}`")
+            cols = st.columns(min(4, len(missing)))
+            for i, col in enumerate(missing):
+                cols[i % len(cols)].selectbox(col, ["(choose)", "(not in file)", *head], key=f"map_{label}_{name}_{col}")
+            st.button("Save column matching", key=f"mapsave_{label}_{name}", on_click=_save_matching,
+                      args=(label, name, missing))
+
+
+def S_lines(label: str, name: str) -> list[str]:
+    return st.session_state.uploads[label].get(name, [])
 
 
 def queue_panel(selection: dict, running: bool) -> None:

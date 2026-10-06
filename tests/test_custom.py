@@ -48,7 +48,7 @@ def test_parse_zip_reads_the_five_files_and_ignores_junk():
 def test_parse_zip_rejects_bad_input():
     assert custom.parse_zip(b"not a zip")[0] == {}
     files, notes = custom.parse_zip(make_zip({"payments.csv": "a,b\n1,2\n"}))
-    assert files == {} and any("missing columns" in n for n in notes)
+    assert "payments.csv" in files and any("missing columns" in n for n in notes)   # kept, so columns can be matched
 
 
 # ---- built-in rules

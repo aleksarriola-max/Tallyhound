@@ -26,6 +26,9 @@ def decisions_frame(draft: bool = False) -> pd.DataFrame:
     else:
         out["decision"] = [d.get(i, {}).get("status", "Pending") for i in f.id]
         out["reviewer_reason"] = [d.get(i, {}).get("reason", "") for i in f.id]
+    notes = st.session_state.get("notes", {})
+    out["owner"] = [notes.get(i, {}).get("owner", "") for i in f.id]
+    out["note"] = [notes.get(i, {}).get("note", "") for i in f.id]
     return out
 
 

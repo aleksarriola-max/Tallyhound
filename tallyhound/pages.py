@@ -265,6 +265,34 @@ def guardrails() -> None:
                 st.markdown(C.esc(item.description))
                 st.markdown(f"<span style='font-size:1.15rem;font-weight:700;color:{C.TEAL_DARK}'>{item.metric.format(**fmt)}</span>",
                             unsafe_allow_html=True)
+    tamper_demo(f)
     st.subheader("Blocked attempts")
     st.caption("None this session.")
     st.dataframe(pd.DataFrame(columns=["Time", "Agent", "Attempt", "Blocked by"]), hide_index=True, **C.dfw())
+
+
+def tamper_demo(f: pd.DataFrame) -> None:
+    """Let a visitor try to sneak a made-up quote past the quote check."""
+    st.subheader("Try to fool the quote check")
+    st.caption("Pick a finding, change its quoted line - even one character - and check it. A finding is only shown "
+               "when its quote is an exact line of the source file at the stated line number.")
+    if f.empty:
+        st.caption("No findings to try it on.")
+        return
+    pick = st.selectbox("Finding", list(f.id), format_func=lambda i: f"{i} - {f.set_index('id').loc[i, 'title']}",
+                        key="tamper_pick")
+    r = f.set_index("id").loc[pick]
+    text = st.text_area("Quoted line (edit it)", value=r.evidence, key=f"tamper_text_{pick}", height=90)
+    one = pd.DataFrame([dict(id=pick, severity=r.severity, area=r.area, clause=r.clause, amount=r.amount, title=r.title,
+                             skeptic_verdict=r.skeptic_verdict, evidence=text, related_evidence=r.related_evidence,
+                             source_file=r.source_file, line_number=r.line_number,
+                             innocent_explanations="", skeptic_reason="", proposed_fix="")])
+    ok, _ = C.check_findings(one, C.source_lines)
+    if not ok.empty:
+        st.success(f"Verified: this is exactly line {r.line_number} of {r.source_file}. The finding would be shown.")
+    else:
+        lines = C.source_lines(r.source_file)
+        actual = lines[int(r.line_number) - 1] if 0 < int(r.line_number) <= len(lines) else ""
+        st.error(f"Blocked: line {r.line_number} of {r.source_file} does not say that. The finding would be hidden.")
+        st.caption("The file actually says:")
+        st.code(actual or "(no such line)", language=None)

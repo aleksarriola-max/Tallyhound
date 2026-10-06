@@ -26,6 +26,12 @@ def finding_card(r) -> None:
         _code(r.evidence)
         st.markdown(f"Skeptic verdict: **{r.skeptic_verdict}** - {C.esc(r.skeptic_reason)}")
         st.markdown(f"Proposed fix: {C.esc(r.proposed_fix)}")
+        note = S.notes.get(r.id, {})
+        label = "Owner and notes" + (f" - {note['owner']}" if note.get("owner") else "") + (" (note)" if note.get("note") else "")
+        with st.expander(label):
+            st.text_input("Owner", value=note.get("owner", ""), key=f"own_{r.id}", placeholder="Who follows this up?")
+            st.text_area("Note", value=note.get("note", ""), key=f"note_{r.id}", height=80)
+            st.button("Save", key=f"savenote_{r.id}", on_click=C.save_note, args=(r.id,))
         if d:
             color = C.RELEASE if d["status"] == "Approved" else C.HOLD
             c1, c2 = st.columns([5, 1], vertical_alignment="center")

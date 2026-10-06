@@ -39,6 +39,10 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         if info.is_dir() or base.startswith(".") or "__MACOSX" in info.filename:
             continue
         stem = base.rsplit(".", 1)[0].lower()
+        if stem == "answer_key" and base.lower().endswith(".csv"):
+            files["answer_key.csv"] = zf.read(info).decode("utf-8-sig", errors="replace").splitlines()
+            notes.append("Found answer_key.csv: the Scorecard page will grade runs on this data.")
+            continue
         match = next((v for k, v in STEMS.items() if stem == k or stem.startswith(k + "_") or stem.endswith("_" + k)), None)
         if match is None:
             notes.append(f"Ignored {base} (not one of the five audit files).")
@@ -54,16 +58,61 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
             break
         missing = rules.missing_columns(match, lines)
         if missing:
-            notes.append(f"{match} is missing columns: {', '.join(missing)}. It was skipped.")
-            continue
+            notes.append(f"{match} is missing columns: {', '.join(missing)}. Match its columns below, or it is skipped.")
         files[match] = lines
     return files, notes
 
 
-def add_upload(label: str, files: dict[str, list[str]]) -> None:
+def add_upload(label: str, files: dict[str, list[str]], key: list[dict] | None = None) -> None:
+    """Register uploaded files. An answer_key.csv inside them becomes this dataset's answer key."""
+    from . import score
     S = st.session_state
+    files = dict(files)
+    key_lines = files.pop("answer_key.csv", None)
+    if key_lines and key is None:
+        key = score.key_from_csv("\n".join(key_lines))
     S.setdefault("uploads", {})[label] = files
+    if key:
+        S.setdefault("answer_keys", {})[label] = key
+    elif is_sample(files):
+        S.setdefault("answer_keys", {})[label] = "sample"
     S.extra_opts.setdefault("audit", {})[label] = f"{len(files)} of 5 files: " + ", ".join(sorted(files))
+
+
+def is_sample(files: dict[str, list[str]]) -> bool:
+    """True when the upload is exactly the sample company's files, so the sample answer key applies."""
+    return bool(files) and all(files[n] == C.read_source(n) for n in files if n in STEMS.values())
+
+
+# ---------------------------------------------------------------- column matching
+def mapping(label: str) -> dict[str, dict[str, str]]:
+    """{file: {expected column: column in the file, or "" when the file has no such column}}"""
+    return st.session_state.setdefault("mappings", {}).setdefault(label, {})
+
+
+def view(label: str) -> dict[str, list[str]]:
+    """The uploaded files as the checks see them: only the header line is renamed by the column matching.
+    Data lines are untouched, so every quote is still an exact line of the file the person uploaded."""
+    import csv
+    import io
+    out = {}
+    for name, lines in st.session_state.uploads[label].items():
+        m = mapping(label).get(name)
+        if not m or not lines:
+            out[name] = lines
+            continue
+        head = next(csv.reader([lines[0]]))
+        back = {src: dst for dst, src in m.items() if src}
+        new = [back.get(h, h) for h in head] + [dst for dst, src in m.items() if not src]
+        buf = io.StringIO()
+        csv.writer(buf, lineterminator="").writerow(new)
+        out[name] = [buf.getvalue()] + lines[1:]
+    return out
+
+
+def unmatched(label: str) -> dict[str, list[str]]:
+    """Files that still miss expected columns after matching."""
+    return {n: miss for n, ls in view(label).items() if (miss := rules.missing_columns(n, ls))}
 
 
 def uploaded(option: str) -> bool:
@@ -74,7 +123,8 @@ def uploaded(option: str) -> bool:
 class Job:
     """Runs the agents for one uploaded dataset on a background thread. Never touches Streamlit state."""
 
-    def __init__(self, label, files, engine, model, url, policy, skip):
+    def __init__(self, label, files, engine, model, url, policy, skip, limits=None):
+        self.limits = dict(limits or rules.LIMITS)
         self.label, self.files, self.engine, self.model, self.url = label, files, engine, model, url
         self.policy, self.skip = policy, set(skip)
         self.agents = {n: dict(status="Skipped" if n in self.skip else "Waiting", pct=0, secs=0, msg="") for n in
@@ -133,7 +183,7 @@ class Job:
         if not lines:
             return
         if self.engine in ("rules", "rules+skeptic"):
-            for h in rules.run_area(area, self.files):
+            for h in rules.run_area(area, self.files, self.limits):
                 self.records.append(dict(
                     area=h.area, clause=h.clause, severity=h.severity, amount=h.amount, title=h.title,
                     source_file=h.source_file, line_number=h.line_number, related_lines=[ln for _, ln in h.related],
@@ -171,9 +221,9 @@ def tick_item(sim: dict, item: dict) -> bool:
     key = f"{S.get('sid', '')}|{item['label']}"
     job = JOBS.get(key)
     if job is None:
-        job = JOBS[key] = Job(item["custom"], S.uploads[item["custom"]], item.get("engine", "rules"),
+        job = JOBS[key] = Job(item["custom"], view(item["custom"]), item.get("engine", "rules"),
                               item.get("model", llm.DEFAULT_MODEL), item.get("url", llm.DEFAULT_URL), C.policy(),
-                              [a["name"] for a in item["agents"] if a["status"] == "Skipped"])
+                              [a["name"] for a in item["agents"] if a["status"] == "Skipped"], C.limits())
         sim_log(sim, "Orchestrator", f"Reading {len(job.files)} uploaded file(s) with "
                 + ({"rules": "the built-in rules", "rules+skeptic": f"the built-in rules and an Ollama Skeptic ({job.model})"}.get(job.engine, f"Ollama ({job.model})")))
         return True
@@ -221,7 +271,12 @@ def finalize(label: str, job: Job) -> None:
     for i, r in enumerate(recs, start=1):
         r["id"] = f"F-{i:02d}"
     S.setdefault("custom", {})[label] = recs
-    S.setdefault("by_dataset", {})[label] = dict(decisions={}, audit_log=[], cleared={})
+    S.setdefault("run_history", []).append(dict(
+        label=label, engine=job.engine, model=job.model if job.engine != "rules" else "",
+        time=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        proposed=[dict(source_file=r["source_file"], line_number=r["line_number"], related_lines=r.get("related_lines", []),
+                       verdict=r.get("verdict", ""), reason=r.get("reason", ""), clause=r["clause"]) for r in recs]))
+    S.setdefault("by_dataset", {})[label] = dict(decisions={}, audit_log=[], cleared={}, notes={})
     activate(label, force_load=True)
 
 
@@ -234,9 +289,11 @@ def activate(label: str | None, force_load: bool = False) -> None:
         return
     store = S.setdefault("by_dataset", {})
     if cur != label:
-        store[cur or "__sample__"] = dict(decisions=S.decisions, audit_log=S.audit_log, cleared=S.cleared)
-    pick = store.get(label or "__sample__", dict(decisions={}, audit_log=[], cleared={}))
+        store[cur or "__sample__"] = dict(decisions=S.decisions, audit_log=S.audit_log, cleared=S.cleared,
+                                          notes=S.get("notes", {}))
+    pick = store.get(label or "__sample__", dict(decisions={}, audit_log=[], cleared={}, notes={}))
     S.decisions, S.audit_log, S.cleared = pick["decisions"], pick["audit_log"], pick["cleared"]
+    S.notes = pick.get("notes", {})
     S.dataset = label
 
 

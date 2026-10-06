@@ -19,7 +19,7 @@ HOLD, RELEASE = "#9f2a2f", "#2b7a55"
 MUTED = "#5b6b73"
 
 NAV = ["Run analysis", "Overview", "Findings", "Payment gate", "Recovery",
-       "Subscriptions", "Live activity", "Evidence viewer", "Guardrails"]
+       "Subscriptions", "Live activity", "Evidence viewer", "Scorecard", "Policy", "Guardrails"]
 STEPS = ["1  Choose data (Folder or zip)", "2  Run (Seven agents)",
          "3  Review (Approve / reject)", "4  Download (Excel and memo)"]
 
@@ -59,9 +59,28 @@ def read_source(name: str) -> list[str]:
 
 
 @st.cache_data
-def policy() -> dict:
+def _policy_base() -> dict:
     df = read_csv("policy.csv")
     return {r.clause + "|" + r.area: r.text for r in df.itertuples()}
+
+
+def limits() -> dict:
+    """The policy limits in force: the defaults, changed on the Policy page."""
+    from . import rules
+    return {**rules.LIMITS, **st.session_state.get("limits", {})}
+
+
+def policy() -> dict:
+    """Clause texts, with the amounts shown as currently set on the Policy page."""
+    L = limits()
+    swap = {"$2,500": f"${L['po_limit']:,.0f}", "$10,000": f"${L['director_limit']:,.0f}",
+            "$75.00": f"${L['meal_limit']:,.2f}", "$25.00": f"${L['receipt_limit']:,.2f}"}
+    out = {}
+    for k, text in _policy_base().items():
+        for a, b in swap.items():
+            text = text.replace(a, b)
+        out[k] = text
+    return out
 
 
 def clause_text(area: str, clause: str) -> str:
@@ -223,6 +242,13 @@ def decide(fid: str, status: str, reason: str = "") -> None:
     log_action("Reviewer", status, fid, reason or "Approved by reviewer")
 
 
+def save_note(fid: str) -> None:
+    S = st.session_state
+    owner, note = S.get(f"own_{fid}", "").strip(), S.get(f"note_{fid}", "").strip()
+    S.notes[fid] = dict(owner=owner, note=note)
+    log_action("Reviewer", "Owner and note saved", fid, f"{owner or 'no owner'}: {note[:80]}")
+
+
 def undo(fid: str) -> None:
     st.session_state.decisions.pop(fid, None)
     log_action("Reviewer", "Reset to pending", fid)
@@ -249,6 +275,7 @@ def init_state() -> None:
     S.setdefault("last_tick", 0.0)
     S.setdefault("extra_opts", {})
     S.setdefault("tour_off", False)
+    S.setdefault("notes", {})
     S.setdefault("tour_downloaded", False)
 
 
