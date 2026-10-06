@@ -25,9 +25,9 @@ FINDINGS_SCHEMA = {
     }}},
     "required": ["findings"],
 }
-SKEPTIC_SCHEMA = {"type": "object", "properties": {
-    "verdict": {"type": "string", "enum": ["Confirmed", "Doubtful"]}, "reason": {"type": "string"}},
-    "required": ["verdict", "reason"]}
+SKEPTIC_SCHEMA = {"type": "object", "properties": {      # reason first, so the verdict follows from it
+    "reason": {"type": "string"}, "verdict": {"type": "string", "enum": ["Confirmed", "Doubtful"]}},
+    "required": ["reason", "verdict"]}
 
 
 def policy_for(area: str, policy: dict[str, str]) -> str:
@@ -89,13 +89,18 @@ def labelled(line: str, header: str) -> str:
 
 
 def skeptic(f: dict, clause_text: str, model: str, url: str, header: str = "", related: list[str] | None = None) -> tuple[str, str]:
-    system = ("You are the Skeptic in a finance audit. Another agent proposed a finding. Try to disprove it using only "
-              "the evidence line and the policy clause. Read each field by its column name; do not guess what a field means. Answer Confirmed only if the evidence line clearly breaches the "
-              "clause. Answer Doubtful if the breach is not clear from that line, or there is an obvious innocent reason.")
+    system = ("You are the Skeptic in a finance audit. Another agent proposed a finding. Check it using only the evidence "
+              "line and the policy clause. Read each field by its column name; do not guess what a field means.\n"
+              "Answer Confirmed when the evidence line breaches the clause on its face. A person will still review it, "
+              "so an excuse that is merely possible does not make a finding doubtful.\n"
+              "Answer Doubtful only when the line itself contradicts the breach, the clause does not apply to it, or the "
+              "line does not contain what the finding claims. Never answer Doubtful because of an excuse that is not in "
+              "the data. Give the reason first, in one or two sentences, then the verdict. The verdict must agree with "
+              "your reason.")
     extra = "".join(f"\nRelated line: {labelled(x, header)}" for x in (related or []))
     user = (f"Policy clause {f['clause']}: {clause_text or '(clause not found)'}\n"
             f"Proposed finding: {f['title']}\nEvidence line: {labelled(f['evidence'], header)}{extra}\n"
-            f"Possible innocent explanation: {f['innocent']}")
+            f"An unchecked guess at an innocent explanation (this is NOT in the data): {f['innocent']}")
     r = llm.chat_json(system, user, SKEPTIC_SCHEMA, model=model, url=url)
     verdict = "Confirmed" if r.get("verdict") == "Confirmed" else "Doubtful"
     return verdict, str(r.get("reason", "")).strip() or "No reason given."
