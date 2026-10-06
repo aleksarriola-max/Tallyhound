@@ -38,11 +38,13 @@ def _history(pick: str) -> list[dict]:
 
 def scorecard_page() -> None:
     S = st.session_state
-    st.subheader("Scorecard")
     st.caption("Grades each engine against an answer key of planted problems. Recall: how many planted problems it "
                "found. Precision: how many of its findings were real. A finding counts when it points at the same "
                "file and line as a planted problem.")
     with_key = [SAMPLE] + [lbl for lbl in S.get("uploads", {}) if S.get("answer_keys", {}).get(lbl)]
+    cur = S.get("dataset")
+    if S.get("sc_pick") not in with_key:
+        S["sc_pick"] = cur if cur in with_key else SAMPLE
     pick = st.selectbox("Data with an answer key", with_key, key="sc_pick")
     key, files = _dataset(pick)
 
@@ -82,8 +84,8 @@ def scorecard_page() -> None:
     st.altair_chart(chart, **C.dfw())
 
     if len(runs) == 1:
-        st.info("Only the built-in rules are scored so far. To score the AI: upload this data as a zip on Run "
-                "analysis, run it with an Ollama engine, and the finished run appears here.")
+        st.info("Only the built-in rules are scored so far. To score the AI: on Home press Check new files, pick "
+                "this data, choose an Ollama engine under Engine and agents, and the finished run appears here.")
     n_traps = sum(k.get("expect") == "trap" for k in key)
     with st.expander(f"Every planted problem ({len(key) - n_traps})" + (f" and trap ({n_traps})" if n_traps else ""),
                      expanded=False):
@@ -143,8 +145,13 @@ def _reset_limits() -> None:
 
 
 def policy_page() -> None:
+    policy_limits()
+    rule_health_section()
+    learning_section()
+
+
+def policy_limits() -> None:
     S = st.session_state
-    st.subheader("Policy")
     st.caption("The limits the built-in rules use. Changes apply to the next run on uploaded files. The sample "
                "company's findings are pre-written and do not change.")
     L = C.limits()
@@ -172,9 +179,8 @@ def policy_page() -> None:
             st.caption("Only an admin can change the policy.")
     pol = C.policy()
     rows = [dict(Area=k.split("|")[1], Clause=k.split("|")[0], Text=v) for k, v in pol.items()]
-    st.dataframe(pd.DataFrame(rows), hide_index=True, **C.dfw())
-    rule_health_section()
-    learning_section()
+    with st.expander(f"The policy clauses ({len(rows)})"):
+        st.dataframe(pd.DataFrame(rows), hide_index=True, **C.dfw())
 
 
 def _set_override(clause: str, value: str | None) -> None:

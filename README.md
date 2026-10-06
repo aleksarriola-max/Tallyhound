@@ -4,19 +4,19 @@ A finance audit console built with Streamlit. AI agents **propose** findings abo
 
 **Live demo:** https://tallyhound-kfzkutbxmxdsrynlmppoll.streamlit.app/
 
-![Run analysis](docs/run-analysis.png)
+![Home](docs/home.png)
 
 ## Why it exists
 
 Audit tools that act on their own are hard to trust. Tallyhound is built around one rule: **agents only propose, people decide.** Every finding carries evidence you can check, and nothing is approved, rejected, held or released without a person clicking a button.
 
-| Review findings | Payment gate |
+| Review: one queue of cases | Payment run |
 |---|---|
 | ![Review](docs/review.png) | ![Payment gate](docs/payment-gate.png) |
 
-| Evidence viewer | Overview |
+| Reports | Scorecard |
 |---|---|
-| ![Evidence viewer](docs/evidence-viewer.png) | ![Overview](docs/overview.png) |
+| ![Reports](docs/reports.png) | ![Scorecard](docs/scorecard.png) |
 
 ## How good is it?
 
@@ -114,7 +114,7 @@ Ollama is the default. For LM Studio, vLLM or llama.cpp, set the model server ad
 
 ## How it works
 
-- **Run analysis** - a four-step flow: choose data, run the agents, review, download.
+- **Four sections** - *Home* says what needs you today and has one button, *Check new files*. *Review* is one queue of cases (findings that share a line are decided together, most important first; open Details for the evidence, the Skeptic, owner and notes), plus the payment run and the downloads. *Reports* has the summary, trends and vendor risk, recovery and subscriptions. *Settings* has policy, rules, data and users. *How we know it's right* holds the Scorecard, the guardrails and the audit trail.
 - **Quote check** - a finding is shown only if its evidence appears word for word, at the stated line, in its source file under `data/source/`. Anything else is hidden.
 - **Skeptic review** - a second agent tries to disprove every finding. In this demo the verdicts are pre-written.
 - **Skeptic self-check** - if the Skeptic's verdict contradicts its own reason, it is asked once more; if it still disagrees with itself the finding is marked Unclear for a person to judge.
@@ -130,10 +130,10 @@ Ollama is the default. For LM Studio, vLLM or llama.cpp, set the model server ad
 - **Owner and notes** - give each finding an owner and a note; both are saved and exported.
 - **Payment gate** - eight checks per payment line decide HOLD or RELEASE. Clearing a hold needs a typed reason.
 - **Exports** - Step 4 builds an Excel workbook (with an audit trail sheet) and a PDF memo from your decisions.
-- **Guided tour** - a checklist at the top of Run analysis walks a first-time visitor through the whole flow: start a run, watch an agent fail, retry, review, download. Hide it any time.
+- **Guided tour** - a checklist on Home walks a first-time visitor through the whole flow: start a run, watch an agent fail, retry, review, download. Hide it any time.
 - **Saved work** - decisions, reasons, cleared holds and the audit trail are saved to a small file keyed by a random id in the page address (`?s=...`), so a reload keeps them. Keep the address to come back to your work; "Reset demo" wipes it. Saved files are deleted after 14 days.
-- **Your own files** - open "Add new data" on step 1 and upload a zip containing any of `payments.csv`, `approvals.csv`, `vendors.csv`, `contracts.txt`, `expenses.csv` (same columns as `data/source/`; to try it, zip that folder). Pick the new entry in the Monthly audit picker and run it. Findings, review and downloads then work on your files. Payment runs, supplier recovery and subscriptions still use the sample data. The zip is read in memory and never written to disk, and each dataset keeps its own decisions.
-- **Four engines for uploads** (Advanced on step 1): *Ollama agents with tools* query the files (filter rows, find duplicates, read given lines) instead of reading them whole, so they scale to big files. *Rules + Ollama Skeptic* finds candidates with the fixed rules and lets the model only challenge them (best coverage). *Built-in rules* are fixed tests of the policy, fast and repeatable, no AI. *Ollama agents* send each file to a model running on your computer (default `qwen3.5:9b`), then a Skeptic pass challenges every finding. The model never supplies evidence: a finding is kept only if its quote is an exact copy of the line at the stated position, so an invented quote is dropped. Ollama is only reachable when you run the app on the same computer (`ollama serve`); the hosted demo uses the built-in rules.
+- **Your own files** - press *Check new files* on Home and upload a zip containing any of `payments.csv`, `approvals.csv`, `vendors.csv`, `contracts.txt`, `expenses.csv` (same columns as `data/source/`; to try it, zip that folder). Pick it under *Data to check* and press Run. Findings, review and downloads then work on your files. Payment runs, supplier recovery and subscriptions still use the sample data. The zip is read in memory and never written to disk, and each dataset keeps its own decisions.
+- **Four engines for uploads** (*Engine and agents* in the Check new files dialog): *Ollama agents with tools* query the files (filter rows, find duplicates, read given lines) instead of reading them whole, so they scale to big files. *Rules + Ollama Skeptic* finds candidates with the fixed rules and lets the model only challenge them (best coverage). *Built-in rules* are fixed tests of the policy, fast and repeatable, no AI. *Ollama agents* send each file to a model running on your computer (default `qwen3.5:9b`), then a Skeptic pass challenges every finding. The model never supplies evidence: a finding is kept only if its quote is an exact copy of the line at the stated position, so an invented quote is dropped. Ollama is only reachable when you run the app on the same computer (`ollama serve`); the hosted demo uses the built-in rules.
 - **Simulated run** - for the sample company the agent run is a timer, about 20 seconds per queue item. The Expenses agent fails once on purpose so you can try Retry.
 
 ## Project layout
@@ -141,8 +141,9 @@ Ollama is the default. For LM Studio, vLLM or llama.cpp, set the model server ad
 ```
 app.py                 page setup, sidebar navigation, run ticker
 tallyhound/
-  run_analysis.py      the four-step flow (Choose, Run)
-  review.py            Review and Download steps
+  layout.py            the four sections: Home, Review, Reports, Settings, plus Trust
+  run_analysis.py      upload, data check, column matching, run progress
+  review.py            decisions, downloads, test-case export
   pages.py             Overview, Findings, Payment gate, Recovery, Subscriptions,
                        Live activity, Evidence viewer, Guardrails
   sim.py               simulated agent run

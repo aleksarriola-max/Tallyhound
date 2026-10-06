@@ -158,4 +158,4 @@ def reset() -> None:
     for k in list(S.keys()):
         if k not in ("nav",):
             del S[k]
-    S["nav"] = "Run analysis"
+    S["nav"] = "Home"

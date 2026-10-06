@@ -60,7 +60,7 @@ def test_sign_in_is_required_when_users_exist(users):
     at.text_input[1].set_value("battery staple 2")
     at.button[0].click().run()
     assert at.session_state.user == "pete" and at.session_state.role == "preparer"
-    at.session_state.step = 3
+    at.session_state.nav = "Review"
     at.run()
     assert at.button(key="appr_F-01").disabled           # a preparer cannot approve
 
@@ -74,7 +74,7 @@ def test_segregation_of_duties_blocks_reviewing_your_own_run(users):
     at.session_state.uploads = {"mine": {"payments.csv": sample_files()["payments.csv"]}}
     at.session_state.dataset = "mine"
     at.session_state.run_history = [dict(label="mine", engine="rules", model="", user="rita", time="now", proposed=[])]
-    at.session_state.step = 3
+    at.session_state.nav = "Review"
     at.run()
     assert at.button(key="appr_F-01").disabled
     assert any("Segregation of duties" in w.value for w in at.warning)
@@ -232,7 +232,7 @@ def test_openai_compatible_server():
 def test_uploads_survive_a_reload():
     at = AppTest.from_file(APP, default_timeout=60).run()
     sid = at.query_params["s"][0] if isinstance(at.query_params["s"], list) else at.query_params["s"]
-    at.radio(key="nav").set_value("Scorecard").run()
+    at.radio(key="nav").set_value("Trust").run()
     at.button[[b.label for b in at.button].index("Make challenge")].click().run()
     at.button[[b.label for b in at.button].index("Add to the Monthly audit picker")].click().run()
     at2 = AppTest.from_file(APP, default_timeout=60)

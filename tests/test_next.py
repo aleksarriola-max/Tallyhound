@@ -114,7 +114,7 @@ def test_column_matching_keeps_original_lines_as_evidence():
 # ---- app pages
 def test_scorecard_makes_and_adds_a_challenge():
     at = AppTest.from_file(APP, default_timeout=60).run()
-    at.radio(key="nav").set_value("Scorecard").run()
+    at.radio(key="nav").set_value("Trust").run()
     assert not at.exception, [e.value for e in at.exception]
     at.button[[b.label for b in at.button].index("Make challenge")].click().run()
     at.button[[b.label for b in at.button].index("Add to the Monthly audit picker")].click().run()
@@ -127,7 +127,7 @@ def test_scorecard_makes_and_adds_a_challenge():
 
 def test_policy_page_saves_limits():
     at = AppTest.from_file(APP, default_timeout=60).run()
-    at.radio(key="nav").set_value("Policy").run()
+    at.radio(key="nav").set_value("Settings").run()
     at.number_input(key="lim_meal_limit").set_value(50.0).run()
     at.button[[b.label for b in at.button].index("Save limits")].click().run()
     assert at.session_state.limits["meal_limit"] == 50.0
@@ -136,17 +136,19 @@ def test_policy_page_saves_limits():
 
 def test_owner_and_note_are_saved_and_exported():
     at = AppTest.from_file(APP, default_timeout=60).run()
-    at.session_state.step = 3
+    at.session_state.nav = "Review"
+    at.run()
+    at.session_state["open_F-01"] = True
     at.run()
     at.text_input(key="own_F-01").set_value("Treasury - K. Lowe").run()
-    at.text_area(key="note_F-01").set_value("Call-back booked").run()
+    at.text_input(key="note_F-01").set_value("Call-back booked").run()
     at.button(key="savenote_F-01").click().run()
     assert at.session_state.notes["F-01"] == {"owner": "Treasury - K. Lowe", "note": "Call-back booked"}
 
 
 def test_tamper_demo_blocks_an_edited_quote():
     at = AppTest.from_file(APP, default_timeout=60).run()
-    at.radio(key="nav").set_value("Guardrails").run()
+    at.radio(key="nav").set_value("Trust").run()
     assert any("Verified" in s.value for s in at.success)
     key = next(t.key for t in at.text_area if t.key.startswith("tamper_text_"))
     at.text_area(key=key).set_value(at.text_area(key=key).value.replace("NO", "YES", 1) + " ").run()

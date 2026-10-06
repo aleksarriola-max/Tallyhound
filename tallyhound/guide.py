@@ -17,29 +17,26 @@ def _progress() -> list[tuple[str, str, bool]]:
     dc = C.decision_counts(C.findings())
     rejected = [v for v in S.decisions.values() if v.get("status") == "Rejected"]
     return [
-        ("Start a run", "Press Start demo run. It audits September and checks the payment run, one item at a time.",
+        ("Start a run", "Press Start demo run. It audits the sample company's September and checks its payment run.",
          run is not None),
         ("Watch an agent fail", "The Expenses agent is set to fail once, on purpose. Wait about 20 seconds for it.",
          run is not None and (own or failed_now or not S.fail_pending)),
         ("Retry it", "Press Retry on the failed run. The agent restarts and the queue carries on.",
          run is not None and (own or not S.fail_pending)),
-        ("Let the run finish", "Wait until both queue items say Done. The sidebar shows progress.",
+        ("Let the run finish", "Wait until both items say Done. Progress shows on this page.",
          bool(queue) and all(i["status"] == "Done" for i in queue)),
-        ("Review the findings", "On step 3, approve one finding and reject another. Rejecting needs a typed reason.",
+        ("Review the findings", "In Review, approve one case and reject another (open Details to reject; it needs a reason).",
          dc["approved"] >= 1 and len(rejected) >= 1),
-        ("Download the results", "On step 4, download the Excel workbook or the PDF memo.",
+        ("Download the results", "In Review > Download, download the Excel workbook or the PDF memo.",
          bool(S.get("tour_downloaded"))),
     ]
 
 
 def demo_start() -> None:
-    """Tick the audit and payment gate cards, then start the run."""
-    from . import run_analysis
-    S = st.session_state
-    S["inc_audit"] = True
-    S["inc_gate"] = True
-    S["_tour_started"] = True
-    run_analysis.start_run(False)
+    """Start the demo run on the sample company."""
+    from . import layout
+    st.session_state["_tour_started"] = True
+    layout._start(layout.SAMPLE)
 
 
 def mark_downloaded() -> None:
@@ -57,7 +54,6 @@ def _show() -> None:
 def tour() -> None:
     S = st.session_state
     if S.get("tour_off"):
-        st.button("Show guided tour", key="tour_show", on_click=_show, type="tertiary")
         return
     steps = _progress()
     nxt = next((i for i, s in enumerate(steps) if not s[2]), None)
@@ -80,6 +76,6 @@ def tour() -> None:
         elif nxt in (1, 2) and S.sim and any(i["status"] == "Failed" for i in S.sim["queue"]):
             st.button("Retry the failed agent", key="tour_retry", type="primary", on_click=sim.retry)
         elif nxt == 4:
-            st.button("Go to review", key="tour_review", type="primary", on_click=lambda: S.update(step=3))
+            st.button("Go to review", key="tour_review", type="primary", on_click=lambda: S.update(nav="Review"))
         elif nxt == 5:
-            st.button("Go to download", key="tour_dl", type="primary", on_click=lambda: S.update(step=4))
+            st.button("Go to review", key="tour_dl", type="primary", on_click=lambda: S.update(nav="Review"))

@@ -4,7 +4,7 @@ import streamlit as st
 st.set_page_config(layout="wide", page_title="Tallyhound", page_icon=None)
 
 from tallyhound import common as C  # noqa: E402
-from tallyhound import auth, custom, pages, pages_extra, run_analysis, sim, store  # noqa: E402
+from tallyhound import auth, custom, layout, sim, store  # noqa: E402
 
 C.init_state()
 C.inject_css()
@@ -26,7 +26,8 @@ running = bool(st.session_state.sim and st.session_state.sim["running"])
 
 with st.sidebar:
     st.markdown("### TALLYHOUND")
-    st.radio("Navigation", C.NAV, key="nav", label_visibility="collapsed")
+    st.radio("Navigation", C.NAV, key="nav", label_visibility="collapsed",
+             format_func=lambda p: {"Trust": "How we know it's right"}.get(p, p))
     st.fragment(run_every=1 if running else None)(ticker)()
     if st.session_state.get("custom"):
         labels = ["Sample company", *st.session_state.custom]
@@ -37,32 +38,24 @@ with st.sidebar:
     if auth.current_user():
         st.caption(f"Signed in as {auth.current_user()} ({auth.role()})")
         st.button("Sign out", key="sign_out", on_click=auth.sign_out, type="tertiary")
-    st.caption("Your decisions are saved automatically, so a reload keeps them.")
-    st.button("Reset demo", key="reset_demo", on_click=store.reset, type="tertiary")
-    st.markdown(
-        '<div class="th-guard"><b>GUARDRAILS</b><br>Blocked internet attempts: 0<br>'
-        f"Quotes verified: {C.quote_pct()}%</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"<div class='th-foot'>Quotes verified {C.quote_pct()}% · offline · work saved automatically</div>",
+                unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    c1.button("Reset demo", key="reset_demo", on_click=store.reset, type="tertiary")
+    if st.session_state.get("tour_off"):
+        c2.button("Tour", key="tour_show", on_click=lambda: st.session_state.update(tour_off=False), type="tertiary")
 
 C.banner_and_header()
 if st.session_state.pop("_restored", False):
     st.toast("Restored your earlier work.")
 
 PAGES = {
-    "Run analysis": run_analysis.run_page,
-    "Overview": pages.overview,
-    "Findings": pages.findings_page,
-    "Payment gate": pages.payment_gate,
-    "Recovery": pages.recovery_page,
-    "Subscriptions": pages.subscriptions_page,
-    "Live activity": pages.live_activity,
-    "Evidence viewer": pages.evidence_viewer,
-    "Scorecard": pages_extra.scorecard_page,
-    "Trends": pages_extra.trends_page,
-    "Policy": pages_extra.policy_page,
-    "Guardrails": pages.guardrails,
+    "Home": layout.home,
+    "Review": layout.review_page,
+    "Reports": layout.reports,
+    "Settings": layout.settings,
+    "Trust": layout.trust,
 }
-PAGES[st.session_state.nav]()
+PAGES.get(st.session_state.nav, layout.home)()
 
 store.save_if_changed()

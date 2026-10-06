@@ -130,10 +130,9 @@ def test_upload_run_review_and_export_end_to_end():
     at.session_state.uploads = {"mine": files}
     at.session_state.extra_opts = {"audit": {"mine": "5 of 5 files"}}
     at.run()
-    at.session_state["inc_audit"] = True
-    at.session_state["sel_audit"] = ["mine"]
-    at.run()
-    at.button[[b.label for b in at.button].index(next(b.label for b in at.button if b.label.startswith("Run selected")))].click().run()
+    at.button(key="open_run").click().run()              # Home: "Check new files" opens the run dialog
+    assert at.selectbox(key="run_choice").value == "mine"
+    at.button(key="run_go").click().run()
     for _ in range(40):
         if at.session_state.get("dataset") == "mine":
             break
@@ -141,9 +140,9 @@ def test_upload_run_review_and_export_end_to_end():
         at.run()
     assert at.session_state.dataset == "mine", "the run did not finish"
     assert not at.exception, [e.value for e in at.exception]
-    assert "Quotes verified: 100%" in " ".join(m.value for m in at.sidebar.markdown)
+    assert "Quotes verified 100%" in " ".join(m.value for m in at.sidebar.markdown)
     assert len(at.session_state.custom["mine"]) >= 22
-    at.session_state.step = 3
+    at.session_state.nav = "Review"
     at.run()
     assert not at.exception
     first = at.session_state.custom["mine"][0]["id"]

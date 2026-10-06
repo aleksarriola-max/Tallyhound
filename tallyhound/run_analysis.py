@@ -161,25 +161,29 @@ def engine_settings(running: bool) -> None:
             st.success(f"Ollama is running with {len(have)} model(s).")
 
 
-def add_zip(up) -> None:
+def add_zip(up) -> str | None:
+    """Read an uploaded zip, register it, and show what was found. Returns the dataset name."""
     from . import custom
     S = st.session_state
     files, notes = custom.parse_zip(up.getvalue())
-    for n in notes:
-        st.warning(n)
     if not files:
-        st.error("No usable audit files found. See the file layout above.")
-        return
+        for n in notes:
+            st.warning(n)
+        st.error("No usable audit files found.")
+        return None
     label = up.name.rsplit(".", 1)[0][:40] or "uploaded"
     if label in C.read_csv("workflow_options.csv").query("workflow == 'audit'")["option"].values:
         label += " (upload)"
     if label not in S.get("uploads", {}):
         custom.add_upload(label, files)
-    st.success(f"Added \"{label}\" to the Monthly audit picker: {len(files)} of 5 files. "
-               "Pick it there and press Run selected.")
-    st.dataframe(pd.DataFrame([dict(file=n, lines=len(v)) for n, v in sorted(files.items())]), hide_index=True, **C.dfw())
+    st.success(f"Read \"{label}\": {len(files)} file(s).")
+    with st.expander(f"Files ({len(files)})" + (f" and {len(notes)} note(s)" if notes else "")):
+        for n in notes:
+            st.caption(n)
+        st.dataframe(pd.DataFrame([dict(file=n, lines=len(v)) for n, v in sorted(files.items())]), hide_index=True, **C.dfw())
     column_matching(label)
     data_check(label)
+    return label
 
 
 def _set_date_order(label: str, name: str) -> None:
@@ -299,12 +303,11 @@ def recent_runs() -> None:
     ev = st.dataframe(df, hide_index=True, on_select="rerun", selection_mode="single-row", key="recent_tbl", **C.dfw())
     rows = ev.selection.rows if ev and ev.selection else []
     pick = df.iloc[rows[0]] if rows else None
-    target = "Findings"
+    target = "Review"
     if pick is not None:
         run = str(pick["Run"])
-        target = ("Findings" if "audit" in run else "Payment gate" if "Payment run" in run
-                  else "Recovery" if "recovery" in run.lower() else "Subscriptions")
-    st.button("Open results", disabled=pick is None, on_click=C.goto, args=(target,))
+        target = "Review" if ("audit" in run or "Payment run" in run) else "Reports"
+    st.button("Open results", disabled=pick is None, on_click=C.goto, args=(target,), key="recent_open")
     if pick is None:
         st.caption("Select a row, then open its results.")
 

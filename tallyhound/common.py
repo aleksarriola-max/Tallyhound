@@ -18,8 +18,7 @@ SEV_COLOR = {"High": "#9f2a2f", "Medium": "#a8680f", "Low": "#12a1b2"}
 HOLD, RELEASE = "#9f2a2f", "#2b7a55"
 MUTED = "#5b6b73"
 
-NAV = ["Run analysis", "Overview", "Findings", "Payment gate", "Recovery",
-       "Subscriptions", "Live activity", "Evidence viewer", "Scorecard", "Trends", "Policy", "Guardrails"]
+NAV = ["Home", "Review", "Reports", "Settings", "Trust"]
 STEPS = ["1  Choose data (Folder or zip)", "2  Run (Eight agents)",
          "3  Review (Approve / reject)", "4  Download (Excel and memo)"]
 
@@ -302,7 +301,7 @@ def init_state() -> None:
     from . import store
     store.load_into_session()
     S = st.session_state
-    S.setdefault("nav", "Run analysis")
+    S.setdefault("nav", "Home")
     S.setdefault("step", 1)
     S.setdefault("decisions", {})
     S.setdefault("audit_log", [])
@@ -321,12 +320,13 @@ def init_state() -> None:
 # ---- look and feel ----
 CSS = f"""
 <style>
-.block-container {{ padding-top: 3.6rem; padding-bottom: 3rem; max-width: 1500px; }}
+.block-container {{ padding-top: 2.6rem; padding-bottom: 3rem; max-width: 1500px; }}
 .th-banner {{ background:{SKY}; color:{INK}; font-weight:700; letter-spacing:.22em; text-align:center;
   padding:.45rem .5rem; border-radius:4px; font-size:.82rem; margin-bottom:.6rem; }}
-.th-header {{ display:flex; align-items:baseline; gap:.9rem; flex-wrap:wrap; }}
+.th-header {{ display:flex; align-items:center; gap:.9rem; flex-wrap:wrap; margin-bottom:.8rem; }}
+.th-header .th-dot {{ margin-left:auto; }}
 .th-title {{ font-family:'Arial Narrow','Roboto Condensed','Helvetica Neue',Arial,sans-serif; font-stretch:condensed;
-  font-weight:800; font-size:2rem; letter-spacing:.06em; color:{TEAL_DARK}; }}
+  font-weight:800; font-size:1.6rem; letter-spacing:.06em; color:{TEAL_DARK}; }}
 .th-co {{ color:{INK}; font-size:1rem; }}
 .th-strip {{ display:flex; gap:1.2rem; flex-wrap:wrap; font-size:.82rem; color:{INK}; margin:.15rem 0 1rem; }}
 .th-dot {{ display:inline-block; width:.55rem; height:.55rem; border-radius:50%; background:{RELEASE}; margin-right:.35rem; }}
@@ -351,6 +351,7 @@ section[data-testid="stSidebar"] [data-testid="stSelectbox"] * {{
   color:{INK} !important; -webkit-text-fill-color:{INK} !important; }}
 section[data-testid="stSidebar"] [data-testid="stSelectbox"] label, section[data-testid="stSidebar"] [data-testid="stSelectbox"] label * {{
   color:{PAPER} !important; -webkit-text-fill-color:{PAPER} !important; }}
+.th-foot {{ font-size:.74rem; opacity:.75; margin-top:1.4rem; }}
 .th-guard {{ border:1px solid rgba(179,224,247,.4); border-radius:6px; padding:.6rem .7rem; font-size:.82rem; margin-top:1.5rem; }}
 .th-guard b {{ letter-spacing:.06em; }}
 [class*="st-key-step_btn_"] button {{ padding:.35rem .4rem; }}
@@ -384,24 +385,22 @@ def chip(text: str, color: str) -> str:
 
 
 def banner_and_header(last_run: str = "14:32") -> None:
+    """A slim header: the name, one chip saying whose data this is, and nothing else."""
     mine = custom_label()
-    st.markdown('<div class="th-banner">' + ("YOUR UPLOADED FILES - agents propose, a person decides" if mine
-                                             else "FICTIONAL TEST DATA - not a real company") + "</div>", unsafe_allow_html=True)
-    st.markdown('<div class="th-header"><span class="th-title">TALLYHOUND</span>'
-                f'<span class="th-co">{html.escape(mine) if mine else "Bramblecourt Instruments Ltd (fictional)"}</span></div>',
-                unsafe_allow_html=True)
+    chip = (f'<span class="th-chip" style="color:{TEAL_DARK};border-color:{TEAL}">Your files: {html.escape(mine)}</span>'
+            if mine else f'<span class="th-chip" style="color:{MUTED};border-color:{MUTED}">Demo data: Bramblecourt '
+                         'Instruments Ltd (fictional)</span>')
+    st.markdown(f'<div class="th-header"><span class="th-title">TALLYHOUND</span>{chip}'
+                f'<span class="th-dot" title="Local model, offline, sandboxed"></span></div>', unsafe_allow_html=True)
     S = st.session_state
     if S.get("custom") and not mine:
         st.warning("You are looking at the SAMPLE company. Your uploaded results are ready: choose "
                    f"\"{next(iter(S.custom))}\" in the **Data in review** box in the sidebar.")
-    items = ["Model loaded", "Offline", "Sandbox on", f"Last run {last_run}"]
-    st.markdown('<div class="th-strip">' + "".join(f'<span><span class="th-dot"></span>{i}</span>' for i in items) + "</div>",
-                unsafe_allow_html=True)
 
 
-def source_html(lines: list[str], hits: list[int], main: int | None = None) -> str:
+def source_html(lines: list[str], hits: list[int], main: int | None = None, start: int = 1) -> str:
     out = []
-    for i, ln in enumerate(lines, start=1):
+    for i, ln in enumerate(lines, start=start):
         cls = "hit" if i == main else ("rel" if i in hits else "")
         out.append(f'<div class="th-row {cls}"><span class="th-ln">{i}</span>{html.escape(ln)}</div>')
     return '<div class="th-src">' + "".join(out) + "</div>"

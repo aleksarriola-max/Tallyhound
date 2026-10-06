@@ -19,11 +19,11 @@ def test_every_page_renders(page):
 
 def test_review_decisions_and_download_step():
     at = AppTest.from_file(APP, default_timeout=60).run()
-    at.session_state.step = 3
+    at.session_state.nav = "Review"
     at.run()
     at.button(key="appr_F-01").click().run()
     assert at.session_state.decisions["F-01"]["status"] == "Approved"
-    at.session_state.step = 4
+    at.session_state.nav = "Review"
     at.run()
     assert not at.exception
     metrics = {m.label: m.value for m in at.metric}
@@ -32,7 +32,9 @@ def test_review_decisions_and_download_step():
 
 def test_reject_needs_a_reason():
     at = AppTest.from_file(APP, default_timeout=60).run()
-    at.session_state.step = 3
+    at.session_state.nav = "Review"
+    at.run()
+    at.session_state["open_F-02"] = True                 # open the case's details
     at.run()
     assert at.button(key="rejbtn_F-02").disabled
     at.text_input(key="rej_F-02").set_value("Not enough evidence").run()
@@ -66,7 +68,7 @@ def test_exports_build():
 def test_decisions_survive_a_reload():
     at = AppTest.from_file(APP, default_timeout=60).run()
     sid = at.query_params["s"][0] if isinstance(at.query_params["s"], list) else at.query_params["s"]
-    at.session_state.step = 3
+    at.session_state.nav = "Review"
     at.run()
     at.button(key="appr_F-01").click().run()
     # a second browser session opening the same address gets the same work back
@@ -80,7 +82,7 @@ def test_decisions_survive_a_reload():
 def test_reset_clears_saved_work():
     at = AppTest.from_file(APP, default_timeout=60).run()
     sid = at.query_params["s"][0] if isinstance(at.query_params["s"], list) else at.query_params["s"]
-    at.session_state.step = 3
+    at.session_state.nav = "Review"
     at.run()
     at.button(key="appr_F-01").click().run()
     at.button(key="reset_demo").click().run()
