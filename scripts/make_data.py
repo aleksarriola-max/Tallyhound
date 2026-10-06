@@ -1,4 +1,4 @@
-"""Generate all fictional Ledgerwatch data: data/*.csv and data/source/*.
+"""Generate all fictional Tallyhound data: data/*.csv and data/source/*.
 
 Run from the project root:  python scripts/make_data.py
 Every finding's evidence is an exact line in a file under data/source/, and its

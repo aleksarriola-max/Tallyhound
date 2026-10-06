@@ -1,7 +1,7 @@
-"""Ledgerwatch - finance audit console (fictional test data). Run: streamlit run app.py"""
+"""Tallyhound - finance audit console (fictional test data). Run: streamlit run app.py"""
 import streamlit as st
 
-st.set_page_config(layout="wide", page_title="Ledgerwatch", page_icon=None)
+st.set_page_config(layout="wide", page_title="Tallyhound", page_icon=None)
 
 from lw import common as C  # noqa: E402
 from lw import pages, run_analysis, sim  # noqa: E402
@@ -23,7 +23,7 @@ def ticker() -> None:
 running = bool(st.session_state.sim and st.session_state.sim["running"])
 
 with st.sidebar:
-    st.markdown("### LEDGERWATCH")
+    st.markdown("### TALLYHOUND")
     st.radio("Navigation", C.NAV, key="nav", label_visibility="collapsed")
     st.fragment(run_every=1 if running else None)(ticker)()
     st.markdown(

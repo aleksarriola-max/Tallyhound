@@ -273,7 +273,7 @@ def chip(text: str, color: str) -> str:
 
 def banner_and_header(last_run: str = "14:32") -> None:
     st.markdown('<div class="lw-banner">FICTIONAL TEST DATA - not a real company</div>', unsafe_allow_html=True)
-    st.markdown('<div class="lw-header"><span class="lw-title">LEDGERWATCH</span>'
+    st.markdown('<div class="lw-header"><span class="lw-title">TALLYHOUND</span>'
                 '<span class="lw-co">Bramblecourt Instruments Ltd (fictional)</span></div>', unsafe_allow_html=True)
     items = ["Model loaded", "Offline", "Sandbox on", f"Last run {last_run}"]
     st.markdown('<div class="lw-strip">' + "".join(f'<span><span class="lw-dot"></span>{i}</span>' for i in items) + "</div>",

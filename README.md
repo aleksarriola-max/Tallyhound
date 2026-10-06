@@ -1,4 +1,4 @@
-# Ledgerwatch
+# Tallyhound
 
 A finance audit console built with Streamlit. Local AI agents *propose* findings about accounts-payable data;
 a person approves or rejects every one. **All data is fictional** (Bramblecourt Instruments Ltd).

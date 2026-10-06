@@ -84,11 +84,11 @@ def build_memo() -> bytes:
     small = ParagraphStyle("small", parent=ss["Normal"], fontSize=8.5, leading=11)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm,
-                            title="Ledgerwatch audit memo")
+                            title="Tallyhound audit memo")
     story = [
         Paragraph("FICTIONAL TEST DATA - not a real company", ParagraphStyle("b", parent=ss["Normal"], textColor=colors.HexColor("#0a3a4f"), fontSize=9)),
         Spacer(1, 4),
-        Paragraph("Ledgerwatch audit memo", ss["Title"]),
+        Paragraph("Tallyhound audit memo", ss["Title"]),
         Paragraph("Bramblecourt Instruments Ltd (fictional) - " + datetime.now().strftime("%Y-%m-%d"), ss["Normal"]),
         Spacer(1, 8),
         Paragraph(f"Findings reviewed: {len(f)}. Approved: {dc['approved']} ({C.money(dc['value'])}). "

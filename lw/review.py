@@ -82,12 +82,12 @@ def step4() -> None:
     m[2].metric("Approved value", C.money(dc["value"]))
     m[3].metric("Pending", dc["pending"])
     b1, b2, b3 = st.columns([2, 2, 2])
-    b1.download_button("Download Excel workbook", data=exports.build_workbook(False), file_name="ledgerwatch_workbook.xlsx",
+    b1.download_button("Download Excel workbook", data=exports.build_workbook(False), file_name="tallyhound_workbook.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", **C.bw())
-    b2.download_button("Download Memo (PDF)", data=exports.build_memo(), file_name="ledgerwatch_memo.pdf",
+    b2.download_button("Download Memo (PDF)", data=exports.build_memo(), file_name="tallyhound_memo.pdf",
                        mime="application/pdf", **C.bw())
     b3.download_button("Download draft (not reviewed)", data=exports.build_workbook(True),
-                       file_name="ledgerwatch_draft_not_reviewed.xlsx",
+                       file_name="tallyhound_draft_not_reviewed.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="tertiary", **C.bw())
     if dc["pending"]:
         st.caption(f"{dc['pending']} finding(s) are still pending. The final files list them as Pending.")
