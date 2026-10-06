@@ -17,8 +17,14 @@ def agent_names() -> list[str]:
 
 
 def new_item(label: str, workflow: str, option: str, skip: frozenset = frozenset()) -> dict:
+    from . import custom
     row = C.opt_row(workflow, option)
-    return dict(label=label, workflow=workflow, option=option, est=int(row["est_min"]),
+    S = st.session_state
+    extra = {}
+    if workflow == "audit" and custom.uploaded(option):
+        extra = dict(custom=option, engine="ollama" if S.get("adv_engine") == "Ollama agents" else "rules",
+                     model=S.get("adv_model") or "qwen3.5:9b", url=S.get("adv_url") or "http://localhost:11434")
+    return dict(**extra, label=label, workflow=workflow, option=option, est=int(row["est_min"]),
                 result=int(row["result_findings"]), status="Queued", started="", ticks=0,
                 agents=[dict(name=n, status="Skipped" if n in skip else "Waiting", pct=0, secs=0) for n in agent_names()])
 
@@ -82,6 +88,9 @@ def tick() -> bool:
     S.last_tick = now
 
     item = next((i for i in sim["queue"] if i["status"] == "Running"), None)
+    if item is not None and item.get("custom"):
+        from . import custom
+        return custom.tick_item(sim, item)
     if item is None:
         item = next((i for i in sim["queue"] if i["status"] == "Queued"), None)
         if item is None:
@@ -113,7 +122,8 @@ def _finish_item(sim: dict, item: dict) -> bool:
     S = st.session_state
     item["status"] = "Done"
     item["findings"] = item["result"]
-    secs = int(item["ticks"] * item["est"] * 60 / (len(item["agents"]) * TICKS_PER_AGENT))
+    secs = item["elapsed"] if "elapsed" in item else int(
+        item["ticks"] * item["est"] * 60 / (len(item["agents"]) * TICKS_PER_AGENT))
     S.recent_extra.insert(0, dict(Run=item["label"], Data=item["option"], Started=item["started"],
                                   Duration=f"{secs // 60}m {secs % 60:02d}s", Findings=item["result"],
                                   Status="Done" if item["result"] else "Done (clean)"))
@@ -132,6 +142,17 @@ def retry(item: dict | None = None) -> None:
     sim = S.sim
     if not sim:
         return
+    for it in sim["queue"]:
+        if it["status"] == "Failed" and it.get("custom"):
+            from . import custom
+            custom.retry_job(it)
+            it["status"] = "Running"
+            for a in it["agents"]:
+                if a["status"] == "Failed":
+                    a.update(status="Waiting", pct=0)
+            sim["running"], sim["stop"] = True, False
+            log("Orchestrator", "Rerunning the failed agent")
+            return
     S.fail_pending = False
     for it in sim["queue"]:
         if it["status"] == "Failed":

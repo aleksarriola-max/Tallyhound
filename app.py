@@ -4,7 +4,7 @@ import streamlit as st
 st.set_page_config(layout="wide", page_title="Tallyhound", page_icon=None)
 
 from tallyhound import common as C  # noqa: E402
-from tallyhound import pages, run_analysis, sim, store  # noqa: E402
+from tallyhound import custom, pages, run_analysis, sim, store  # noqa: E402
 
 C.init_state()
 C.inject_css()
@@ -26,6 +26,12 @@ with st.sidebar:
     st.markdown("### TALLYHOUND")
     st.radio("Navigation", C.NAV, key="nav", label_visibility="collapsed")
     st.fragment(run_every=1 if running else None)(ticker)()
+    if st.session_state.get("custom"):
+        labels = ["Sample company", *st.session_state.custom]
+        cur = st.session_state.get("dataset")
+        st.selectbox("Data in review", labels, index=labels.index(cur) if cur in labels else 0, key="ds_pick",
+                     on_change=lambda: custom.activate(None if st.session_state.ds_pick == "Sample company"
+                                                       else st.session_state.ds_pick))
     st.caption("Your decisions are saved automatically, so a reload keeps them.")
     st.button("Reset demo", key="reset_demo", on_click=store.reset, type="tertiary")
     st.markdown(

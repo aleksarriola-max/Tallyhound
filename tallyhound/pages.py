@@ -21,6 +21,7 @@ def sev_counts(df: pd.DataFrame) -> dict:
 
 # --------------------------------------------------------------------------
 def overview() -> None:
+    C.sample_only_notice()
     f = C.findings()
     gt = C.gate_totals(C.gate(GATE_FILE))
     rec, subs = C.recovery(), C.subscriptions()
@@ -120,6 +121,7 @@ def style_gate(df: pd.DataFrame):
 
 
 def payment_gate() -> None:
+    C.sample_only_notice()
     S = st.session_state
     runs = {"Payment run 2026-10-01": GATE_FILE, "Payment run 2026-10-08": "payment_run_2026-10-08.csv"}
     run = st.segmented_control("Run", list(runs), default="Payment run 2026-10-01", key="gate_run",
@@ -163,6 +165,7 @@ def payment_gate() -> None:
 
 # --------------------------------------------------------------------------
 def recovery_page() -> None:
+    C.sample_only_notice()
     rec = C.recovery()
     m = st.columns(4)
     for col, (k, v) in zip(m, [("Invoices", 12), ("Item lines", 27), ("Suppliers", 4), ("Credit notes", 3)]):
@@ -177,6 +180,7 @@ def recovery_page() -> None:
 
 
 def subscriptions_page() -> None:
+    C.sample_only_notice()
     s = C.subscriptions()
     m = st.columns(4)
     m[0].metric("Tools", len(s))
@@ -227,7 +231,7 @@ def evidence_viewer() -> None:
     labels = {r.id: f"{r.id} · {r.area} · {r.title[:60]}" for r in f.itertuples()}
     fid = st.selectbox("Finding", list(labels), format_func=labels.get)
     r = f[f.id == fid].iloc[0]
-    lines = C.read_source(r.source_file)
+    lines = C.source_lines(r.source_file)
     main_ok = lines[r.line_number - 1] == r.evidence if 0 < r.line_number <= len(lines) else False
     if not main_ok:  # defensive: never show an unverified claim
         st.error("Quote not found in the source file. This claim is hidden.")

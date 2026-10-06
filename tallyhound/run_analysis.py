@@ -114,7 +114,8 @@ def step1() -> None:
 
         with st.expander("Add new data", expanded=False):
             up = st.file_uploader("Zip file", type="zip", label_visibility="collapsed", disabled=running)
-            st.caption("The app detects which workflow the files belong to and adds them to that card's picker.")
+            st.caption("Upload a zip with any of: payments.csv, approvals.csv, vendors.csv, contracts.txt, expenses.csv. "
+                       "The columns must match the sample files in data/source/. The zip is read in memory and never written to disk.")
             if up is not None:
                 add_zip(up)
         with st.expander("Advanced", expanded=False):
@@ -123,6 +124,7 @@ def step1() -> None:
                 c[i % 3].checkbox(name, value=True, key=f"adv_{name}", disabled=running)
             c[2].checkbox("Skeptic review (always on, locked)", value=True, disabled=True)
             st.toggle("Start fresh (archive previous results)", key="adv_fresh", disabled=running)
+            engine_settings(running)
 
     with right:
         queue_panel(sel, running)
@@ -131,24 +133,46 @@ def step1() -> None:
     recent_runs()
 
 
-def add_zip(up) -> None:
+def engine_settings(running: bool) -> None:
+    """How uploaded files are analysed. The sample company always uses the simulated run."""
+    from . import llm
     S = st.session_state
-    try:
-        names = zipfile.ZipFile(up).namelist()
-    except zipfile.BadZipFile:
-        st.error("That file is not a valid zip.")
+    st.markdown("**Engine for uploaded files**")
+    st.selectbox("Engine", ["Built-in rules", "Ollama agents"], key="adv_engine", disabled=running,
+                 label_visibility="collapsed")
+    st.caption("Built-in rules are fixed tests: fast and repeatable. Ollama agents use a model on this computer "
+               "to read the files, with a Skeptic that challenges each finding.")
+    if S.get("adv_engine") == "Ollama agents":
+        c1, c2 = st.columns(2)
+        c1.text_input("Model", value=llm.DEFAULT_MODEL, key="adv_model", disabled=running)
+        c2.text_input("Ollama address", value=llm.DEFAULT_URL, key="adv_url", disabled=running)
+        have = llm.models(S.get("adv_url") or llm.DEFAULT_URL)
+        if not have:
+            st.warning("Ollama is not reachable from here. The hosted demo cannot see your computer; run the app "
+                       "locally (streamlit run app.py) with Ollama running.")
+        elif (S.get("adv_model") or llm.DEFAULT_MODEL) not in have:
+            st.warning("That model is not installed. Installed: " + ", ".join(have))
+        else:
+            st.success(f"Ollama is running with {len(have)} model(s).")
+
+
+def add_zip(up) -> None:
+    from . import custom
+    S = st.session_state
+    files, notes = custom.parse_zip(up.getvalue())
+    for n in notes:
+        st.warning(n)
+    if not files:
+        st.error("No usable audit files found. See the file layout above.")
         return
-    low = " ".join(names).lower()
-    rules = [("gate", ("payment_run", "payment run")), ("recovery", ("credit", "supplier")),
-             ("subs", ("subscription", "licen", "software")), ("audit", ("invoice", "payments", "approvals", "expenses"))]
-    wf = next((w for w, keys in rules if any(k in low for k in keys)), None)
-    if wf is None:
-        st.warning("Could not tell which workflow these files belong to.")
-        return
-    label = up.name.rsplit(".", 1)[0]
-    S.extra_opts.setdefault(wf, {})[label] = f"{len(names)} files from {up.name}"
-    nm = C.read_csv("workflow_cards.csv").query("id == @wf").iloc[0]["name"]
-    st.success(f"Detected: {nm}. Added \"{label}\" to that card's picker.")
+    label = up.name.rsplit(".", 1)[0][:40] or "uploaded"
+    if label in C.read_csv("workflow_options.csv").query("workflow == 'audit'")["option"].values:
+        label += " (upload)"
+    if label not in S.get("uploads", {}):
+        custom.add_upload(label, files)
+    st.success(f"Added \"{label}\" to the Monthly audit picker: {len(files)} of 5 files. "
+               "Pick it there and press Run selected.")
+    st.dataframe(pd.DataFrame([dict(file=n, lines=len(v)) for n, v in sorted(files.items())]), hide_index=True, **C.dfw())
 
 
 def queue_panel(selection: dict, running: bool) -> None:

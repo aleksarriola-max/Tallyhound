@@ -1,0 +1,262 @@
+"""Uploaded files: read the zip, run the agents on it, and keep the results apart from the sample company."""
+from __future__ import annotations
+
+import io
+import threading
+import time
+import zipfile
+from datetime import datetime
+
+import pandas as pd
+import streamlit as st
+
+from . import agents, llm, rules
+from . import common as C
+
+MAX_ZIP_MB = 20
+MAX_LINES = 5000
+STEMS = {"payments": "payments.csv", "approvals": "approvals.csv", "vendors": "vendors.csv",
+         "contracts": "contracts.txt", "expenses": "expenses.csv"}
+SEV_ORDER = {"High": 0, "Medium": 1, "Low": 2}
+COLS = ["id", "severity", "area", "clause", "amount", "title", "skeptic_verdict", "evidence", "related_evidence",
+        "source_file", "line_number", "innocent_explanations", "skeptic_reason", "proposed_fix"]
+
+
+# ---------------------------------------------------------------- reading a zip
+def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
+    """Returns (files, notes). Reads in memory only; nothing is written to disk and no path is ever used."""
+    notes: list[str] = []
+    if len(data) > MAX_ZIP_MB * 1024 * 1024:
+        return {}, [f"That zip is larger than {MAX_ZIP_MB} MB."]
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return {}, ["That file is not a valid zip."]
+    files: dict[str, list[str]] = {}
+    total = 0
+    for info in zf.infolist():
+        base = info.filename.replace("\\", "/").rsplit("/", 1)[-1]
+        if info.is_dir() or base.startswith(".") or "__MACOSX" in info.filename:
+            continue
+        stem = base.rsplit(".", 1)[0].lower()
+        match = next((v for k, v in STEMS.items() if stem == k or stem.startswith(k + "_") or stem.endswith("_" + k)), None)
+        if match is None:
+            notes.append(f"Ignored {base} (not one of the five audit files).")
+            continue
+        if info.file_size > MAX_ZIP_MB * 1024 * 1024:
+            notes.append(f"Skipped {base}: too large.")
+            continue
+        text = zf.read(info).decode("utf-8-sig", errors="replace")
+        lines = text.splitlines()
+        total += len(lines)
+        if total > MAX_LINES:
+            notes.append(f"Stopped at {MAX_LINES} lines; {base} and later files were skipped.")
+            break
+        missing = rules.missing_columns(match, lines)
+        if missing:
+            notes.append(f"{match} is missing columns: {', '.join(missing)}. It was skipped.")
+            continue
+        files[match] = lines
+    return files, notes
+
+
+def add_upload(label: str, files: dict[str, list[str]]) -> None:
+    S = st.session_state
+    S.setdefault("uploads", {})[label] = files
+    S.extra_opts.setdefault("audit", {})[label] = f"{len(files)} of 5 files: " + ", ".join(sorted(files))
+
+
+def uploaded(option: str) -> bool:
+    return option in st.session_state.get("uploads", {})
+
+
+# ---------------------------------------------------------------- running
+class Job:
+    """Runs the agents for one uploaded dataset on a background thread. Never touches Streamlit state."""
+
+    def __init__(self, label, files, engine, model, url, policy, skip):
+        self.label, self.files, self.engine, self.model, self.url = label, files, engine, model, url
+        self.policy, self.skip = policy, set(skip)
+        self.agents = {n: dict(status="Skipped" if n in self.skip else "Waiting", pct=0, secs=0, msg="") for n in
+                       ["Orchestrator", *rules.FILES, "Skeptic"]}
+        self.records: list[dict] = []
+        self.thread: threading.Thread | None = None
+        self.t0 = time.time()
+        self.lock = threading.Lock()
+        self.start()
+
+    def start(self) -> None:
+        if self.thread and self.thread.is_alive():
+            return
+        for a in self.agents.values():
+            if a["status"] == "Failed":
+                a.update(status="Waiting", pct=0, msg="")
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    @property
+    def failed(self):
+        return next(((n, a) for n, a in self.agents.items() if a["status"] == "Failed"), None)
+
+    @property
+    def done(self) -> bool:
+        return all(a["status"] in ("Done", "Skipped") for a in self.agents.values())
+
+    def _set(self, name, **kw):
+        with self.lock:
+            self.agents[name].update(kw)
+
+    def _run(self) -> None:
+        for name in self.agents:
+            a = self.agents[name]
+            if a["status"] in ("Done", "Skipped"):
+                continue
+            t = time.time()
+            self._set(name, status="Running", pct=5)
+            try:
+                if name == "Orchestrator":
+                    pass
+                elif name == "Skeptic":
+                    self._skeptic(t)
+                else:
+                    self._area(name, t)
+            except llm.LLMError as e:
+                self._set(name, status="Failed", msg=str(e), secs=int(time.time() - t))
+                return
+            except Exception as e:   # a bug or odd file must show up as a failed agent, not a frozen run
+                self._set(name, status="Failed", msg=f"{type(e).__name__}: {e}", secs=int(time.time() - t))
+                return
+            self._set(name, status="Done", pct=100, secs=int(time.time() - t))
+
+    def _area(self, area: str, t: float) -> None:
+        lines = self.files.get(rules.FILES[area])
+        if not lines:
+            return
+        if self.engine == "rules":
+            for h in rules.run_area(area, self.files):
+                self.records.append(dict(
+                    area=h.area, clause=h.clause, severity=h.severity, amount=h.amount, title=h.title,
+                    source_file=h.source_file, line_number=h.line_number, related_lines=[ln for _, ln in h.related],
+                    innocent=rules.INNOCENT.get(h.clause, ""), fix=rules.FIXES.get(h.clause, ""),
+                    verdict="Confirmed",
+                    reason=f"Fixed rule check, no AI. Clause {h.clause}: {self.policy.get(h.clause + '|' + h.area, '')}"))
+            return
+        raw = agents.propose(area, lines, self.policy, self.model, self.url)
+        for f in raw:
+            v = agents.verified(f, lines, area)
+            if v:
+                self.records.append(v)
+
+    def _skeptic(self, t: float) -> None:
+        todo = [r for r in self.records if "verdict" not in r]
+        for i, r in enumerate(todo, start=1):
+            r["verdict"], r["reason"] = agents.skeptic(r, self.policy.get(f"{r['clause']}|{r['area']}", ""), self.model, self.url)
+            self._set("Skeptic", pct=5 + int(90 * i / max(len(todo), 1)), secs=int(time.time() - t))
+
+
+JOBS: dict[str, Job] = {}
+
+
+def tick_item(sim: dict, item: dict) -> bool:
+    """Called once a second for a running uploaded-data item. Returns True when the page must rerun."""
+    S = st.session_state
+    key = f"{S.get('sid', '')}|{item['label']}"
+    job = JOBS.get(key)
+    if job is None:
+        job = JOBS[key] = Job(item["custom"], S.uploads[item["custom"]], item.get("engine", "rules"),
+                              item.get("model", llm.DEFAULT_MODEL), item.get("url", llm.DEFAULT_URL), C.policy(),
+                              [a["name"] for a in item["agents"] if a["status"] == "Skipped"])
+        sim_log(sim, "Orchestrator", f"Reading {len(job.files)} uploaded file(s) with "
+                + ("the built-in rules" if job.engine == "rules" else f"Ollama ({job.model})"))
+        return True
+    for a in item["agents"]:
+        j = job.agents.get(a["name"])
+        if j and a["status"] != "Skipped":
+            a["status"], a["pct"] = j["status"], j["pct"]
+            a["secs"] = j["secs"] if j["status"] != "Running" else int(time.time() - job.t0) - sum(
+                x["secs"] for n, x in job.agents.items() if n != a["name"] and x["status"] == "Done")
+            a["secs"] = max(a["secs"], 0)
+    bad = job.failed
+    if bad:
+        item["status"], sim["running"] = "Failed", False
+        sim_log(sim, bad[0], f"Failed: {bad[1]['msg']}")
+        return True
+    if job.done:
+        item["elapsed"] = int(time.time() - job.t0)
+        finalize(item["custom"], job)
+        item["result"] = len(S.custom[item["custom"]])
+        JOBS.pop(key, None)
+        from . import sim as simmod
+        return simmod._finish_item(sim, item)
+    return False
+
+
+def sim_log(sim: dict, agent: str, msg: str) -> None:
+    sim["log"].append(dict(time=datetime.now().strftime("%H:%M:%S"), agent=agent, message=msg))
+
+
+def retry_job(item: dict) -> None:
+    job = JOBS.get(f"{st.session_state.get('sid', '')}|{item['label']}")
+    if job:
+        job.start()
+
+
+def finalize(label: str, job: Job) -> None:
+    """Number the findings, store them, and make this dataset the one being reviewed."""
+    S = st.session_state
+    seen, recs = set(), []
+    for r in sorted(job.records, key=lambda r: (list(rules.FILES).index(r["area"]), SEV_ORDER[r["severity"]], r["line_number"])):
+        k = (r["source_file"], r["line_number"], r["clause"])
+        if k not in seen:
+            seen.add(k)
+            recs.append(r)
+    for i, r in enumerate(recs, start=1):
+        r["id"] = f"F-{i:02d}"
+    S.setdefault("custom", {})[label] = recs
+    S.setdefault("by_dataset", {})[label] = dict(decisions={}, audit_log=[], cleared={})
+    activate(label, force_load=True)
+
+
+# ---------------------------------------------------------------- which data is in review
+def activate(label: str | None, force_load: bool = False) -> None:
+    """Switch the dataset in review. Each dataset keeps its own decisions."""
+    S = st.session_state
+    cur = S.get("dataset")
+    if cur == label and not force_load:
+        return
+    store = S.setdefault("by_dataset", {})
+    if cur != label:
+        store[cur or "__sample__"] = dict(decisions=S.decisions, audit_log=S.audit_log, cleared=S.cleared)
+    pick = store.get(label or "__sample__", dict(decisions={}, audit_log=[], cleared={}))
+    S.decisions, S.audit_log, S.cleared = pick["decisions"], pick["audit_log"], pick["cleared"]
+    S.dataset = label
+
+
+def active_label() -> str | None:
+    S = st.session_state
+    d = S.get("dataset")
+    return d if d and d in S.get("custom", {}) else None
+
+
+def source_lines(name: str) -> list[str]:
+    d = active_label()
+    return st.session_state.uploads[d].get(name, []) if d else C.read_source(name)
+
+
+def frame(label: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Findings for an uploaded dataset as (verified, hidden), same shape as the sample findings."""
+    S = st.session_state
+    files = S.uploads[label]
+    rows = []
+    for r in S.custom[label]:
+        lines = files.get(r["source_file"], [])
+        ok = 1 <= r["line_number"] <= len(lines)
+        rows.append(dict(
+            id=r["id"], severity=r["severity"], area=r["area"], clause=r["clause"], amount=float(r["amount"]),
+            title=r["title"], skeptic_verdict=r.get("verdict", "Not checked"),
+            evidence=lines[r["line_number"] - 1] if ok else "",
+            related_evidence=" || ".join(lines[n - 1] for n in r.get("related_lines", []) if 1 <= n <= len(lines)),
+            source_file=r["source_file"], line_number=r["line_number"], innocent_explanations=r.get("innocent", ""),
+            skeptic_reason=r.get("reason", ""), proposed_fix=r.get("fix", "")))
+    df = pd.DataFrame(rows, columns=COLS)
+    return C.check_findings(df, lambda n: files.get(n, []))

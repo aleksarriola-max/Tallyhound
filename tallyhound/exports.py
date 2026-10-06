@@ -54,8 +54,9 @@ def build_workbook(draft: bool = False) -> bytes:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     summary = pd.DataFrame([
         ["Status", "DRAFT - not reviewed" if draft else "Reviewed by a person"],
-        ["Company", "Bramblecourt Instruments Ltd (fictional)"],
-        ["Notice", "FICTIONAL TEST DATA - not a real company"],
+        ["Company", f"Uploaded files: {C.custom_label()}" if C.custom_label() else "Bramblecourt Instruments Ltd (fictional)"],
+        ["Notice", "Findings proposed by agents or rules and decided by a person" if C.custom_label()
+         else "FICTIONAL TEST DATA - not a real company"],
         ["Generated", now],
         ["Findings", len(f)],
         ["Approved", "-" if draft else dc["approved"]],
@@ -68,9 +69,10 @@ def build_workbook(draft: bool = False) -> bytes:
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
         summary.to_excel(xw, sheet_name="Summary", index=False)
         f.to_excel(xw, sheet_name="Monthly audit", index=False)
-        gate_frame().to_excel(xw, sheet_name="Payment gate", index=False)
-        C.recovery().to_excel(xw, sheet_name="Supplier recovery", index=False)
-        C.subscriptions().to_excel(xw, sheet_name="Subscriptions", index=False)
+        if not C.custom_label():
+            gate_frame().to_excel(xw, sheet_name="Payment gate", index=False)
+            C.recovery().to_excel(xw, sheet_name="Supplier recovery", index=False)
+            C.subscriptions().to_excel(xw, sheet_name="Subscriptions", index=False)
         trail.to_excel(xw, sheet_name="Audit trail", index=False)
         for ws in xw.book.worksheets:
             _style(ws)
@@ -86,19 +88,20 @@ def build_memo() -> bytes:
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm,
                             title="Tallyhound audit memo")
     story = [
-        Paragraph("FICTIONAL TEST DATA - not a real company", ParagraphStyle("b", parent=ss["Normal"], textColor=colors.HexColor("#0a3a4f"), fontSize=9)),
+        Paragraph(f"Uploaded files: {C.custom_label()}" if C.custom_label() else "FICTIONAL TEST DATA - not a real company", ParagraphStyle("b", parent=ss["Normal"], textColor=colors.HexColor("#0a3a4f"), fontSize=9)),
         Spacer(1, 4),
         Paragraph("Tallyhound audit memo", ss["Title"]),
-        Paragraph("Bramblecourt Instruments Ltd (fictional) - " + datetime.now().strftime("%Y-%m-%d"), ss["Normal"]),
+        Paragraph(("Uploaded data - " if C.custom_label() else "Bramblecourt Instruments Ltd (fictional) - ") + datetime.now().strftime("%Y-%m-%d"), ss["Normal"]),
         Spacer(1, 8),
         Paragraph(f"Findings reviewed: {len(f)}. Approved: {dc['approved']} ({C.money(dc['value'])}). "
                   f"Rejected: {dc['rejected']}. Pending: {dc['pending']}. "
                   "Agents only proposed these findings; every decision recorded here was made by a person.", ss["Normal"]),
         Spacer(1, 8),
     ]
-    gt = C.gate_totals(C.gate("payment_run_2026-10-01.csv"))
-    story += [Paragraph(f"Payment gate (run 2026-10-01): {gt['hold_n']} lines on HOLD ({C.money(gt['hold_amt'])}), "
-                        f"{gt['rel_n']} lines to RELEASE ({C.money(gt['rel_amt'])}).", ss["Normal"]), Spacer(1, 8)]
+    if not C.custom_label():
+        gt = C.gate_totals(C.gate("payment_run_2026-10-01.csv"))
+        story += [Paragraph(f"Payment gate (run 2026-10-01): {gt['hold_n']} lines on HOLD ({C.money(gt['hold_amt'])}), "
+                            f"{gt['rel_n']} lines to RELEASE ({C.money(gt['rel_amt'])}).", ss["Normal"]), Spacer(1, 8)]
     for label in ("Approved", "Rejected", "Pending"):
         part = f[f.decision == label]
         story.append(Paragraph(f"{label} ({len(part)})", ss["Heading3"]))

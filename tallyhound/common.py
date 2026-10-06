@@ -68,17 +68,17 @@ def clause_text(area: str, clause: str) -> str:
     return policy().get(f"{clause}|{area}", "")
 
 
-@st.cache_data
-def load_findings_checked() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (verified findings, hidden findings). Quotes are checked against the real files."""
-    df = read_csv("findings.csv").copy()
+def check_findings(df: pd.DataFrame, getter) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split findings into (verified, hidden). A finding is verified only when its quote is an exact line of its
+    source file at the stated line number, and every related quote is an exact line too."""
+    df = df.copy()
     df["amount"] = df["amount"].astype(float)
     df["line_number"] = df["line_number"].astype(int)
     keep, matched_lines, matched_n = [], [], []
     for r in df.itertuples():
-        lines = read_source(r.source_file)
+        lines = getter(r.source_file)
         main = [i + 1 for i, ln in enumerate(lines) if ln == r.evidence]
-        rel_txt = [x for x in r.related_evidence.split(" || ") if x]
+        rel_txt = [x for x in str(r.related_evidence).split(" || ") if x]
         rel = [i + 1 for t in rel_txt for i, ln in enumerate(lines) if ln == t]
         ok = r.line_number in main and len(rel) == len(rel_txt)
         keep.append(ok)
@@ -88,12 +88,43 @@ def load_findings_checked() -> tuple[pd.DataFrame, pd.DataFrame]:
     return df[df.verified].reset_index(drop=True), df[~df.verified].reset_index(drop=True)
 
 
+@st.cache_data
+def load_findings_checked() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Sample findings, with every quote checked against the real files."""
+    return check_findings(read_csv("findings.csv"), read_source)
+
+
+def findings_checked() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(verified, hidden) for whichever data is in review: the sample company or an uploaded dataset."""
+    from . import custom
+    label = custom.active_label()
+    return custom.frame(label) if label else load_findings_checked()
+
+
+def source_lines(name: str) -> list[str]:
+    from . import custom
+    return custom.source_lines(name)
+
+
 def findings() -> pd.DataFrame:
-    return load_findings_checked()[0]
+    return findings_checked()[0]
+
+
+def custom_label() -> str | None:
+    """Name of the uploaded dataset in review, or None for the sample company."""
+    from . import custom
+    return custom.active_label()
+
+
+def sample_only_notice() -> None:
+    d = custom_label()
+    if d:
+        st.info(f"This page shows the sample company. Your uploaded files (\"{d}\") drive Findings, Review and the "
+                "downloads; payment runs, recovery and subscriptions are not analysed from uploads yet.")
 
 
 def quote_pct() -> int:
-    ok, bad = load_findings_checked()
+    ok, bad = findings_checked()
     total = len(ok) + len(bad)
     return round(100 * len(ok) / total) if total else 100
 
@@ -128,6 +159,8 @@ def opt_row(workflow: str, option: str) -> pd.Series:
         return hit.iloc[0]
     base = df[df.workflow == workflow].iloc[0].copy()
     extra = st.session_state.get("extra_opts", {}).get(workflow, {}).get(option, "uploaded files")
+    base["est_min"] = 1
+    base["result_findings"] = 0
     base["option"], base["preview_title"] = option, f"Preview · {option}"
     base["preview"], base["file"], base["last_run"] = extra, "", "Never run"
     return base
@@ -248,6 +281,8 @@ CSS = f"""
 section[data-testid="stSidebar"] {{ background:{TEAL_DARK}; }}
 section[data-testid="stSidebar"] * {{ color:{PAPER}; }}
 section[data-testid="stSidebar"] hr {{ border-color: rgba(179,224,247,.3); }}
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] *, section[data-testid="stSidebar"] [data-baseweb="select"] * {{
+  color:{INK} !important; -webkit-text-fill-color:{INK} !important; }}
 .th-guard {{ border:1px solid rgba(179,224,247,.4); border-radius:6px; padding:.6rem .7rem; font-size:.82rem; margin-top:1.5rem; }}
 .th-guard b {{ letter-spacing:.06em; }}
 [class*="st-key-step_btn_"] button {{ padding:.35rem .4rem; }}
@@ -281,9 +316,12 @@ def chip(text: str, color: str) -> str:
 
 
 def banner_and_header(last_run: str = "14:32") -> None:
-    st.markdown('<div class="th-banner">FICTIONAL TEST DATA - not a real company</div>', unsafe_allow_html=True)
+    mine = custom_label()
+    st.markdown('<div class="th-banner">' + ("YOUR UPLOADED FILES - agents propose, a person decides" if mine
+                                             else "FICTIONAL TEST DATA - not a real company") + "</div>", unsafe_allow_html=True)
     st.markdown('<div class="th-header"><span class="th-title">TALLYHOUND</span>'
-                '<span class="th-co">Bramblecourt Instruments Ltd (fictional)</span></div>', unsafe_allow_html=True)
+                f'<span class="th-co">{html.escape(mine) if mine else "Bramblecourt Instruments Ltd (fictional)"}</span></div>',
+                unsafe_allow_html=True)
     items = ["Model loaded", "Offline", "Sandbox on", f"Last run {last_run}"]
     st.markdown('<div class="th-strip">' + "".join(f'<span><span class="th-dot"></span>{i}</span>' for i in items) + "</div>",
                 unsafe_allow_html=True)

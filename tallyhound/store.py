@@ -15,7 +15,8 @@ from pathlib import Path
 
 import streamlit as st
 
-KEYS = ["decisions", "audit_log", "cleared", "step", "fail_pending", "recent_extra", "tour_downloaded", "tour_off"]
+KEYS = ["decisions", "audit_log", "cleared", "step", "fail_pending", "recent_extra", "tour_downloaded", "tour_off",
+        "uploads", "custom", "by_dataset", "dataset", "extra_opts"]
 MAX_AGE_DAYS = 14
 _SID = re.compile(r"^[0-9a-f]{12}$")
 
