@@ -1,4 +1,4 @@
-"""Run analysis steps 3 (Review) and 4 (Download)."""
+"""Review decisions (approve, reject, undo, bulk approve, suppressions) and the Download tab."""
 from __future__ import annotations
 
 import streamlit as st
@@ -181,7 +181,7 @@ def step3() -> None:
         if not in_shadow.empty:
             with st.expander(f"Shadow rules: {len(in_shadow)} finding(s) these rules would have raised"):
                 st.caption("Shadow rules run without adding to the queue. Mark a few: once enough are real problems, "
-                           "the rule can be promoted on the Policy page.")
+                           "the rule can be promoted under Settings > Rules.")
                 for r in in_shadow.itertuples():
                     k = f"{r.clause}|{S.get('dataset') or 'sample'}|{r.source_file}:{r.line_number}"
                     c1, c2, c3 = st.columns([6, 1.3, 1.3], vertical_alignment="center")

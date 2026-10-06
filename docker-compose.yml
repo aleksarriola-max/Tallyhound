@@ -8,6 +8,9 @@ services:
       - "127.0.0.1:8501:8501"
     environment:
       OLLAMA_HOST: http://ollama:11434
+      # Seals the audit trail. Set it in a .env file next to this one (TALLYHOUND_TRAIL_KEY=<long random text>) and
+      # keep a copy: if it is lost, every saved trail shows as broken. Left empty, a key is kept in the data volume.
+      TALLYHOUND_TRAIL_KEY: ${TALLYHOUND_TRAIL_KEY:-}
     volumes:
       - tallyhound-data:/data
     depends_on:

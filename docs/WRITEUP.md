@@ -8,7 +8,7 @@ Every check in Tallyhound, whether a fixed rule or an AI agent, can only propose
 
 ## The quote check
 
-The most important line of code is the least glamorous. A finding must quote its evidence, and it is shown only if that quote is an exact copy of the line at the stated position in the uploaded file. A model that hallucinates a line, or quotes the right line at the wrong position, has its finding dropped before anyone sees it. Column matching renames only the header, and invoice PDFs are turned into one text file with fixed line numbers, so the check keeps working on real-world inputs. The Guardrails page lets anyone edit a quote and watch it get blocked.
+The most important line of code is the least glamorous. A finding must quote its evidence, and it is shown only if that quote is an exact copy of the line at the stated position in the uploaded file. A model that hallucinates a line, or quotes the right line at the wrong position, has its finding dropped before anyone sees it. Column matching renames only the header, and invoice PDFs are turned into one text file with fixed line numbers, so the check keeps working on real-world inputs. The Guardrails tab lets anyone edit a quote and watch it get blocked.
 
 ## The Skeptic
 
@@ -20,7 +20,7 @@ Claims about AI accuracy are cheap, so Tallyhound ships with a way to check them
 
 Finding problems is only half the job; not raising false alarms is the other half, and it is where audit tools usually fail. So every challenge month also plants traps: legitimate things that look suspicious, such as a batch bank transfer, rent paid without a purchase order, an early-payment discount, an invoice paid in instalments, a voided and re-issued payment, day-first dates, or a supplier spelt two ways. When the traps were first added, the built-in rules flagged almost all of them, about 30 false alarms a month. After the fixes they flag none of 1,320 across 60 months, and the test suite fails the build if that ever changes. Real false alarms that reviewers reject can be saved, anonymised, as permanent regression tests.
 
-The honest result so far is that the fixed rules are very strong on problems shaped like their checks: 100% on medium challenges with no false alarms, and 25 of 26 on the sample company. Hard mode words three problems so that no fixed rule can see them, such as a "yoga classes for myself" expense or a tax ID written without its dash. That is the fair test of whether the AI adds value, and it has to be run on the machine with the model. The point of the Scorecard is that the answer comes from measurement, not from a demo.
+The honest result so far is that the fixed rules are very strong on problems shaped like their checks: 100% on medium challenges with no false alarms, and 25 of 26 on the sample company. Hard mode rewords three problems: a "yoga classes for myself" expense, a tax ID written without its dash, and a surcharge under another name. The rules were improved until they caught the first two; they still miss the reworded surcharge, so they find 96% in hard mode. Those reworded problems are the fair test of whether the AI adds value, and it has to be run on the machine with the model. The point of the Scorecard is that the answer comes from measurement, not from a demo.
 
 ## Built to be used
 

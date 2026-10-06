@@ -28,7 +28,7 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
     for r in (V or {}).values():
         names.setdefault(rules.norm_name(r["name"]), []).append(r)
     A = {r["doc_no"].strip().lower(): r for _, r in rules.rows(files.get("approvals.csv", []))
-         if r["type"].strip().upper() in ("", "INVOICE")} if files.get("approvals.csv") else None
+         if r["type"].strip().upper() in rules.INVOICE_TYPES} if files.get("approvals.csv") else None
     P = {r["invoice_no"].strip().lower() for _, r in rules.rows(files.get("payments.csv", []))
          if r["invoice_no"].strip()} if files.get("payments.csv") else None
     skipped = sorted({n for n, ok in (("vendors.csv", V is not None), ("approvals.csv", A is not None),

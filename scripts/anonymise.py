@@ -2,17 +2,21 @@
 
     python scripts/anonymise.py FOLDER_OR_ZIP_OR_CASE.json --out anonymised/
 
-Names of people and companies, tax IDs, bank account digits, email addresses and free-text notes are replaced
-consistently (the same name always becomes the same fake name, so duplicates still look like duplicates).
-Amounts, dates and the structure of every line are kept, so the checks behave exactly the same.
-Check the output by eye before sharing it.
+Replaced, consistently within one run (the same real value always becomes the same fake, so duplicates still look
+like duplicates): names of people and companies, tax IDs, bank account digits and IBANs, receipt refs, email
+addresses, phone, SSN and NI numbers, postcodes and street addresses, and person-like names in free text (notes,
+bank descriptions, references, the reviewer's reason). Each run uses a fresh random key that is never saved, so a
+fake cannot be turned back into the real value. Amounts, dates and the structure of every line are kept, so the
+checks behave the same. It cannot know every name a free-text note might mention: check the output by eye.
 """
 import argparse
 import csv
 import hashlib
+import hmac
 import io
 import json
 import re
+import secrets
 import sys
 import zipfile
 from pathlib import Path
@@ -29,8 +33,27 @@ KEEP = re.compile(r"\b(rent|property|power|light|water|utility|utilities|insuran
                   r"remit to \w+)\b", re.I)
 
 
+KEY = secrets.token_bytes(32)          # fresh for every run and never written anywhere
+TEXT_COLS = {"notes", "description", "reference", "memo", "comment", "comments", "narrative", "details", "reason"}
+SIGNAL = {w.lower() for w in """bank charges fees transfer savings payroll salary wages card settlement amex visa mastercard
+loan interest tax team dinner client lunch business purpose recorded airport taxi hotel conference trip travel batch
+bacs bulk example street personal gym membership society institute association professional certificate chamber own account
+invoice payment credit note refund reversal void reissue site visit meeting training remit""".split()}
+# space-separated digit groups, or + and a country code: "020 7946 0958", "+44-20-7946-0958" - never a date
+PHONE = re.compile(r"(?<![\w.,+-])(?:\+\d{1,3}[ -]?\(?\d{1,5}\)?(?:[ -]\d{2,5}){1,4}|\(?\d{2,5}\)?(?: \d{2,5}){2,4})(?![\w.,-])")
+SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+NINO = re.compile(r"\b[A-CEGHJ-PR-TW-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b")
+IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,3})?\b")
+ACCOUNT = re.compile(r"((?:acc(?:oun)?t|acct|acc|a/c)\b\.?\s*(?:no\.?|number|#)?\s*[:#]?\s*[*xX\s-]*)(\d[\d -]{2,}\d)", re.I)
+POSTCODE = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}\b|\b\d{5}(?:-\d{4})\b")
+STREET = re.compile(r"\b\d{1,5}\s+(?:[A-Z][a-z]+\s+){1,3}(?:Street|St|Road|Rd|Avenue|Ave|Lane|Ln|Drive|Dr|Way|Close|"
+                    r"Place|Court|Boulevard|Blvd)\b\.?")
+PERSON = re.compile(r"\b(?:[A-Z]\.\s?[A-Z][a-z]{2,}|[A-Z][a-z]+\s[A-Z][a-z]{2,}(?:\s[A-Z][a-z]{2,})?)\b")
+_ids: dict[str, str] = {}
+
+
 def _h(s: str, n: int = 8) -> int:
-    return int(hashlib.sha256(s.strip().lower().encode()).hexdigest()[:n], 16)
+    return int(hmac.new(KEY, s.strip().lower().encode(), hashlib.sha256).hexdigest()[:n], 16)
 
 
 def fake_base(base: str) -> str:
@@ -59,18 +82,47 @@ def build_names(files: dict[str, list[str]]) -> dict[str, str]:
 
 
 def replace_names(text: str, mapping: dict[str, str]) -> str:
+    text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "someone@example.com", text)    # before names, which are inside emails
     for real, fake in mapping.items():
         text = re.sub(re.escape(real), lambda m, fake=fake: fake.upper() if m.group(0).isupper() else fake, text, flags=re.I)
-    text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "someone@example.com", text)
+    return text
+
+
+def scrub(text: str, free: bool = False) -> str:
+    """Identifiers anywhere in text; with free=True also addresses and person-like names (for notes and reasons)."""
+    text = IBAN.sub(lambda m: fake_id(m.group(0)), text)
+    text = ACCOUNT.sub(lambda m: m.group(1) + fake_id(m.group(2)), text)
+    text = SSN.sub(lambda m: fake_id(m.group(0)), text)
+    text = NINO.sub("AB 12 34 56 C", text)
+    if free:
+        text = PHONE.sub(lambda m: fake_id(m.group(0)), text)
+        text = STREET.sub("1 Example Street", text)
+        text = POSTCODE.sub("AB1 2CD", text)
+
+        def person(m):
+            words = re.findall(r"[A-Za-z]+", m.group(0))
+            if any(w.lower() in SIGNAL for w in words) or m.group(0).isupper():
+                return m.group(0)
+            h = _h(m.group(0))
+            return f"{FIRST[h % 12]} {LAST[(h // 12) % 12]}"
+        text = PERSON.sub(person, text)
     return text
 
 
 def fake_id(s: str) -> str:
-    """Replace digits based on the digits alone, so '****1234' and '1234', or '77-123' and '77123', stay equal."""
+    """Replace digits based on the digits alone, so '****1234' and '1234', or '77-123' and '77123', stay equal. Two
+    different real values never get the same fake (that could turn "bank differs" into "bank matches")."""
     real = "".join(re.findall(r"\d", s))
     if not real:
         return s
-    fake = iter((str(_h(real, 15)) * 3)[:len(real)])
+    if real not in _ids:
+        taken = set(_ids.values())
+        for salt in range(1000):
+            cand = (str(_h(f"{real}|{salt}", 15)) * 3)[:len(real)]
+            if cand not in taken:
+                break
+        _ids[real] = cand
+    fake = iter(_ids[real])
     return re.sub(r"\d", lambda m: next(fake), s)
 
 
@@ -83,14 +135,14 @@ def anonymise(files: dict[str, list[str]]) -> dict[str, list[str]]:
             new = [lines[0]]
             for ln in lines[1:]:
                 vals = next(csv.reader([ln])) if ln.strip() else []
-                vals = [fake_id(v) if h in ID_COLS else replace_names(v, mapping) for h, v in zip(head, vals)]
+                vals = [fake_id(v) if h in ID_COLS else scrub(replace_names(v, mapping), free=h.strip().lower() in TEXT_COLS)
+                        for h, v in zip(head, vals)]
                 buf = io.StringIO()
                 csv.writer(buf, lineterminator="").writerow(vals)
                 new.append(buf.getvalue())
             out[n] = new
         else:
-            out[n] = [re.sub(r"(account[^\d]*)(\d{4,})", lambda m: m.group(1) + fake_id(m.group(2)),
-                             replace_names(ln, mapping), flags=re.I) for ln in lines]
+            out[n] = [scrub(replace_names(ln, mapping)) for ln in lines]
     return out
 
 
@@ -98,7 +150,9 @@ def files_of(path: Path) -> dict[str, list[str]]:
     from tallyhound import custom
     if path.suffix == ".json":
         return json.loads(path.read_text(encoding="utf-8"))["files"]
-    if path.suffix == ".zip":
+    if path.is_file():
+        if not zipfile.is_zipfile(path):
+            sys.exit(f"{path} is not a folder, a zip or a saved case (.json).")
         return custom.parse_zip(path.read_bytes())[0]
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
@@ -119,7 +173,9 @@ def main() -> None:
     if src.suffix == ".json":
         case = json.loads(src.read_text(encoding="utf-8"))
         case["files"] = files
-        case["description"] = re.sub(r"\(.*\)$", "", case.get("description", "")).strip()
+        mapping = build_names(files_of(src))
+        desc = re.sub(r"\(.*\)$", "", case.get("description", "")).strip()
+        case["description"] = scrub(replace_names(desc, mapping), free=True)
         (out / src.name).write_text(json.dumps(case, indent=1), encoding="utf-8")
     else:
         for n, v in files.items():

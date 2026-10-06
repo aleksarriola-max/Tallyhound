@@ -4,7 +4,7 @@ Suppressions: when a reviewer rejects a finding they can say "don't flag this ag
 Later runs still find it, but it is set aside under "Suppressed" instead of landing in the review queue - nothing is
 deleted, and the suppression list is visible and reversible.
 
-Limit hints: when reviewers keep rejecting findings that are only just over a policy limit, the Policy page
+Limit hints: when reviewers keep rejecting findings that are only just over a policy limit, Settings > Rules
 suggests a new limit. A person decides whether to apply it.
 """
 from __future__ import annotations

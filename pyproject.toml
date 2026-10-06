@@ -8,8 +8,9 @@ version = "0.5.0"
 description = "Finance audit console: AI agents and rules propose findings, a person decides."
 readme = "README.md"
 license = { file = "LICENSE" }
+authors = [{ name = "Aleks Arriola" }]
 requires-python = ">=3.10"
-dependencies = ["streamlit>=1.40", "pandas", "altair", "openpyxl", "reportlab", "pypdf"]
+dependencies = ["streamlit>=1.55", "pandas", "altair", "openpyxl", "reportlab", "pypdf"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
@@ -20,3 +21,14 @@ Demo = "https://tallyhound-kfzkutbxmxdsrynlmppoll.streamlit.app/"
 
 [tool.setuptools]
 packages = ["tallyhound"]
+
+[tool.ruff]
+line-length = 125
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E9", "F", "B", "PLE"]
+ignore = ["B008", "B905"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

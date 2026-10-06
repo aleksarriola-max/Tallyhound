@@ -1,4 +1,4 @@
-"""All pages except Run analysis."""
+"""Reports, Payment run, Audit trail and Guardrails views (layout.py arranges them into sections)."""
 from __future__ import annotations
 
 import altair as alt
@@ -327,7 +327,7 @@ def tamper_demo(f: pd.DataFrame) -> None:
     pick = st.selectbox("Finding", list(f.id), format_func=lambda i: f"{i} - {f.set_index('id').loc[i, 'title']}",
                         key="tamper_pick")
     r = f.set_index("id").loc[pick]
-    text = st.text_area("Quoted line (edit it)", value=r.evidence, key=f"tamper_text_{pick}", height=90)
+    text = st.text_area("Quoted line (edit it)", value=r.evidence, key=f"tamper_text_{st.session_state.get('dataset') or 'sample'}_{pick}", height=90)
     one = pd.DataFrame([dict(id=pick, severity=r.severity, area=r.area, clause=r.clause, amount=r.amount, title=r.title,
                              skeptic_verdict=r.skeptic_verdict, evidence=text, related_evidence=r.related_evidence,
                              source_file=r.source_file, line_number=r.line_number,

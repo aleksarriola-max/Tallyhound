@@ -1,4 +1,5 @@
-"""The app's four sections - Home, Review, Reports, Settings - plus Trust, organised around what people come to do.
+"""The app's five sections - Home, Review, Reports, Settings and Trust ("How we know it's right") - organised around
+what people come to do.
 
 Home: what needs you today, and one button to check new files.
 Review: one queue of cases (and the payment run), decided once, then download.
@@ -25,6 +26,7 @@ def _start(choice: str) -> None:
     """Queue a run for the chosen data. The sample uses the simulated run; uploads use the chosen engine."""
     S = st.session_state
     if choice == SAMPLE:
+        custom.activate(None)                  # the sample run's results are the sample's, so review the sample
         sel = _demo_selection()
     else:
         sel = {"audit": [choice]}
@@ -65,8 +67,14 @@ def run_dialog() -> None:
         st.caption("Your role cannot start runs.")
 
 
-def _queue_counts() -> tuple[int, int]:
+def queue_findings():
+    """The findings the review queue shows: everything except clauses running in shadow mode."""
     f = C.findings()
+    return f[~f.clause.astype(str).isin(triage.shadow_clauses())]
+
+
+def _queue_counts() -> tuple[int, int]:
+    f = queue_findings()
     groups = triage.cases(f)
     pending = [g for g in groups if not all(r.id in st.session_state.decisions for r in g)]
     return len(pending), len(f)
@@ -106,7 +114,7 @@ def home() -> None:
     m[2].metric("Data to confirm", len(warns), help="Things the data check could not decide on its own")
     if cases:
         st.markdown("**Top of the queue**")
-        for g in triage.cases(C.findings())[:5]:
+        for g in triage.cases(queue_findings())[:5]:
             r = g[0]
             if all(x.id in S.decisions for x in g):
                 continue

@@ -1,4 +1,4 @@
-"""Page: Run analysis (4 steps)."""
+"""Uploading and checking files, engine settings and run status (used by the Check new files dialog)."""
 from __future__ import annotations
 
 import pandas as pd
@@ -348,9 +348,7 @@ def agents_body() -> None:
                 sim.retry()
                 st.rerun()
     all_done = bool(item) and all(a["status"] in ("Done", "Skipped") for a in agents)
-    if st.button("Go to Review", type="primary", disabled=not all_done, key="go_review"):
-        st.session_state.step = 3
-        st.rerun()
+    st.button("Go to Review", type="primary", disabled=not all_done, key="go_review", on_click=C.goto, args=("Review",))
     if sm:
         with st.expander("Run log", expanded=False):
             st.dataframe(pd.DataFrame(sm["log"][::-1]), hide_index=True, **C.dfw())

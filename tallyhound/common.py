@@ -70,7 +70,7 @@ def _policy_base() -> dict:
 
 
 def limits() -> dict:
-    """The policy limits in force: the defaults, changed on the Policy page."""
+    """The policy limits in force: the defaults, changed under Settings > Policy."""
     from . import rules
     S = st.session_state
     return {**rules.LIMITS, **S.get("limits", {}),
@@ -79,7 +79,7 @@ def limits() -> dict:
 
 
 def policy() -> dict:
-    """Clause texts, with the amounts shown as currently set on the Policy page."""
+    """Clause texts, with the amounts shown as currently set under Settings > Policy."""
     L = limits()
     swap = {"$2,500": f"${L['po_limit']:,.0f}", "$10,000": f"${L['director_limit']:,.0f}",
             "$75.00": f"${L['meal_limit']:,.2f}", "$25.00": f"${L['receipt_limit']:,.2f}"}
@@ -112,7 +112,8 @@ def check_findings(df: pd.DataFrame, getter) -> tuple[pd.DataFrame, pd.DataFrame
         matched_lines.append(sorted(set(main + rel)))
         matched_n.append(len(main) + len(rel))
     df["verified"], df["matched_lines"], df["matched_n"] = keep, matched_lines, matched_n
-    return df[df.verified].reset_index(drop=True), df[~df.verified].reset_index(drop=True)
+    mask = df.verified.astype(bool)              # .loc with a boolean mask keeps the columns even when nothing is found
+    return df.loc[mask].reset_index(drop=True), df.loc[~mask].reset_index(drop=True)
 
 
 @st.cache_data
@@ -151,8 +152,11 @@ def sample_only_notice() -> None:
                 "analysed from uploads yet.")
 
 
-def quote_pct() -> int:
-    ok, bad = findings_checked()
+def quote_pct() -> int | str:
+    try:
+        ok, bad = findings_checked()
+    except Exception:                     # noqa: BLE001 - the sidebar must always draw, so Reset stays reachable
+        return "?"
     total = len(ok) + len(bad)
     return round(100 * len(ok) / total) if total else 100
 
@@ -243,6 +247,9 @@ def entry_hash(prev: str, e: dict) -> str:
     return hashlib.sha256((prev + body).encode("utf-8")).hexdigest()
 
 
+_EPHEMERAL_KEY: bytes | None = None
+
+
 def _trail_key() -> bytes:
     """A secret only the server knows (TALLYHOUND_TRAIL_KEY, or a random key kept next to the saved work). Without
     it nobody can produce a valid seal, so a trail cannot be edited, cut short or rebuilt from scratch unnoticed."""
@@ -259,7 +266,15 @@ def _trail_key() -> bytes:
             p.chmod(0o600)
         return p.read_text(encoding="utf-8").strip().encode()
     except OSError:
-        return b"tallyhound-no-writable-disk"
+        # no writable disk: a key that lives only as long as this server process. Trails sealed with it cannot be
+        # checked after a restart (they show as broken), but nobody can forge one - unlike a fixed fallback key.
+        global _EPHEMERAL_KEY
+        if _EPHEMERAL_KEY is None:
+            _EPHEMERAL_KEY = secrets.token_bytes(32)
+            import logging
+            logging.getLogger("tallyhound").warning("No writable state folder: audit trails are sealed with a temporary "
+                                                    "key. Set TALLYHOUND_TRAIL_KEY or TALLYHOUND_STATE_DIR.")
+        return _EPHEMERAL_KEY
 
 
 def seal_of(log: list[dict]) -> str:
@@ -377,6 +392,7 @@ def init_state() -> None:
     S.setdefault("decisions", {})
     S.setdefault("audit_log", [])
     S.setdefault("cleared", {})
+    S.setdefault("uploads", {})
     S.setdefault("sim", None)
     S.setdefault("recent_extra", [])
     S.setdefault("events_extra", [])

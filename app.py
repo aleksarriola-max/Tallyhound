@@ -32,7 +32,10 @@ with st.sidebar:
     if st.session_state.get("custom"):
         labels = ["Sample company", *st.session_state.custom]
         cur = st.session_state.get("dataset")
-        st.selectbox("Data in review", labels, index=labels.index(cur) if cur in labels else 0, key="ds_pick",
+        want = cur if cur in labels else "Sample company"
+        if st.session_state.get("ds_pick") != want:
+            st.session_state.ds_pick = want          # a run can switch the data in review; the box must follow
+        st.selectbox("Data in review", labels, key="ds_pick",
                      on_change=lambda: custom.activate(None if st.session_state.ds_pick == "Sample company"
                                                        else st.session_state.ds_pick))
     if auth.current_user():
@@ -49,6 +52,8 @@ with st.sidebar:
 C.banner_and_header()
 if st.session_state.pop("_restored", False):
     st.toast("Restored your earlier work.")
+if st.session_state.get("_restore_note"):
+    st.warning(st.session_state.pop("_restore_note"))
 
 PAGES = {
     "Home": layout.home,
@@ -57,6 +62,15 @@ PAGES = {
     "Settings": layout.settings,
     "Trust": layout.trust,
 }
-PAGES.get(st.session_state.nav, layout.home)()
+try:
+    PAGES.get(st.session_state.nav, layout.home)()
+except Exception as e:                    # noqa: BLE001  - a broken page must still leave a way out
+    if type(e).__module__.startswith("streamlit"):
+        raise                             # st.rerun / st.stop and Streamlit's own errors work as usual
+    st.error("This page hit a problem and could not be shown. Your saved work is untouched. Try another page, "
+             "pick other data in the sidebar, or reset if it keeps happening.")
+    with st.expander("Technical details"):
+        st.exception(e)
+    st.button("Reset saved work", key="reset_after_error", on_click=store.reset, disabled=not auth.can("policy"))
 
 store.save_if_changed()

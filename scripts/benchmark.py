@@ -37,7 +37,7 @@ def main() -> None:
     p.add_argument("--engines", default="rules")
     p.add_argument("--models", default=llm.DEFAULT_MODEL)
     p.add_argument("--url", default=llm.DEFAULT_URL)
-    p.add_argument("--seeds", default="1-10")
+    p.add_argument("--seeds", default="1-20")
     p.add_argument("--difficulty", default="easy,medium,hard")
     p.add_argument("--out", default=str(ROOT / "docs"))
     a = p.parse_args()
@@ -85,8 +85,8 @@ def main() -> None:
                   f"{100 * statistics.mean(part.recall):.0f}% | {100 * statistics.mean(part.precision):.0f}% | "
                   f"{statistics.mean(part.false_alarms):.1f} | {part.traps_flagged.sum()} of {part.traps.sum()} | "
                   f"{statistics.mean(part.seconds):.0f} |")
-    md += ["", "Recall: share of planted problems found. Precision: share of findings that were real. Hard mode words "
-           "three problems so the fixed rules cannot see them; the rules' hard-mode recall is capped by design.", ""]
+    md += ["", "Recall: share of planted problems found. Precision: share of findings that were real. Hard mode rewords "
+           "three problems; the rules catch two of them and miss the reworded surcharge, so their hard-mode recall is 96%.", ""]
     (out / "benchmark.md").write_text("\n".join(md), encoding="utf-8")
     print(f"Wrote {out / 'benchmark.md'}")
 

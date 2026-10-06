@@ -4,7 +4,7 @@
 - Priority: severity x money at stake x the Skeptic's confidence, so the top of the list is what matters.
 - Minor items: below the materiality threshold (and not High), grouped at the bottom instead of mixed in.
 - Rule health: each rule's reject rate from real reviewer decisions. A rule rejected most of the time is demoted
-  to minor items automatically (never deleted), and an admin is told on the Policy page.
+  to minor items automatically (never deleted), and an admin is told under Settings > Rules.
 - Shadow mode: rules listed as "shadow" run and record what they would flag, but stay out of the queue until a
   person has marked enough of their findings to show they are worth it.
 """

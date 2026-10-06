@@ -432,7 +432,7 @@ def frame(label: str) -> tuple[pd.DataFrame, pd.DataFrame]:
             r.source_file, r.evidence, vf.get(r.source_file, [""])[0] if r.source_file.endswith(".csv") else ""))
             for r in ok.itertuples()]
         st.session_state["_n_suppressed"] = len(ok) - sum(keep)
-        ok = ok[keep].reset_index(drop=True)
+        ok = ok.loc[pd.Series(keep, index=ok.index, dtype=bool)].reset_index(drop=True)
     else:
         st.session_state["_n_suppressed"] = 0
     return ok, hidden
