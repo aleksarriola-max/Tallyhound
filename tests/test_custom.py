@@ -164,3 +164,12 @@ def test_skeptic_sees_labelled_fields():
     head = "vendor_id,name,tax_id,status,bank_acct,bank_changed_on,bank_verified,created_on,w9_on_file,last_paid_on,last_paid_amount"
     out = agents.labelled(line, head)
     assert "bank_verified=NO" in out and "bank_changed_on=2026-09-26" in out
+
+
+def test_notice_when_upload_exists_but_sample_is_showing():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.warning
+    at.session_state.custom = {"mine": []}
+    at.session_state.uploads = {"mine": {}}
+    at.run()
+    assert any("SAMPLE" in w.value for w in at.warning)

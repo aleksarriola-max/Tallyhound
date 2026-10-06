@@ -322,6 +322,10 @@ def banner_and_header(last_run: str = "14:32") -> None:
     st.markdown('<div class="th-header"><span class="th-title">TALLYHOUND</span>'
                 f'<span class="th-co">{html.escape(mine) if mine else "Bramblecourt Instruments Ltd (fictional)"}</span></div>',
                 unsafe_allow_html=True)
+    S = st.session_state
+    if S.get("custom") and not mine:
+        st.warning("You are looking at the SAMPLE company. Your uploaded results are ready: choose "
+                   f"\"{next(iter(S.custom))}\" in the **Data in review** box in the sidebar.")
     items = ["Model loaded", "Offline", "Sandbox on", f"Last run {last_run}"]
     st.markdown('<div class="th-strip">' + "".join(f'<span><span class="th-dot"></span>{i}</span>' for i in items) + "</div>",
                 unsafe_allow_html=True)
