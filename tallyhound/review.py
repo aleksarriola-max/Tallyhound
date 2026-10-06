@@ -4,7 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 from . import common as C
-from . import exports
+from . import exports, guide
 
 
 def _code(text: str) -> None:
@@ -83,12 +83,12 @@ def step4() -> None:
     m[3].metric("Pending", dc["pending"])
     b1, b2, b3 = st.columns([2, 2, 2])
     b1.download_button("Download Excel workbook", data=exports.build_workbook(False), file_name="tallyhound_workbook.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", **C.bw())
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", on_click=guide.mark_downloaded, **C.bw())
     b2.download_button("Download Memo (PDF)", data=exports.build_memo(), file_name="tallyhound_memo.pdf",
-                       mime="application/pdf", **C.bw())
+                       mime="application/pdf", on_click=guide.mark_downloaded, **C.bw())
     b3.download_button("Download draft (not reviewed)", data=exports.build_workbook(True),
                        file_name="tallyhound_draft_not_reviewed.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="tertiary", **C.bw())
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="tertiary", on_click=guide.mark_downloaded, **C.bw())
     if dc["pending"]:
         st.caption(f"{dc['pending']} finding(s) are still pending. The final files list them as Pending.")
     df = exports.decisions_frame()

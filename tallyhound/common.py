@@ -201,6 +201,8 @@ def goto(page: str) -> None:
 
 # ---- session ----
 def init_state() -> None:
+    from . import store
+    store.load_into_session()
     S = st.session_state
     S.setdefault("nav", "Run analysis")
     S.setdefault("step", 1)
@@ -213,6 +215,8 @@ def init_state() -> None:
     S.setdefault("fail_pending", True)
     S.setdefault("last_tick", 0.0)
     S.setdefault("extra_opts", {})
+    S.setdefault("tour_off", False)
+    S.setdefault("tour_downloaded", False)
 
 
 # ---- look and feel ----

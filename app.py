@@ -4,7 +4,7 @@ import streamlit as st
 st.set_page_config(layout="wide", page_title="Tallyhound", page_icon=None)
 
 from tallyhound import common as C  # noqa: E402
-from tallyhound import pages, run_analysis, sim  # noqa: E402
+from tallyhound import pages, run_analysis, sim, store  # noqa: E402
 
 C.init_state()
 C.inject_css()
@@ -26,6 +26,8 @@ with st.sidebar:
     st.markdown("### TALLYHOUND")
     st.radio("Navigation", C.NAV, key="nav", label_visibility="collapsed")
     st.fragment(run_every=1 if running else None)(ticker)()
+    st.caption("Your decisions are saved automatically, so a reload keeps them.")
+    st.button("Reset demo", key="reset_demo", on_click=store.reset, type="tertiary")
     st.markdown(
         '<div class="th-guard"><b>GUARDRAILS</b><br>Blocked internet attempts: 0<br>'
         f"Quotes verified: {C.quote_pct()}%</div>",
@@ -33,6 +35,8 @@ with st.sidebar:
     )
 
 C.banner_and_header()
+if st.session_state.pop("_restored", False):
+    st.toast("Restored your earlier work.")
 
 PAGES = {
     "Run analysis": run_analysis.run_page,
@@ -46,3 +50,5 @@ PAGES = {
     "Guardrails": pages.guardrails,
 }
 PAGES[st.session_state.nav]()
+
+store.save_if_changed()

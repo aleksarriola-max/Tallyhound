@@ -34,6 +34,8 @@ Needs Python 3.10+ and Streamlit 1.40 or newer. Best viewed in a window at least
 - **Skeptic review** - a second agent tries to disprove every finding. In this demo the verdicts are pre-written.
 - **Payment gate** - eight checks per payment line decide HOLD or RELEASE. Clearing a hold needs a typed reason.
 - **Exports** - Step 4 builds an Excel workbook (with an audit trail sheet) and a PDF memo from your decisions.
+- **Guided tour** - a checklist at the top of Run analysis walks a first-time visitor through the whole flow: start a run, watch an agent fail, retry, review, download. Hide it any time.
+- **Saved work** - decisions, reasons, cleared holds and the audit trail are saved to a small file keyed by a random id in the page address (`?s=...`), so a reload keeps them. Keep the address to come back to your work; "Reset demo" wipes it. Saved files are deleted after 14 days.
 - **Simulated run** - the agent run is a timer, about 20 seconds per queue item. The Expenses agent fails once on purpose so you can try Retry.
 
 ## Project layout
@@ -48,6 +50,8 @@ tallyhound/
   sim.py               simulated agent run
   exports.py           Excel and PDF builders
   common.py            data loading, quote check, styling, session state
+  store.py             saves and restores decisions across reloads
+  guide.py             the guided tour checklist
 data/*.csv             all sample data (nothing is hard-coded in the app)
 data/source/           the fake source files that findings quote
 scripts/make_data.py   regenerates all data
@@ -66,4 +70,4 @@ The tests check that the data keeps its promises (26 findings, every quote verif
 ## Notes
 
 - The hosted demo is public, so anyone with the link can use it and download the files. Everything in it is fictional.
-- Decisions live in the browser session, so a page reload resets them.
+- Saved work lives in `.tallyhound_state/` on the server (set `TALLYHOUND_STATE_DIR` to move it). On Streamlit Community Cloud the disk is cleared when the app restarts, so saved work is kept for reloads but not forever.

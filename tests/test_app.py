@@ -61,3 +61,49 @@ def test_exports_build():
     draft = openpyxl.load_workbook(io.BytesIO(at.session_state.draft))
     assert "DRAFT" in draft["Summary"]["B2"].value
     assert at.session_state.pdf.startswith(b"%PDF")
+
+
+def test_decisions_survive_a_reload():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    sid = at.query_params["s"][0] if isinstance(at.query_params["s"], list) else at.query_params["s"]
+    at.session_state.step = 3
+    at.run()
+    at.button(key="appr_F-01").click().run()
+    # a second browser session opening the same address gets the same work back
+    at2 = AppTest.from_file(APP, default_timeout=60)
+    at2.query_params["s"] = sid
+    at2.run()
+    assert at2.session_state.decisions["F-01"]["status"] == "Approved"
+    assert any(r["finding"] == "F-01" for r in at2.session_state.audit_log)
+
+
+def test_reset_clears_saved_work():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    sid = at.query_params["s"][0] if isinstance(at.query_params["s"], list) else at.query_params["s"]
+    at.session_state.step = 3
+    at.run()
+    at.button(key="appr_F-01").click().run()
+    at.button(key="reset_demo").click().run()
+    assert at.session_state.decisions == {}
+    at3 = AppTest.from_file(APP, default_timeout=60)
+    at3.query_params["s"] = sid
+    at3.run()
+    assert at3.session_state.decisions == {}
+
+
+def test_guided_tour_walks_the_flow():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert "step 1 of 6" in " ".join(m.value for m in at.markdown)
+    at.button(key="tour_start").click().run()
+    assert at.session_state.sim is not None
+    assert not at.exception
+    # fast-forward: the run has failed once, been retried and finished; one approve and one reject; a download
+    for it in at.session_state.sim["queue"]:
+        it["status"] = "Done"
+    at.session_state.sim["running"] = False
+    at.session_state.fail_pending = False
+    at.session_state.decisions = {"F-01": {"status": "Approved", "reason": ""},
+                                  "F-02": {"status": "Rejected", "reason": "duplicate"}}
+    at.session_state.tour_downloaded = True
+    at.run()
+    assert "Guided tour complete" in " ".join(m.value for m in at.markdown)

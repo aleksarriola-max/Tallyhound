@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from . import common as C
-from . import review, sim
+from . import guide, review, sim
 
 CARD_HEIGHT = 300
 AGENT_KEYS = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses"]
@@ -15,6 +15,7 @@ AGENT_KEYS = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses"]
 
 def run_page() -> None:
     S = st.session_state
+    guide.tour()
     cols = st.columns(4)
     for i, (col, label) in enumerate(zip(cols, C.STEPS), start=1):
         col.button(label, key=f"step_btn_{i}", type="primary" if S.step == i else "secondary",
