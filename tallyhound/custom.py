@@ -132,14 +132,17 @@ class Job:
         lines = self.files.get(rules.FILES[area])
         if not lines:
             return
-        if self.engine == "rules":
+        if self.engine in ("rules", "rules+skeptic"):
             for h in rules.run_area(area, self.files):
                 self.records.append(dict(
                     area=h.area, clause=h.clause, severity=h.severity, amount=h.amount, title=h.title,
                     source_file=h.source_file, line_number=h.line_number, related_lines=[ln for _, ln in h.related],
                     innocent=rules.INNOCENT.get(h.clause, ""), fix=rules.FIXES.get(h.clause, ""),
-                    verdict="Confirmed",
-                    reason=f"Fixed rule check, no AI. Clause {h.clause}: {self.policy.get(h.clause + '|' + h.area, '')}"))
+                    **(dict(verdict="Confirmed",
+                            reason=f"Fixed rule check, no AI. Clause {h.clause}: {self.policy.get(h.clause + '|' + h.area, '')}")
+                       if self.engine == "rules" else {})))
+                r = self.records[-1]
+                r["evidence"] = lines[r["line_number"] - 1]
             return
         raw = agents.propose(area, lines, self.policy, self.model, self.url)
         for f in raw:
@@ -150,7 +153,12 @@ class Job:
     def _skeptic(self, t: float) -> None:
         todo = [r for r in self.records if "verdict" not in r]
         for i, r in enumerate(todo, start=1):
-            r["verdict"], r["reason"] = agents.skeptic(r, self.policy.get(f"{r['clause']}|{r['area']}", ""), self.model, self.url)
+            lines = self.files[r["source_file"]]
+            header = lines[0] if r["source_file"].endswith(".csv") else ""
+            r["evidence"] = lines[r["line_number"] - 1]
+            related = [lines[n - 1] for n in r.get("related_lines", []) if 1 <= n <= len(lines)]
+            r["verdict"], r["reason"] = agents.skeptic(r, self.policy.get(f"{r['clause']}|{r['area']}", ""), self.model,
+                                                       self.url, header, related)
             self._set("Skeptic", pct=5 + int(90 * i / max(len(todo), 1)), secs=int(time.time() - t))
 
 
@@ -167,7 +175,7 @@ def tick_item(sim: dict, item: dict) -> bool:
                               item.get("model", llm.DEFAULT_MODEL), item.get("url", llm.DEFAULT_URL), C.policy(),
                               [a["name"] for a in item["agents"] if a["status"] == "Skipped"])
         sim_log(sim, "Orchestrator", f"Reading {len(job.files)} uploaded file(s) with "
-                + ("the built-in rules" if job.engine == "rules" else f"Ollama ({job.model})"))
+                + ({"rules": "the built-in rules", "rules+skeptic": f"the built-in rules and an Ollama Skeptic ({job.model})"}.get(job.engine, f"Ollama ({job.model})")))
         return True
     for a in item["agents"]:
         j = job.agents.get(a["name"])

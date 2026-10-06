@@ -149,3 +149,18 @@ def test_upload_run_review_and_export_end_to_end():
     # switching back to the sample company brings back the sample's own (empty) decisions
     at.selectbox(key="ds_pick").select("Sample company").run()
     assert at.session_state.dataset is None and at.session_state.decisions == {}
+
+
+def test_rules_with_ollama_skeptic_challenges_every_rule_hit(fake_ollama):
+    job = custom.Job("t", sample_files(), "rules+skeptic", "fake:1b", fake_ollama, policy(), [])
+    job.thread.join(60)
+    assert job.done, job.failed
+    assert len(job.records) >= 22
+    assert all(r["verdict"] == "Doubtful" for r in job.records)       # the pretend Skeptic doubts everything
+
+
+def test_skeptic_sees_labelled_fields():
+    line = "V-4108,Marlowe,55-1,ACTIVE,****6120,2026-09-26,NO,2023-05-02,YES,2026-09-28,8820.00"
+    head = "vendor_id,name,tax_id,status,bank_acct,bank_changed_on,bank_verified,created_on,w9_on_file,last_paid_on,last_paid_amount"
+    out = agents.labelled(line, head)
+    assert "bank_verified=NO" in out and "bank_changed_on=2026-09-26" in out

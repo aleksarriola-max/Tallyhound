@@ -77,12 +77,24 @@ def verified(f: dict, lines: list[str], area: str) -> dict | None:
                 fix=str(f.get("proposed_fix", "")))
 
 
-def skeptic(f: dict, clause_text: str, model: str, url: str) -> tuple[str, str]:
+def labelled(line: str, header: str) -> str:
+    """Show a CSV row as column=value pairs so the model cannot mix up the columns."""
+    import csv
+    if not header:
+        return line
+    cols, vals = next(csv.reader([header])), next(csv.reader([line]))
+    if len(cols) != len(vals):
+        return line
+    return ", ".join(f"{c}={v if v != '' else '(empty)'}" for c, v in zip(cols, vals))
+
+
+def skeptic(f: dict, clause_text: str, model: str, url: str, header: str = "", related: list[str] | None = None) -> tuple[str, str]:
     system = ("You are the Skeptic in a finance audit. Another agent proposed a finding. Try to disprove it using only "
-              "the evidence line and the policy clause. Answer Confirmed only if the evidence line clearly breaches the "
+              "the evidence line and the policy clause. Read each field by its column name; do not guess what a field means. Answer Confirmed only if the evidence line clearly breaches the "
               "clause. Answer Doubtful if the breach is not clear from that line, or there is an obvious innocent reason.")
+    extra = "".join(f"\nRelated line: {labelled(x, header)}" for x in (related or []))
     user = (f"Policy clause {f['clause']}: {clause_text or '(clause not found)'}\n"
-            f"Proposed finding: {f['title']}\nEvidence line: {f['evidence']}\n"
+            f"Proposed finding: {f['title']}\nEvidence line: {labelled(f['evidence'], header)}{extra}\n"
             f"Possible innocent explanation: {f['innocent']}")
     r = llm.chat_json(system, user, SKEPTIC_SCHEMA, model=model, url=url)
     verdict = "Confirmed" if r.get("verdict") == "Confirmed" else "Doubtful"

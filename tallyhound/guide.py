@@ -12,6 +12,7 @@ def _progress() -> list[tuple[str, str, bool]]:
     S = st.session_state
     run = S.get("sim")
     queue = run["queue"] if run else []
+    own = any(i.get("custom") for i in queue)   # a run on uploaded files has no planted failure
     failed_now = any(i["status"] == "Failed" for i in queue)
     dc = C.decision_counts(C.findings())
     rejected = [v for v in S.decisions.values() if v.get("status") == "Rejected"]
@@ -19,9 +20,9 @@ def _progress() -> list[tuple[str, str, bool]]:
         ("Start a run", "Press Start demo run. It audits September and checks the payment run, one item at a time.",
          run is not None),
         ("Watch an agent fail", "The Expenses agent is set to fail once, on purpose. Wait about 20 seconds for it.",
-         run is not None and (failed_now or not S.fail_pending)),
+         run is not None and (own or failed_now or not S.fail_pending)),
         ("Retry it", "Press Retry on the failed run. The agent restarts and the queue carries on.",
-         run is not None and not S.fail_pending),
+         run is not None and (own or not S.fail_pending)),
         ("Let the run finish", "Wait until both queue items say Done. The sidebar shows progress.",
          bool(queue) and all(i["status"] == "Done" for i in queue)),
         ("Review the findings", "On step 3, approve one finding and reject another. Rejecting needs a typed reason.",
