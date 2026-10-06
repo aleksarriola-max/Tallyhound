@@ -117,6 +117,9 @@ class _Gen:
             for _ in range(2):
                 inv = self.approval(v["name"], self.amt(600, 9500), self.wd(1, 24))
                 self.payment(v, inv)
+        self.open_invoices = []
+        for v in self.r.sample(self.paid_vendors, 6):      # approved, not yet paid: these go on the payment run
+            self.open_invoices.append((v, self.approval(v["name"], self.amt(600, 9000), self.wd(20, 30))))
         for _ in range(16):
             if self.r.random() < 0.25:
                 n = self.r.randint(1, 4)
@@ -244,6 +247,26 @@ class _Gen:
                                       day=date(2026, 10, 1))
             self.plant(kind, "7.4", "Contracts", "contracts.txt", i, [c], f"{v} auto-renewed with no decision on file")
 
+    # -------- the proposed payment run for the Payment gate (four lines should be held)
+    def payment_run(self) -> list[str]:
+        rows = [dict(vendor_id=v["vendor_id"], supplier=v["name"], invoice=a["doc_no"], amount=a["amount"],
+                     bank_last4=v["bank_acct"][-4:]) for v, a in self.open_invoices]
+        paid = self.r.choice(self.rows["payments.csv"])
+        v0, a0 = self.open_invoices[0]
+        v1, a1 = self.open_invoices[1]
+        v2, a2 = self.open_invoices[2]
+        rows += [dict(rows[0]),                                                         # same invoice twice in the run
+                 dict(vendor_id=paid["vendor_id"], supplier=paid["supplier"], invoice=paid["invoice_no"],
+                      amount=paid["paid_amount"], bank_last4=paid["bank_last4"])]       # already paid
+        rows[1]["bank_last4"] = f"{(int(v1['bank_acct'][-4:]) + 1111) % 10000:04d}"   # bank differs from master
+        rows[2]["amount"] = f"{float(a2['amount']) + 250:.2f}"                          # more than the invoice
+        buf = io.StringIO()
+        w = csv.writer(buf, lineterminator="\n")
+        w.writerow(["line", "vendor_id", "supplier", "invoice", "amount", "bank_last4"])
+        for i, r in enumerate(rows, start=1):
+            w.writerow([i, r["vendor_id"], r["supplier"], r["invoice"], r["amount"], r["bank_last4"]])
+        return buf.getvalue().splitlines()
+
     # -------- writing it out
     def build(self, n_issues: int) -> tuple[dict[str, list[str]], list[dict]]:
         self.clean()
@@ -269,6 +292,7 @@ class _Gen:
                 lines.append(item["text"])
                 where[id(item)] = len(lines)
         files["contracts.txt"] = lines
+        files["payment_run.csv"] = self.payment_run()
         key = []
         for n, k in enumerate(self.key, start=1):
             key.append(dict(id=f"K-{n:02d}", clause=k["clause"], area=k["area"], source_file=k["source_file"],

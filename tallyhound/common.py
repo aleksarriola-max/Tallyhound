@@ -139,7 +139,8 @@ def sample_only_notice() -> None:
     d = custom_label()
     if d:
         st.info(f"This page shows the sample company. Your uploaded files (\"{d}\") drive Findings, Review and the "
-                "downloads; payment runs, recovery and subscriptions are not analysed from uploads yet.")
+                "downloads. Add a payment_run.csv to the zip to check a payment run; recovery and subscriptions are not "
+                "analysed from uploads yet.")
 
 
 def quote_pct() -> int:
@@ -308,8 +309,10 @@ CSS = f"""
 section[data-testid="stSidebar"] {{ background:{TEAL_DARK}; }}
 section[data-testid="stSidebar"] * {{ color:{PAPER}; }}
 section[data-testid="stSidebar"] hr {{ border-color: rgba(179,224,247,.3); }}
-section[data-testid="stSidebar"] [data-testid="stSelectbox"] *, section[data-testid="stSidebar"] [data-baseweb="select"] * {{
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] * {{
   color:{INK} !important; -webkit-text-fill-color:{INK} !important; }}
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] label, section[data-testid="stSidebar"] [data-testid="stSelectbox"] label * {{
+  color:{PAPER} !important; -webkit-text-fill-color:{PAPER} !important; }}
 .th-guard {{ border:1px solid rgba(179,224,247,.4); border-radius:6px; padding:.6rem .7rem; font-size:.82rem; margin-top:1.5rem; }}
 .th-guard b {{ letter-spacing:.06em; }}
 [class*="st-key-step_btn_"] button {{ padding:.35rem .4rem; }}

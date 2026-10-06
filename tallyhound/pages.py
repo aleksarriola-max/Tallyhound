@@ -120,14 +120,33 @@ def style_gate(df: pd.DataFrame):
     return df.style.apply(row, axis=1).map(chk, subset=ccols)
 
 
+def gate_runs() -> dict:
+    """Payment runs to show: the uploaded run when the data in review has one, else the sample's two runs.
+    Value: (dataframe, whether holds can be cleared)."""
+    from . import custom, gate
+    label = C.custom_label()
+    if label and "payment_run.csv" in st.session_state.uploads.get(label, {}):
+        return {f"Uploaded run ({label})": (gate.evaluate(custom.view(label)), True)}
+    return {"Payment run 2026-10-01": (C.gate(GATE_FILE), True),
+            "Payment run 2026-10-08": (C.gate("payment_run_2026-10-08.csv"), False)}
+
+
 def payment_gate() -> None:
-    C.sample_only_notice()
     S = st.session_state
-    runs = {"Payment run 2026-10-01": GATE_FILE, "Payment run 2026-10-08": "payment_run_2026-10-08.csv"}
-    run = st.segmented_control("Run", list(runs), default="Payment run 2026-10-01", key="gate_run",
-                               label_visibility="collapsed") or "Payment run 2026-10-01"
-    gdf = C.gate(runs[run]).copy()
-    cleared = S.cleared if run == "Payment run 2026-10-01" else {}
+    runs = gate_runs()
+    if not next(iter(runs)).startswith("Uploaded"):
+        C.sample_only_notice()
+    names = list(runs)
+    run = st.segmented_control("Run", names, default=names[0], key="gate_run", label_visibility="collapsed") or names[0]
+    if run not in runs:
+        run = names[0]
+    gdf, clearable = runs[run]
+    if gdf.empty:
+        st.warning("The uploaded payment_run.csv could not be checked. It needs the columns line, supplier, invoice "
+                   "and amount (vendor_id and bank_last4 are used when present).")
+        return
+    gdf = gdf.copy()
+    cleared = S.cleared if clearable else {}
     gdf["final"] = [("RELEASE (cleared)" if str(l) in cleared else d) for l, d in zip(gdf.line, gdf.decision)]
     hold = gdf[gdf.final == "HOLD"]
     rel = gdf[gdf.final != "HOLD"]
@@ -146,7 +165,7 @@ def payment_gate() -> None:
     cfg = {k: st.column_config.Column(width=v) for k, v in widths.items()}
     cfg.update({str(i): st.column_config.Column(width=32) for i in range(1, 9)})
     ev = st.dataframe(style_gate(show), hide_index=True, on_select="rerun", selection_mode="multi-row",
-                      key=f"gate_tbl_{run}", height=560, column_config=cfg, **C.dfw())
+                      key=f"gate_tbl_{run}", height=min(560, 36 * (len(show) + 1) + 4), column_config=cfg, **C.dfw())
     st.caption("Checks: " + " · ".join(f"{i + 1} {c}" for i, c in enumerate(CHECKS)))
 
     rows = ev.selection.rows if ev and ev.selection else []
@@ -154,13 +173,13 @@ def payment_gate() -> None:
     holdable = [l for l in sel_lines if gdf[gdf.line == str(l)].final.iloc[0] == "HOLD"]
     c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
     reason = c1.text_input("Reason for clearing the hold (required)", key="clear_reason")
-    if c2.button("Clear hold", disabled=not (holdable and reason.strip()) or run != "Payment run 2026-10-01"):
+    if c2.button("Clear hold", disabled=not (holdable and reason.strip()) or not clearable):
         for l in holdable:
             S.cleared[str(l)] = reason.strip()
             C.log_action("Reviewer", "Hold cleared", f"Line {l}", reason.strip())
         st.rerun()
     st.caption("Select HOLD lines in the table, give a reason, then clear the hold. Agents never release a payment." +
-               ("" if run == "Payment run 2026-10-01" else " Clearing is only enabled for run 2026-10-01 in this demo."))
+               ("" if clearable else " Clearing is only enabled for run 2026-10-01 in this demo."))
 
 
 # --------------------------------------------------------------------------

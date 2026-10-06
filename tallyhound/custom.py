@@ -16,7 +16,7 @@ from . import common as C
 MAX_ZIP_MB = 20
 MAX_LINES = 5000
 STEMS = {"payments": "payments.csv", "approvals": "approvals.csv", "vendors": "vendors.csv",
-         "contracts": "contracts.txt", "expenses": "expenses.csv"}
+         "contracts": "contracts.txt", "expenses": "expenses.csv", "payment_run": "payment_run.csv"}
 SEV_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 COLS = ["id", "severity", "area", "clause", "amount", "title", "skeptic_verdict", "evidence", "related_evidence",
         "source_file", "line_number", "innocent_explanations", "skeptic_reason", "proposed_fix"]
@@ -45,7 +45,7 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
             continue
         match = next((v for k, v in STEMS.items() if stem == k or stem.startswith(k + "_") or stem.endswith("_" + k)), None)
         if match is None:
-            notes.append(f"Ignored {base} (not one of the five audit files).")
+            notes.append(f"Ignored {base} (not one of the audit files).")
             continue
         if info.file_size > MAX_ZIP_MB * 1024 * 1024:
             notes.append(f"Skipped {base}: too large.")
@@ -194,7 +194,11 @@ class Job:
                 r = self.records[-1]
                 r["evidence"] = lines[r["line_number"] - 1]
             return
-        raw = agents.propose(area, lines, self.policy, self.model, self.url)
+        if self.engine == "ollama-tools":
+            from . import agents_tools
+            raw = agents_tools.investigate(area, lines, self.policy, self.model, self.url)
+        else:
+            raw = agents.propose(area, lines, self.policy, self.model, self.url)
         for f in raw:
             v = agents.verified(f, lines, area)
             if v:
@@ -225,7 +229,8 @@ def tick_item(sim: dict, item: dict) -> bool:
                               item.get("model", llm.DEFAULT_MODEL), item.get("url", llm.DEFAULT_URL), C.policy(),
                               [a["name"] for a in item["agents"] if a["status"] == "Skipped"], C.limits())
         sim_log(sim, "Orchestrator", f"Reading {len(job.files)} uploaded file(s) with "
-                + ({"rules": "the built-in rules", "rules+skeptic": f"the built-in rules and an Ollama Skeptic ({job.model})"}.get(job.engine, f"Ollama ({job.model})")))
+                + ({"rules": "the built-in rules", "rules+skeptic": f"the built-in rules and an Ollama Skeptic ({job.model})",
+                    "ollama-tools": f"Ollama agents with tools ({job.model})"}.get(job.engine, f"Ollama ({job.model})")))
         return True
     for a in item["agents"]:
         j = job.agents.get(a["name"])

@@ -52,3 +52,15 @@ def chat_json(system: str, user: str, schema: dict, model: str = DEFAULT_MODEL, 
         return json.loads(text)
     except ValueError as e:
         raise LLMError("The model's answer was not valid JSON. Try again or use a larger model.") from e
+
+
+def chat_tools(messages: list[dict], tools: list[dict], model: str = DEFAULT_MODEL, url: str = DEFAULT_URL,
+               timeout: float = 900.0, num_ctx: int = 16384) -> dict:
+    """One turn of a tool-using conversation. Returns the assistant message (may contain tool_calls)."""
+    payload = {"model": model, "stream": False, "think": False, "tools": tools, "messages": messages,
+               "options": {"temperature": 0, "num_ctx": num_ctx}}
+    out = _call(url, "/api/chat", payload, timeout)
+    msg = out.get("message")
+    if not isinstance(msg, dict):
+        raise LLMError("Ollama sent back no message.")
+    return msg

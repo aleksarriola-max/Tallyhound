@@ -18,6 +18,7 @@ REQUIRED = {
     "approvals.csv": ["record_id", "doc_no", "date", "vendor", "amount", "requested_by", "approved_by", "approver_role", "po_no"],
     "vendors.csv": ["vendor_id", "name", "tax_id", "status", "bank_changed_on", "bank_verified", "w9_on_file", "last_paid_on",
                     "last_paid_amount"],
+    "payment_run.csv": ["line", "supplier", "invoice", "amount"],
     "expenses.csv": ["claim_id", "date", "employee", "category", "amount", "receipt_ref", "notes", "people"],
 }
 

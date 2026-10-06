@@ -33,7 +33,10 @@ def decisions_frame(draft: bool = False) -> pd.DataFrame:
 
 
 def gate_frame() -> pd.DataFrame:
-    df = C.gate("payment_run_2026-10-01.csv").copy()
+    from . import pages
+    df = next(iter(pages.gate_runs().values()))[0].copy()
+    if df.empty:
+        return df
     cleared = st.session_state.cleared
     df["final_decision"] = [("RELEASE (hold cleared)" if str(l) in cleared else d) for l, d in zip(df.line, df.decision)]
     df["clear_reason"] = [cleared.get(str(l), "") for l in df.line]
@@ -72,8 +75,10 @@ def build_workbook(draft: bool = False) -> bytes:
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
         summary.to_excel(xw, sheet_name="Summary", index=False)
         f.to_excel(xw, sheet_name="Monthly audit", index=False)
+        g = gate_frame()
+        if not g.empty and (not C.custom_label() or "payment_run.csv" in st.session_state.uploads.get(C.custom_label(), {})):
+            g.to_excel(xw, sheet_name="Payment gate", index=False)
         if not C.custom_label():
-            gate_frame().to_excel(xw, sheet_name="Payment gate", index=False)
             C.recovery().to_excel(xw, sheet_name="Supplier recovery", index=False)
             C.subscriptions().to_excel(xw, sheet_name="Subscriptions", index=False)
         trail.to_excel(xw, sheet_name="Audit trail", index=False)

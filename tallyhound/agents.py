@@ -88,6 +88,19 @@ def labelled(line: str, header: str) -> str:
     return ", ".join(f"{c}={v if v != '' else '(empty)'}" for c, v in zip(cols, vals))
 
 
+import re
+
+AFFIRM = re.compile(r"\b(clearly|directly|plainly|explicitly|does)\s+(breach|violat|exceed)|\bis a (clear )?breach\b", re.I)
+DENY = re.compile(r"\b(does not|doesn't|not clearly|no clear|cannot|can't|isn't|is not|not)\b.{0,30}\b(breach|violat|exceed)", re.I)
+
+
+def contradicts(verdict: str, reason: str) -> bool:
+    """True when the Skeptic's verdict disagrees with its own reason (a known small-model failure)."""
+    if verdict == "Doubtful":
+        return bool(AFFIRM.search(reason)) and not DENY.search(reason)
+    return bool(DENY.search(reason)) and not AFFIRM.search(reason)
+
+
 def skeptic(f: dict, clause_text: str, model: str, url: str, header: str = "", related: list[str] | None = None) -> tuple[str, str]:
     system = ("You are the Skeptic in a finance audit. Another agent proposed a finding. Check it using only the evidence "
               "line and the policy clause. Read each field by its column name; do not guess what a field means.\n"
@@ -103,4 +116,13 @@ def skeptic(f: dict, clause_text: str, model: str, url: str, header: str = "", r
             f"An unchecked guess at an innocent explanation (this is NOT in the data): {f['innocent']}")
     r = llm.chat_json(system, user, SKEPTIC_SCHEMA, model=model, url=url)
     verdict = "Confirmed" if r.get("verdict") == "Confirmed" else "Doubtful"
-    return verdict, str(r.get("reason", "")).strip() or "No reason given."
+    reason = str(r.get("reason", "")).strip() or "No reason given."
+    if contradicts(verdict, reason):        # ask once more, showing the model its own reason
+        again = llm.chat_json(system, user + f"\n\nYour first answer gave this reason: {reason}\nIt chose {verdict}, which "
+                              "disagrees with that reason. Answer again; the verdict must follow from the reason.",
+                              SKEPTIC_SCHEMA, model=model, url=url)
+        verdict = "Confirmed" if again.get("verdict") == "Confirmed" else "Doubtful"
+        reason = str(again.get("reason", "")).strip() or reason
+        if contradicts(verdict, reason):
+            return "Doubtful", "Unclear: the Skeptic's reason and verdict disagreed twice, so a person should judge it. " + reason
+    return verdict, reason

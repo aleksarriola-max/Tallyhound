@@ -138,12 +138,13 @@ def engine_settings(running: bool) -> None:
     from . import llm
     S = st.session_state
     st.markdown("**Engine for uploaded files**")
-    st.selectbox("Engine", ["Built-in rules", "Built-in rules + Ollama Skeptic", "Ollama agents"], key="adv_engine", disabled=running,
+    st.selectbox("Engine", ["Built-in rules", "Built-in rules + Ollama Skeptic", "Ollama agents", "Ollama agents with tools"], key="adv_engine", disabled=running,
                  label_visibility="collapsed")
     st.caption("Built-in rules are fixed tests: fast and repeatable. Ollama agents use a model on this computer "
                "to read the files, with a Skeptic that challenges each finding. Rules + Skeptic finds candidates with the fixed "
-               "rules and lets the model only challenge them: better coverage than the model alone.")
-    if S.get("adv_engine") in ("Ollama agents", "Built-in rules + Ollama Skeptic"):
+               "rules and lets the model only challenge them: better coverage than the model alone. Agents with tools query "
+               "the files (filter rows, find duplicates) instead of reading them whole: for large files.")
+    if S.get("adv_engine") in ("Ollama agents", "Built-in rules + Ollama Skeptic", "Ollama agents with tools"):
         c1, c2 = st.columns(2)
         c1.text_input("Model", value=llm.DEFAULT_MODEL, key="adv_model", disabled=running)
         c2.text_input("Ollama address", value=llm.DEFAULT_URL, key="adv_url", disabled=running)

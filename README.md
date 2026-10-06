@@ -61,6 +61,8 @@ Needs Python 3.10+ and Streamlit 1.40 or newer. Best viewed in a window at least
 - **Run analysis** - a four-step flow: choose data, run the agents, review, download.
 - **Quote check** - a finding is shown only if its evidence appears word for word, at the stated line, in its source file under `data/source/`. Anything else is hidden.
 - **Skeptic review** - a second agent tries to disprove every finding. In this demo the verdicts are pre-written.
+- **Skeptic self-check** - if the Skeptic's verdict contradicts its own reason, it is asked once more; if it still disagrees with itself the finding is marked Unclear for a person to judge.
+- **Payment gate on uploads** - add a `payment_run.csv` (line, supplier, invoice, amount; vendor_id and bank_last4 if you have them) and the eight checks run against your vendor master, approvals and past payments. Checks that need a file you did not upload are listed as not checked. Challenge zips include a payment run with four lines that should be held.
 - **Policy page** - change the PO, director, meal and receipt limits and the split-order window; the rules use them on the next run.
 - **Column matching** - if an uploaded CSV uses other column names, match them to the expected fields once. Only the header is renamed, so quotes are still exact lines of your file. Dates in several formats and amounts like `$1,234.50` or `(12.00)` are understood.
 - **Owner and notes** - give each finding an owner and a note; both are saved and exported.
@@ -69,7 +71,7 @@ Needs Python 3.10+ and Streamlit 1.40 or newer. Best viewed in a window at least
 - **Guided tour** - a checklist at the top of Run analysis walks a first-time visitor through the whole flow: start a run, watch an agent fail, retry, review, download. Hide it any time.
 - **Saved work** - decisions, reasons, cleared holds and the audit trail are saved to a small file keyed by a random id in the page address (`?s=...`), so a reload keeps them. Keep the address to come back to your work; "Reset demo" wipes it. Saved files are deleted after 14 days.
 - **Your own files** - open "Add new data" on step 1 and upload a zip containing any of `payments.csv`, `approvals.csv`, `vendors.csv`, `contracts.txt`, `expenses.csv` (same columns as `data/source/`; to try it, zip that folder). Pick the new entry in the Monthly audit picker and run it. Findings, review and downloads then work on your files. Payment runs, supplier recovery and subscriptions still use the sample data. The zip is read in memory and never written to disk, and each dataset keeps its own decisions.
-- **Three engines for uploads** (Advanced on step 1): *Rules + Ollama Skeptic* finds candidates with the fixed rules and lets the model only challenge them (best coverage). *Built-in rules* are fixed tests of the policy, fast and repeatable, no AI. *Ollama agents* send each file to a model running on your computer (default `qwen3.5:9b`), then a Skeptic pass challenges every finding. The model never supplies evidence: a finding is kept only if its quote is an exact copy of the line at the stated position, so an invented quote is dropped. Ollama is only reachable when you run the app on the same computer (`ollama serve`); the hosted demo uses the built-in rules.
+- **Four engines for uploads** (Advanced on step 1): *Ollama agents with tools* query the files (filter rows, find duplicates, read given lines) instead of reading them whole, so they scale to big files. *Rules + Ollama Skeptic* finds candidates with the fixed rules and lets the model only challenge them (best coverage). *Built-in rules* are fixed tests of the policy, fast and repeatable, no AI. *Ollama agents* send each file to a model running on your computer (default `qwen3.5:9b`), then a Skeptic pass challenges every finding. The model never supplies evidence: a finding is kept only if its quote is an exact copy of the line at the stated position, so an invented quote is dropped. Ollama is only reachable when you run the app on the same computer (`ollama serve`); the hosted demo uses the built-in rules.
 - **Simulated run** - for the sample company the agent run is a timer, about 20 seconds per queue item. The Expenses agent fails once on purpose so you can try Retry.
 
 ## Project layout
@@ -87,6 +89,8 @@ tallyhound/
   custom.py            uploads, the run for uploaded files, per-dataset decisions
   rules.py             the built-in rule checks
   agents.py            Ollama agents and the Skeptic
+  agents_tools.py      tool-using Ollama agents
+  gate.py              payment gate checks for uploaded runs
   llm.py               small Ollama client
   score.py             the Scorecard maths
   challenge.py         challenge generator with answer keys

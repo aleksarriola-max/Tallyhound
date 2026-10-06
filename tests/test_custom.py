@@ -82,7 +82,9 @@ class Fake(BaseHTTPRequestHandler):
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         user = req["messages"][1]["content"]
-        if "Proposed finding" in user:
+        if "tools" in req:                                   # tool-using agent: answer "nothing to do"
+            out = None
+        elif "Proposed finding" in user:
             out = {"verdict": "Doubtful", "reason": "Could be a credit note."}
         else:
             lines = {int(a.split("\t")[0]): a.split("\t", 1)[1] for a in user.splitlines() if "\t" in a and a.split("\t")[0].isdigit()}
@@ -92,7 +94,8 @@ class Fake(BaseHTTPRequestHandler):
             made_up = dict(good, title="Invented", evidence="this line is not in the file")
             wrong_line = dict(good, title="Wrong line", line_number=n + 1)
             out = {"findings": [good, made_up, wrong_line]}
-        body = json.dumps({"message": {"content": json.dumps(out)}}).encode()
+        msg = {"role": "assistant", "content": ""} if out is None else {"content": json.dumps(out)}
+        body = json.dumps({"message": msg}).encode()
         self.send_response(200); self.end_headers(); self.wfile.write(body)
 
 
@@ -173,3 +176,10 @@ def test_notice_when_upload_exists_but_sample_is_showing():
     at.session_state.uploads = {"mine": {}}
     at.run()
     assert any("SAMPLE" in w.value for w in at.warning)
+
+
+def test_tools_engine_runs_through_the_job(fake_ollama):
+    job = custom.Job("t", {"payments.csv": sample_files()["payments.csv"]}, "ollama-tools", "fake:1b", fake_ollama,
+                     policy(), ["Approvals", "Vendors", "Contracts", "Expenses"])
+    job.thread.join(30)
+    assert job.done, job.failed

@@ -8,7 +8,8 @@ import streamlit as st
 from . import challenge, custom, rules, score
 from . import common as C
 
-ENGINE_NAMES = {"rules": "Built-in rules", "rules+skeptic": "Rules + Ollama Skeptic", "ollama": "Ollama agents"}
+ENGINE_NAMES = {"rules": "Built-in rules", "rules+skeptic": "Rules + Ollama Skeptic", "ollama": "Ollama agents",
+                "ollama-tools": "Ollama agents with tools"}
 SAMPLE = "Sample company"
 
 

@@ -22,7 +22,8 @@ def new_item(label: str, workflow: str, option: str, skip: frozenset = frozenset
     S = st.session_state
     extra = {}
     if workflow == "audit" and custom.uploaded(option):
-        extra = dict(custom=option, engine={"Ollama agents": "ollama", "Built-in rules + Ollama Skeptic": "rules+skeptic"}.get(S.get("adv_engine"), "rules"),
+        extra = dict(custom=option, engine={"Ollama agents": "ollama", "Built-in rules + Ollama Skeptic": "rules+skeptic",
+                            "Ollama agents with tools": "ollama-tools"}.get(S.get("adv_engine"), "rules"),
                      model=S.get("adv_model") or "qwen3.5:9b", url=S.get("adv_url") or "http://localhost:11434")
     return dict(**extra, label=label, workflow=workflow, option=option, est=int(row["est_min"]),
                 result=int(row["result_findings"]), status="Queued", started="", ticks=0,
