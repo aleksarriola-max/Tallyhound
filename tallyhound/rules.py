@@ -542,10 +542,12 @@ def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
             changed, paid_on = r.d("status_changed_on"), r.d("last_paid_on")
             if not (changed and paid_on and paid_on <= changed):       # closed after its final payment is normal
                 out.append(Hit("Vendors", "4.1", "Medium", paid,
-                               f"{r['status'].title()} vendor {r['vendor_id']} was paid ${paid:,.2f} on {r['last_paid_on']}",
+                               f"{r['status'].title()} vendor {r['vendor_id']} was paid "
+                               + (f"${paid:,.2f} " if paid else "") + f"on {r['last_paid_on']}",
                                "vendors.csv", ln))
         if r["w9_on_file"].strip().upper() in NO and r["last_paid_on"].strip():
-            out.append(Hit("Vendors", "4.4", "Low", paid, f"{r['vendor_id']} paid ${paid:,.2f} with no tax form on file", "vendors.csv", ln))
+            out.append(Hit("Vendors", "4.4", "Low", paid, f"{r['vendor_id']} paid " + (f"${paid:,.2f} " if paid else "")
+                           + "with no tax form on file", "vendors.csv", ln))
         t = re.sub(r"[^0-9a-z]", "", r["tax_id"].lower())
         if t and t not in PLACEHOLDER_ID and set(t) != {"0"} and len(t) >= 4:      # "N/A" or "000000000" is not an ID
             remit = re.search(r"remit[ -]?to", r["name"], re.I)
@@ -635,6 +637,10 @@ def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
             if people and amt / people > L["meal_limit"]:
                 out.append(Hit("Expenses", "6.1", "Low", amt,
                                f"Meal at ${amt / people:,.2f} per person (limit ${L['meal_limit']:,.2f})", "expenses.csv", ln))
+            elif not people and amt > L["meal_limit"]:       # no head count anywhere: over the limit even for one
+                out.append(Hit("Expenses", "6.1", "Low", amt,
+                               f"Meal of ${amt:,.2f} with no head count recorded (limit ${L['meal_limit']:,.2f} per "
+                               "person)", "expenses.csv", ln))
         ref = "" if r["receipt_ref"].strip().upper() in NO_RECEIPT else r["receipt_ref"].strip()
         if amt > L["receipt_limit"] and not ref:
             out.append(Hit("Expenses", "6.2", "Medium", amt, f"Claim {r['claim_id']} of ${amt:,.2f} has no receipt", "expenses.csv", ln))

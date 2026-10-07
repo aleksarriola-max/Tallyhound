@@ -61,7 +61,10 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
         if inv.lower() in seen:
             fail.append(5)
         seen.add(inv.lower())
-        if a is not None and amt > rules._f(a["amount"]) + 0.005:
+        if amt <= 0:                                  # unreadable, zero or negative: nothing a payment run should send
+            fail.append(6)
+            extra[6] = f"Amount \"{r['amount'].strip()}\" is missing, zero or negative"
+        elif a is not None and amt > rules._f(a["amount"]) + 0.005:
             fail.append(6)
         if v is not None and v["bank_changed_on"].strip() and v["bank_verified"].strip().upper() != "YES":
             fail.append(7)

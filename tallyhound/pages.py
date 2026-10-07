@@ -31,8 +31,9 @@ def overview() -> None:
     m[0].metric("Held in payment run", C.money(gt["hold_amt"]))
     m[1].metric("Recoverable", C.money(rec.claim.sum()))
     m[2].metric("Annual savings", f"${subs.saving.sum():,.0f}")
-    m[3].metric("Open findings", int((~f.id.isin(list(st.session_state.decisions))).sum()),
-                help=f"Findings nobody has decided yet, out of {len(f)}")
+    dc = C.decision_counts(f)
+    m[3].metric("Open findings", dc["pending"], help=f"Findings nobody has decided yet, out of {len(f) - dc['shadow']} "
+                "in review" + (f" ({dc['shadow']} more from rules in shadow mode)" if dc["shadow"] else ""))
 
     st.subheader("Findings by area")
     areas = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses"] + (["Invoices"] if (f.area == "Invoices").any() else [])
@@ -221,7 +222,7 @@ def live_activity() -> None:
             st.markdown("**Agents**")
             item = sim.current(st.session_state.sim)
             status = {a["name"]: a["status"] for a in item["agents"]} if item else {}
-            colors = {"Waiting": C.MUTED, "Running": C.TEAL, "Done": C.RELEASE, "Failed": C.HOLD, "Skipped": C.MUTED}
+            colors = {"Waiting": C.MUTED, "Running": C.TEAL_DARK, "Done": C.RELEASE, "Failed": C.HOLD, "Skipped": C.MUTED}
             for n in sim.agent_names():
                 s = status.get(n, "Idle")
                 st.markdown(f"{n} &nbsp; {C.chip(s, colors.get(s, C.MUTED))}", unsafe_allow_html=True)
@@ -237,7 +238,7 @@ def guardrails() -> None:
     for r in range(2):
         cols = st.columns(3)
         for col, item in zip(cols, g[r * 3:r * 3 + 3]):
-            with col, st.container(border=True, height=210):
+            with col, st.container(border=True):
                 st.markdown(f"**{item.name}** &nbsp; {C.badge('Active', C.RELEASE)}", unsafe_allow_html=True)
                 st.markdown(C.esc(item.description))
                 st.markdown(f"<span style='font-size:1.15rem;font-weight:700;color:{C.TEAL_DARK}'>{item.metric.format(**fmt)}</span>",
@@ -256,7 +257,8 @@ def tamper_demo(f: pd.DataFrame) -> None:
     if f.empty:
         st.caption("No findings to try it on.")
         return
-    pick = st.selectbox("Finding", list(f.id), format_func=lambda i: f"{i} - {f.set_index('id').loc[i, 'title']}",
+    titles = dict(zip(f.id, f.title))
+    pick = st.selectbox("Finding", list(f.id), format_func=lambda i: f"{i} - {titles.get(i, '')}",
                         key="tamper_pick")
     r = f.set_index("id").loc[pick]
     text = st.text_area("Quoted line (edit it)", value=r.evidence, key=f"tamper_text_{st.session_state.get('dataset') or 'sample'}_{pick}", height=90)

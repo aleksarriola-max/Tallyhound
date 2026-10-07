@@ -14,8 +14,9 @@ DATA = ROOT / "data"
 SRC = DATA / "source"
 
 TEAL_DARK, TEAL, INK, SKY, PAPER = "#0a3a4f", "#12a1b2", "#07161f", "#b3e0f7", "#f2f9ff"
-SEV_COLOR = {"High": "#9f2a2f", "Medium": "#a8680f", "Low": "#12a1b2"}
-HOLD, RELEASE = "#9f2a2f", "#2b7a55"
+# every colour that carries text meets WCAG AA (4.5:1) against what it sits on; TEAL is for borders and bars only
+SEV_COLOR = {"High": "#9f2a2f", "Medium": "#94590b", "Low": "#0e7480"}
+HOLD, RELEASE = "#9f2a2f", "#1f6b47"
 MUTED = "#5b6b73"
 
 NAV = ["Home", "Review", "Reports", "Settings", "Trust"]
@@ -45,7 +46,14 @@ def esc(text) -> str:
 
 
 def money(x: float) -> str:
-    return f"${x:,.2f}"
+    """$1,234.50 and -$500.00 (not $-500.00). Something that is not a number shows as a dash."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return "-"
+    if v != v:
+        return "-"
+    return f"-${-v:,.2f}" if v < 0 else f"${v:,.2f}"
 
 
 # ---- data ----
@@ -96,12 +104,18 @@ def check_findings(df: pd.DataFrame, getter) -> tuple[pd.DataFrame, pd.DataFrame
     df["amount"] = df["amount"].astype(float)
     df["line_number"] = df["line_number"].astype(int)
     keep, matched_lines, matched_n = [], [], []
+    index: dict[str, dict[str, list[int]]] = {}       # per file: line text -> its line numbers, built once
     for r in df.itertuples():
-        lines = getter(r.source_file)
-        main = [i + 1 for i, ln in enumerate(lines) if ln == r.evidence]
+        if r.source_file not in index:
+            idx: dict[str, list[int]] = {}
+            for i, ln in enumerate(getter(r.source_file), start=1):
+                idx.setdefault(ln, []).append(i)
+            index[r.source_file] = idx
+        where = index[r.source_file]
+        main = list(where.get(r.evidence, []))
         rel_txt = [x for x in str(r.related_evidence).split(" || ") if x]
-        rel = [i + 1 for t in rel_txt for i, ln in enumerate(lines) if ln == t]
-        ok = r.line_number in main and all(any(ln == t for ln in lines) for t in rel_txt)
+        rel = [n for t in rel_txt for n in where.get(t, [])]
+        ok = r.line_number in main and all(t in where for t in rel_txt)
         keep.append(ok)
         matched_lines.append(sorted(set(main + rel)))
         matched_n.append(len(main) + len(rel))
@@ -117,10 +131,12 @@ def load_findings_checked() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def findings_checked() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """(verified, hidden) for whichever data is in review: the sample company or an uploaded dataset."""
+    """(verified, hidden) for whichever data is in review: the sample company or an uploaded dataset. Suppressions
+    set findings aside - but never one a person has already decided, so a rejection stays visible and undoable."""
     from . import custom
     label = custom.active_label()
-    return custom.frame(label) if label else load_findings_checked()
+    ok, hidden = custom.frame(label) if label else load_findings_checked()
+    return custom.apply_suppressions(ok, label), hidden
 
 
 def source_lines(name: str) -> list[str]:
@@ -168,8 +184,9 @@ def gate_totals(df: pd.DataFrame, cleared: dict | None = None) -> dict:
     cleared = cleared or {}
     held = (df.decision == "HOLD") & ~df.line.astype(str).isin(list(cleared))
     h, r = df[held], df[~held]
-    return dict(lines=len(df), total=df.amount.sum(), vendors=df.supplier.nunique(),
-                hold_n=len(h), hold_amt=h.amount.sum(), rel_n=len(r), rel_amt=r.amount.sum(),
+    pos = lambda s: float(s.clip(lower=0).sum())          # noqa: E731  - a negative line never lowers a total
+    return dict(lines=len(df), total=pos(df.amount), vendors=df.supplier.nunique(),
+                hold_n=len(h), hold_amt=pos(h.amount), rel_n=len(r), rel_amt=pos(r.amount),
                 cleared_n=int(((df.decision == "HOLD") & ~held).sum()))
 
 
@@ -341,14 +358,27 @@ def full_trail(fdf: pd.DataFrame) -> pd.DataFrame:
 
 # ---- decisions ----
 def decision_counts(fdf: pd.DataFrame) -> dict:
+    """Approved / rejected / pending findings and the approved money, counted the same way everywhere.
+    Shadow-mode findings are not in review, so they are not pending (counted apart as shadow). Money is counted once
+    per case: findings in one case point at the same lines (a split order and its parts), so a case is worth its
+    largest approved finding, not the sum."""
+    from . import triage
     d = st.session_state.decisions
-    appr = [i for i in fdf.id if d.get(i, {}).get("status") == "Approved"]
-    rej = [i for i in fdf.id if d.get(i, {}).get("status") == "Rejected"]
-    val = fdf[fdf.id.isin(appr)].amount.sum()
-    return dict(approved=len(appr), rejected=len(rej), pending=len(fdf) - len(appr) - len(rej), value=val)
+    shadow = fdf.clause.astype(str).isin(triage.shadow_clauses()) if len(fdf) else pd.Series([], dtype=bool)
+    live = fdf[~shadow] if len(fdf) else fdf
+    status = {i: d.get(i, {}).get("status") for i in live.id}
+    appr = [i for i, s in status.items() if s == "Approved"]
+    rej = [i for i, s in status.items() if s == "Rejected"]
+    val = 0.0
+    if appr:
+        for g in triage.cases(live[live.id.isin(appr)]):
+            val += max(float(x.amount) for x in g)
+    return dict(approved=len(appr), rejected=len(rej), pending=len(live) - len(appr) - len(rej), value=round(val, 2),
+                shadow=int(shadow.sum()) if len(fdf) else 0)
 
 
 def decide(fid: str, status: str, reason: str = "") -> None:
+    st.session_state.setdefault("_pending_ops", []).append(["decide", st.session_state.get("dataset"), fid, status, reason])
     st.session_state.decisions[fid] = dict(status=status, reason=reason)
     log_action("Reviewer", status, fid, reason or "Approved by reviewer")
 
@@ -361,6 +391,7 @@ def save_note(fid: str) -> None:
 
 
 def undo(fid: str) -> None:
+    st.session_state.setdefault("_pending_ops", []).append(["undo", st.session_state.get("dataset"), fid, "", ""])
     st.session_state.decisions.pop(fid, None)
     log_action("Reviewer", "Reset to pending", fid)
 
@@ -395,12 +426,13 @@ CSS = f"""
 .block-container {{ padding-top: 2.6rem; padding-bottom: 3rem; max-width: 1500px; }}
 .th-header {{ display:flex; align-items:center; gap:.9rem; flex-wrap:wrap; margin-bottom:.8rem; }}
 .th-header .th-dot {{ margin-left:auto; }}
+.th-sr {{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }}
 .th-title {{ font-family:'Arial Narrow','Roboto Condensed','Helvetica Neue',Arial,sans-serif; font-stretch:condensed;
   font-weight:800; font-size:1.6rem; letter-spacing:.06em; color:{TEAL_DARK}; }}
 .th-dot {{ display:inline-block; width:.55rem; height:.55rem; border-radius:50%; background:{RELEASE}; margin-right:.35rem; }}
-.th-badge {{ display:inline-block; padding:.08rem .55rem; border-radius:999px; color:#fff; font-size:.74rem;
+.th-badge {{ display:inline-block; padding:.08rem .55rem; border-radius:999px; color:#fff; font-size:.8rem;
   font-weight:700; letter-spacing:.03em; white-space:nowrap; }}
-.th-chip {{ display:inline-block; padding:.05rem .5rem; border-radius:4px; font-size:.74rem; font-weight:700;
+.th-chip {{ display:inline-block; padding:.05rem .5rem; border-radius:4px; font-size:.8rem; font-weight:700;
   border:1px solid; white-space:nowrap; }}
 .th-muted {{ color:{MUTED}; font-size:.82rem; }}
 .th-src {{ background:#fff; border:1px solid {SKY}; border-radius:6px; padding:.4rem 0; font-family:ui-monospace,Menlo,Consolas,monospace;
@@ -417,10 +449,13 @@ section[data-testid="stSidebar"] [data-testid="stSelectbox"] * {{
   color:{INK} !important; -webkit-text-fill-color:{INK} !important; }}
 section[data-testid="stSidebar"] [data-testid="stSelectbox"] label, section[data-testid="stSidebar"] [data-testid="stSelectbox"] label * {{
   color:{PAPER} !important; -webkit-text-fill-color:{PAPER} !important; }}
-.th-foot {{ font-size:.74rem; opacity:.75; margin-top:1.4rem; }}
+.th-foot {{ font-size:.8rem; opacity:.75; margin-top:1.4rem; }}
 div[data-testid="stMetricValue"] {{ color:{TEAL_DARK}; }}
 button[data-testid="stBaseButton-primary"] {{ background:{TEAL_DARK}; border-color:{TEAL_DARK}; color:#fff; }}
-button[data-testid="stBaseButton-primary"]:hover {{ background:{TEAL}; border-color:{TEAL}; color:#fff; }}
+button[data-testid="stBaseButton-primary"]:hover {{ background:#0f5a78; border-color:#0f5a78; color:#fff; }}
+section[data-testid="stSidebar"] :focus-visible {{ outline:2px solid {SKY} !important; outline-offset:2px; }}
+section[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) p {{ color:{SKY}; font-weight:700;
+  text-decoration:underline; text-underline-offset:3px; }}
 @media (max-width: 1150px) {{
   section[data-testid="stMain"] [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; row-gap: .6rem; }}
   section[data-testid="stMain"] [data-testid="stColumn"] {{ min-width: 260px; }}
@@ -452,7 +487,8 @@ def banner_and_header() -> None:
             if mine else f'<span class="th-chip" style="color:{MUTED};border-color:{MUTED}">Demo data: Bramblecourt '
                          'Instruments Ltd (fictional)</span>')
     st.markdown(f'<div class="th-header"><span class="th-title">TALLYHOUND</span>{chip}'
-                f'<span class="th-dot" title="Local model, offline, sandboxed"></span></div>', unsafe_allow_html=True)
+                f'<span class="th-dot" role="img" aria-label="Working offline" title="Working offline: no cloud calls">'
+                f'</span></div>', unsafe_allow_html=True)
     S = st.session_state
     if S.get("custom") and not mine:
         st.warning("You are looking at the SAMPLE company. Your uploaded results are ready: choose "
@@ -463,5 +499,9 @@ def source_html(lines: list[str], hits: list[int], main: int | None = None, star
     out = []
     for i, ln in enumerate(lines, start=start):
         cls = "hit" if i == main else ("rel" if i in hits else "")
-        out.append(f'<div class="th-row {cls}"><span class="th-ln">{i}</span>{html.escape(ln)}</div>')
-    return '<div class="th-src">' + "".join(out) + "</div>"
+        mark = "&#9654; " if cls == "hit" else ("+ " if cls == "rel" else "")       # not by colour alone
+        label = " (quoted line)" if cls == "hit" else (" (related line)" if cls == "rel" else "")
+        out.append(f'<div class="th-row {cls}"><span class="th-ln">{i}</span>{mark}{html.escape(ln)}'
+                   f'<span class="th-sr">{label}</span></div>')
+    return ('<div class="th-src" tabindex="0" role="region" aria-label="Lines of the source file">'
+            + "".join(out) + "</div>")

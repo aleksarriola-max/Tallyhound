@@ -62,9 +62,12 @@ def limit_hints(findings, decisions: dict, limits: dict) -> list[dict]:
     """Suggest a higher limit when two or more findings under one limit clause were rejected and all sit within
     25% of the limit."""
     out = []
+    rejected = {i for i, d in decisions.items() if isinstance(d, dict) and d.get("status") == "Rejected"}
+    if len(rejected) < 2:
+        return out
+    pool = findings[findings.id.isin(rejected)]           # only rejected findings matter: look at those once
     for clause, key in LIMIT_OF.items():
-        rej = findings[(findings.clause.astype(str) == clause) &
-                       findings.id.map(lambda i: decisions.get(i, {}).get("status") == "Rejected")]
+        rej = pool[pool.clause.astype(str) == clause]
         if len(rej) < 2:
             continue
         lim = float(limits[key])

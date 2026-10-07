@@ -26,7 +26,8 @@ COLS = ["id", "severity", "area", "clause", "amount", "title", "skeptic_verdict"
 
 # ---------------------------------------------------------------- reading a zip
 MAX_LINE_CHARS = 4000
-MAX_UNZIPPED_MB = 100          # everything in one zip, once unpacked (stops "zip bombs")
+# a public copy (the hosted demo, ~1 GB of memory shared by every visitor) gets tighter limits than your own server
+MAX_UNZIPPED_MB = 20 if llm.public() else 100          # everything in one zip, once unpacked (stops "zip bombs")
 
 
 def decode(raw: bytes) -> str:
@@ -88,7 +89,10 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
                 continue
             raw = read(info)
             if raw is not None:
-                pdf_raw.append((base, raw))
+                name, k = base, 2
+                while any(n == name for n, _ in pdf_raw):     # north/invoice.pdf and south/invoice.pdf: keep both
+                    name, k = f"{base.rsplit('.', 1)[0]} ({k}).pdf", k + 1
+                pdf_raw.append((name, raw))
             continue
         if stem == "answer_key" and base.lower().endswith(".csv"):
             raw = read(info)
@@ -220,7 +224,8 @@ def uploaded(option: str) -> bool:
 class Job:
     """Runs the agents for one uploaded dataset on a background thread. Never touches Streamlit state."""
 
-    def __init__(self, label, files, engine, model, url, policy, skip, limits=None):
+    def __init__(self, label, files, engine, model, url, policy, skip, limits=None, started_by: str = ""):
+        self.started_by = started_by        # who pressed Run: segregation of duties is checked against this person
         self.limits = dict(limits or rules.LIMITS)
         self.label, self.files, self.engine, self.model, self.url = label, files, engine, model, url
         self.policy, self.skip = policy, set(skip)
@@ -321,7 +326,7 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
-MAX_RUNNING = 4                 # analyses running at once on this server; more wait for a free slot
+MAX_RUNNING = 1 if llm.public() else 4   # analyses running at once on this server; more wait for a free slot
 IDLE_DONE_SECONDS = 30 * 60     # a finished or failed job nobody has looked at for this long is let go
 IDLE_ANY_SECONDS = 2 * 3600     # any job nobody has looked at for this long (its tab was closed) is let go
 
@@ -344,7 +349,7 @@ def running_jobs() -> int:
 def tick_item(sim: dict, item: dict) -> bool:
     """Called once a second for a running uploaded-data item. Returns True when the page must rerun."""
     S = st.session_state
-    key = f"{S.get('sid', '')}|{item['label']}"
+    key = f"{S.get('sid', '')}|{item['label']}|{item.get('run_id', '')}"     # a run id: a stale job is never reused
     prune_jobs()
     job = JOBS.get(key)
     if job is None:
@@ -356,7 +361,9 @@ def tick_item(sim: dict, item: dict) -> bool:
         item.pop("_waiting", None)
         job = JOBS[key] = Job(item["custom"], view(item["custom"]), item.get("engine", "rules"),
                               item.get("model", llm.DEFAULT_MODEL), item.get("url", llm.DEFAULT_URL), C.policy(),
-                              [a["name"] for a in item["agents"] if a["status"] == "Skipped"], C.limits())
+                              [a["name"] for a in item["agents"] if a["status"] == "Skipped"], C.limits(),
+                              started_by=item.get("started_by", ""))
+        job.run_id = item.get("run_id", "")
         sim_log(sim, "Orchestrator", f"Reading {len(job.files)} uploaded file(s) with "
                 + ({"rules": "the built-in rules", "rules+skeptic": f"the built-in rules and an Ollama Skeptic ({job.model})",
                     "ollama-tools": f"Ollama agents with tools ({job.model})"}.get(job.engine, f"Ollama ({job.model})")))
@@ -375,6 +382,10 @@ def tick_item(sim: dict, item: dict) -> bool:
         sim_log(sim, bad[0], f"Failed: {bad[1]['msg']}")
         return True
     if job.done:
+        if any(h.get("run_id") and h.get("run_id") == item.get("run_id") for h in S.get("run_history", [])):
+            JOBS.pop(key, None)                 # already finalized (by another tab): never twice
+            from . import sim as simmod
+            return simmod._finish_item(sim, item)
         item["elapsed"] = int(time.time() - job.t0)
         finalize(item["custom"], job)
         item["result"] = len(S.custom[item["custom"]])
@@ -389,7 +400,7 @@ def sim_log(sim: dict, agent: str, msg: str) -> None:
 
 
 def retry_job(item: dict) -> None:
-    job = JOBS.get(f"{st.session_state.get('sid', '')}|{item['label']}")
+    job = JOBS.get(f"{st.session_state.get('sid', '')}|{item['label']}|{item.get('run_id', '')}")
     if job:
         job.start()
 
@@ -406,8 +417,10 @@ def finalize(label: str, job: Job) -> None:
     for i, r in enumerate(recs, start=1):
         r["id"] = f"F-{i:02d}"
     S.setdefault("custom", {})[label] = recs
+    S["_fver"] = S.get("_fver", 0) + 1
     S.setdefault("run_history", []).append(dict(
-        label=label, engine=job.engine, model=job.model if job.engine != "rules" else "", user=S.get("user") or "",
+        label=label, run_id=getattr(job, "run_id", ""), engine=job.engine, model=job.model if job.engine != "rules" else "",
+        user=getattr(job, "started_by", "") or S.get("user") or "",
         time=datetime.now().strftime("%Y-%m-%d %H:%M"),
         proposed=[dict(source_file=r["source_file"], line_number=r["line_number"], related_lines=r.get("related_lines", []),
                        verdict=r.get("verdict", ""), reason=r.get("reason", ""), clause=r["clause"], area=r["area"],
@@ -454,6 +467,10 @@ def frame(label: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Findings for an uploaded dataset as (verified, hidden), same shape as the sample findings."""
     S = st.session_state
     files = S.uploads[label]
+    key = (S.get("_fver", 0), id(S.custom[label]), len(S.custom[label]), id(files))   # same findings and files
+    hit = S.get("_frame_cache", {}).get(label)
+    if hit and hit[0] == key:
+        return hit[1][0].copy(), hit[1][1].copy()          # copies: a caller changing its frame cannot spoil the cache
     rows = []
     for r in S.custom[label]:
         lines = files.get(r["source_file"], [])
@@ -466,22 +483,50 @@ def frame(label: str) -> tuple[pd.DataFrame, pd.DataFrame]:
             source_file=r["source_file"], line_number=r["line_number"], innocent_explanations=r.get("innocent", ""),
             skeptic_reason=r.get("reason", ""), proposed_fix=r.get("fix", "")))
     df = pd.DataFrame(rows, columns=COLS)
-    ok, hidden = C.check_findings(df, lambda n: files.get(n, []))
-    if not st.session_state.get("show_suppressed") and st.session_state.get("suppressions"):
-        from . import learn
-        vf = view(label)
-        keep = [not learn.is_suppressed(str(r.clause), r.source_file, learn.entity(
-            r.source_file, r.evidence, vf.get(r.source_file, [""])[0] if r.source_file.endswith(".csv") else ""))
+    out = C.check_findings(df, lambda n: files.get(n, []))
+    S.setdefault("_frame_cache", {})[label] = (key, out)
+    return out[0].copy(), out[1].copy()
+
+
+def apply_suppressions(ok: pd.DataFrame, label: str | None) -> pd.DataFrame:
+    """Hide undecided findings that match a suppression ("don't flag this again"), for uploads and the sample."""
+    S = st.session_state
+    if S.get("show_suppressed") or not S.get("suppressions") or ok.empty:
+        S["_n_suppressed"] = 0
+        return ok
+    from . import learn
+    vf = view(label) if label else {}
+    decided = S.get("decisions", {})
+
+    def head(name):
+        if not name.endswith(".csv"):
+            return ""
+        lines = vf.get(name) if label else C.read_source(name)
+        return lines[0] if lines else ""
+    heads = {n: head(n) for n in set(ok.source_file)}
+    keep = [r.id in decided or not learn.is_suppressed(str(r.clause), r.source_file,
+                                                         learn.entity(r.source_file, r.evidence, heads[r.source_file]))
             for r in ok.itertuples()]
-        st.session_state["_n_suppressed"] = len(ok) - sum(keep)
-        ok = ok.loc[pd.Series(keep, index=ok.index, dtype=bool)].reset_index(drop=True)
-    else:
-        st.session_state["_n_suppressed"] = 0
-    return ok, hidden
+    S["_n_suppressed"] = len(ok) - sum(keep)
+    return ok.loc[pd.Series(keep, index=ok.index, dtype=bool)].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------- data check before a run
 def profile(label: str) -> list[dict]:
+    """The data check for a dataset, worked out once per version of its files and settings."""
+    import json
+    S = st.session_state
+    key = (id(S.get("uploads", {}).get(label)), json.dumps(S.get("mappings", {}).get(label), sort_keys=True, default=str),
+           json.dumps(S.get("date_order", {}).get(label), sort_keys=True, default=str))
+    hit = S.get("_profile_cache", {}).get(label)
+    if hit and hit[0] == key:
+        return [dict(x) for x in hit[1]]
+    out = _profile(label)
+    S.setdefault("_profile_cache", {})[label] = (key, out)
+    return [dict(x) for x in out]
+
+
+def _profile(label: str) -> list[dict]:
     """What Tallyhound believes about each uploaded file, so misread data is caught before it becomes findings.
     Each item: file, level (ok / warn), message."""
     import re as _re

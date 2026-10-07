@@ -17,6 +17,8 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 from . import common as C
 
+MEMO_ROWS = 200          # per section; the workbook lists everything
+
 
 def decisions_frame(draft: bool = False) -> pd.DataFrame:
     f = C.findings()
@@ -25,7 +27,10 @@ def decisions_frame(draft: bool = False) -> pd.DataFrame:
     if draft:
         out["decision"], out["reviewer_reason"] = "Not reviewed (draft)", ""
     else:
-        out["decision"] = [d.get(i, {}).get("status", "Pending") for i in f.id]
+        from . import triage
+        shadow = set(triage.shadow_clauses())
+        out["decision"] = ["Shadow (not in review)" if str(c) in shadow else d.get(i, {}).get("status", "Pending")
+                           for i, c in zip(f.id, f.clause)]
         out["reviewer_reason"] = [d.get(i, {}).get("reason", "") for i in f.id]
     notes = st.session_state.get("notes", {})
     out["owner"] = [notes.get(i, {}).get("owner", "") for i in f.id]
@@ -52,6 +57,11 @@ def _style(ws) -> None:
     for i, col in enumerate(ws.columns, start=1):
         width = max(len(str(c.value)) if c.value is not None else 0 for c in col)
         ws.column_dimensions[get_column_letter(i)].width = min(max(width + 2, 10), 60)
+        name = str(ws.cell(1, i).value or "").lower()
+        if any(w in name for w in ("amount", "value", "claim", "cost", "saving")):    # money: two decimals everywhere
+            for c in col[1:]:
+                if isinstance(c.value, (int, float)) and not isinstance(c.value, bool):
+                    c.number_format = "#,##0.00"
     ws.freeze_panes = "A2"
 
 
@@ -62,7 +72,7 @@ def build_workbook(draft: bool = False) -> bytes:
     summary = pd.DataFrame([
         ["Status", "DRAFT - not reviewed" if draft else
          ("Reviewed by a person" if dc["pending"] == 0 else
-          f"PARTLY REVIEWED - {dc['pending']} of {len(f)} findings still pending")],
+          f"PARTLY REVIEWED - {dc['pending']} of {len(f) - dc['shadow']} findings still pending")],
         ["Company", f"Uploaded files: {C.custom_label()}" if C.custom_label() else "Bramblecourt Instruments Ltd (fictional)"],
         ["Notice", "Findings proposed by agents or rules and decided by a person" if C.custom_label()
          else "FICTIONAL TEST DATA - not a real company"],
@@ -132,9 +142,12 @@ def build_memo() -> bytes:
                   "Agents only proposed these findings; every decision recorded here was made by a person.", ss["Normal"]),
         Spacer(1, 8),
     ]
-    if not C.custom_label():
-        gt = C.gate_totals(C.gate("payment_run_2026-10-01.csv"), st.session_state.cleared)
-        story += [Paragraph(f"Payment gate (run 2026-10-01): {gt['hold_n']} lines on HOLD ({C.money(gt['hold_amt'])}), "
+    from . import pages
+    run_name, (gdf, clearable) = next(iter(pages.gate_runs().items()))   # the same run the Payment run tab shows
+    if not gdf.empty and (not C.custom_label() or run_name.startswith("Uploaded")):
+        gt = C.gate_totals(gdf, st.session_state.cleared if clearable else None)
+        story += [Paragraph(f"Payment gate ({html.escape(run_name)}): {gt['hold_n']} lines on HOLD "
+                            f"({C.money(gt['hold_amt'])}), "
                             f"{gt['rel_n']} lines to RELEASE ({C.money(gt['rel_amt'])})"
                             + (f", including {gt['cleared_n']} hold(s) cleared by a reviewer." if gt["cleared_n"] else "."),
                             ss["Normal"]), Spacer(1, 8)]
@@ -145,7 +158,8 @@ def build_memo() -> bytes:
             story += [Paragraph("None.", small), Spacer(1, 4)]
             continue
         rows = [["ID", "Severity", "Area", "Amount", "Finding"]]
-        for r in part.itertuples():
+        shown = part.sort_values("amount", ascending=False).head(MEMO_ROWS)
+        for r in shown.itertuples():
             rows.append([r.id, r.severity, r.area, C.money(r.amount), Paragraph(html.escape(str(r.title)), small)])
         t = Table(rows, colWidths=[14 * mm, 18 * mm, 22 * mm, 24 * mm, 98 * mm], repeatRows=1)
         t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0a3a4f")),
@@ -153,6 +167,9 @@ def build_memo() -> bytes:
                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
                                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#b3e0f7"))]))
         story += [t, Spacer(1, 6)]
+        if len(part) > MEMO_ROWS:
+            story += [Paragraph(f"... and {len(part) - MEMO_ROWS} more (the {MEMO_ROWS} largest are listed; the workbook "
+                                "has every finding).", small), Spacer(1, 6)]
     story += [Spacer(1, 14), Paragraph("Reviewed by: ______________________   Date: ______________", ss["Normal"])]
     doc.build(story)
     return buf.getvalue()

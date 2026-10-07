@@ -38,8 +38,8 @@ def policy() -> dict:
 
 # ---- reading zips
 def test_parse_zip_reads_the_five_files_and_ignores_junk():
-    z = make_zip({**{p.name: p.read_text() for p in SRC.iterdir()}, "__MACOSX/._x": "junk", "notes.docx": "x",
-                  "sub/Payments_Sept.csv": (SRC / "payments.csv").read_text()})
+    z = make_zip({**{p.name: p.read_text(encoding="utf-8") for p in SRC.iterdir()}, "__MACOSX/._x": "junk", "notes.docx": "x",
+                  "sub/Payments_Sept.csv": (SRC / "payments.csv").read_text(encoding="utf-8")})
     files, notes = custom.parse_zip(z)
     assert set(files) == {"payments.csv", "approvals.csv", "vendors.csv", "contracts.txt", "expenses.csv"}
     assert any("notes.docx" in n for n in notes)
@@ -126,7 +126,7 @@ def test_unreachable_ollama_shows_as_a_failed_agent():
 # ---- the whole flow in the app
 def test_upload_run_review_and_export_end_to_end():
     at = AppTest.from_file(APP, default_timeout=60).run()
-    files, _ = custom.parse_zip(make_zip({p.name: p.read_text() for p in SRC.iterdir()}))
+    files, _ = custom.parse_zip(make_zip({p.name: p.read_text(encoding="utf-8") for p in SRC.iterdir()}))
     at.session_state.uploads = {"mine": files}
     at.session_state.extra_opts = {"audit": {"mine": "5 of 5 files"}}
     at.run()

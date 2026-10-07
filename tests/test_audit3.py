@@ -141,8 +141,12 @@ def test_expense_placeholders_categories_and_head_counts():
              "E3,2026-09-03,R. Chen,Meals,400.00,rc-9,Client dinner (2026),",
              "E4,2026-09-03,A. Patel,MEALS,90.00,RC-9,Team lunch,three",
              "E5,2026-09-04,A. Patel,SUPPLIES,30.00,RC-7,personal protective equipment,"]
-    got = clauses(rules.expenses(lines))
-    assert got.count("6.2") == 2 and "6.5" in got and "6.3" not in got and "6.1" not in got
+    hits = rules.expenses(lines)
+    got = clauses(hits)
+    assert got.count("6.2") == 2 and "6.5" in got and "6.3" not in got
+    # "(2026)" is not a head count, so the $400 dinner has none: flagged as such; "three" people at $90 is fine
+    assert [h.line_number for h in hits if h.clause == "6.1"] == [4]
+    assert "no head count" in next(h.title for h in hits if h.clause == "6.1")
 
 
 # ---- invoice PDFs and contracts
@@ -245,10 +249,10 @@ def test_anonymiser_removes_personal_data_from_free_text_and_reasons(tmp_path):
                                               "NW1 6XE IBAN GB29 NWBK 6016 1331 9268 19 call 020 7946 0958,2"]},
             "must_not_flag": []}
     src = tmp_path / "case.json"
-    src.write_text(json.dumps(case))
+    src.write_text(json.dumps(case), encoding="utf-8")
     subprocess.run([sys.executable, str(ROOT / "scripts" / "anonymise.py"), str(src), "--out", str(tmp_path / "o")],
                    check=True, capture_output=True)
-    text = (tmp_path / "o" / "case.json").read_text()
+    text = (tmp_path / "o" / "case.json").read_text(encoding="utf-8")
     for secret in ["Maria", "Gonzalez", "acme-corp", "12345678", "Mike Ross", "Pryce", "Kate Lowe", "Baker", "NW1 6XE",
                    "6016 1331", "7946 0958"]:
         assert secret not in text, secret
@@ -257,7 +261,7 @@ def test_anonymiser_removes_personal_data_from_free_text_and_reasons(tmp_path):
 
 def test_without_a_writable_disk_the_trail_key_is_secret_not_a_constant(monkeypatch, tmp_path):
     monkeypatch.delenv("TALLYHOUND_TRAIL_KEY", raising=False)
-    (tmp_path / "a-file").write_text("x")                       # a folder cannot be made inside a file
+    (tmp_path / "a-file").write_text("x", encoding="utf-8")                       # a folder cannot be made inside a file
     monkeypatch.setattr(store, "state_dir", lambda: tmp_path / "a-file" / "x")
     monkeypatch.setattr(C, "_EPHEMERAL_KEY", None)
     k = C._trail_key()
@@ -286,9 +290,9 @@ def test_anonymised_month_gives_the_same_findings_every_run(tmp_path, run):
     src = tmp_path / "src"
     src.mkdir()
     for n, v in files.items():
-        (src / n).write_text("\n".join(v) + "\n")
+        (src / n).write_text("\n".join(v) + "\n", encoding="utf-8")
     subprocess.run([sys.executable, str(ROOT / "scripts" / "anonymise.py"), str(src), "--out", str(tmp_path / "o")],
                    check=True, capture_output=True)
-    out = {p.name: p.read_text().splitlines() for p in (tmp_path / "o").iterdir()}
+    out = {p.name: p.read_text(encoding="utf-8").splitlines() for p in (tmp_path / "o").iterdir()}
     key = lambda fs: sorted((h.clause, h.source_file, h.line_number) for h in rules.analyze(fs))  # noqa: E731
     assert key(files) == key(out)

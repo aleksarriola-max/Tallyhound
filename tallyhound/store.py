@@ -26,8 +26,18 @@ TEAM = "team"            # the shared workspace when sign-in is on
 _SID = re.compile(r"^(?:[0-9a-f]{12}|[0-9a-f]{32})$")   # 12 = links made before the audit; new ones are 128-bit
 
 
+def _default_state_dir() -> Path:
+    """Next to the code, except on Windows: there a clone usually sits in Documents, which OneDrive syncs, and a
+    synced SQLite database gets "database is locked" errors. %LOCALAPPDATA% is never synced. A folder already in use
+    next to the code is kept, so nobody loses saved work."""
+    here = Path(__file__).resolve().parent.parent / ".tallyhound_state"
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA") and not here.exists():
+        return Path(os.environ["LOCALAPPDATA"]) / "Tallyhound"
+    return here
+
+
 def state_dir() -> Path:
-    d = Path(os.environ.get("TALLYHOUND_STATE_DIR") or Path(__file__).resolve().parent.parent / ".tallyhound_state")
+    d = Path(os.environ.get("TALLYHOUND_STATE_DIR") or _default_state_dir())
     if not d.exists():
         d.mkdir(parents=True, exist_ok=True)
         try:
@@ -41,11 +51,18 @@ def write_private(path: Path, text: str) -> None:
     """Write a file readable only by the server's user, atomically (a crash mid-write never leaves half a file)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
-        os.replace(tmp, path)
+        for attempt in range(10):          # on Windows a virus scanner or sync tool may hold the old file a moment
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -76,17 +93,20 @@ def _write(sid: str, text: str, expect: float | None = None) -> float | None:
     version, or None when someone else got there first."""
     now = time.time()
     with _db() as con:
-        if expect is not None:
+        if expect is None:              # this tab saw no saved work: create it, unless someone else just did
+            cur = con.execute("INSERT OR IGNORE INTO state (sid, data, updated) VALUES (?, ?, ?)", (sid, text, now))
+        else:                           # changed or deleted (a reset) since this tab loaded it: refuse
             cur = con.execute("UPDATE state SET data = ?, updated = ? WHERE sid = ? AND updated = ?",
                               (text, now, sid, expect))
-            if cur.rowcount == 0 and con.execute("SELECT 1 FROM state WHERE sid = ?", (sid,)).fetchone():
-                return None
-            if cur.rowcount:
-                return now
+    return now if cur.rowcount else None
+
+
+def _put(sid: str, text: str) -> None:
+    """Save without a version check (rows only one writer changes at a time: run progress)."""
+    with _db() as con:
         con.execute("INSERT INTO state (sid, data, updated) VALUES (?, ?, ?) "
                     "ON CONFLICT(sid) DO UPDATE SET data = excluded.data, updated = excluded.updated",
-                    (sid, text, now))
-    return now
+                    (sid, text, time.time()))
 
 
 def _version(sid: str) -> float | None:
@@ -97,7 +117,7 @@ def _version(sid: str) -> float | None:
 
 def _delete(sid: str) -> None:
     with _db() as con:
-        con.execute("DELETE FROM state WHERE sid = ? OR sid = ?", (sid, sid + ":uploads"))
+        con.execute("DELETE FROM state WHERE sid IN (?, ?, ?)", (sid, sid + ":uploads", sid + ":sim"))
     (state_dir() / f"{sid}.json").unlink(missing_ok=True)
 
 
@@ -119,11 +139,21 @@ def _sweep() -> None:
 
 def snapshot() -> dict:
     S = st.session_state
-    snap = {k: S.get(k) for k in KEYS if k != "uploads"}   # uploads are big: saved separately, only when they change
-    # a run in progress is saved too: after a reload the demo run carries on, and an uploaded-data run picks up its
-    # analysis again (or restarts it, if the server restarted meanwhile)
-    snap["sim"] = S.get("sim")
-    return snap
+    # uploads are big and the run's progress changes every second: both are saved in rows of their own, so a run
+    # ticking never makes a teammate's click conflict
+    return {k: S.get(k) for k in KEYS if k != "uploads"}
+
+
+def read_sim(sid: str | None) -> dict | None:
+    """The latest saved run progress (written by whichever tab drives the run)."""
+    if not sid:
+        return None
+    try:
+        raw = _read(sid + ":sim")
+        sim = json.loads(raw) if raw else None
+    except (OSError, ValueError, sqlite3.Error):
+        return None
+    return sim if SHAPES["sim"](sim) else None
 
 
 def session_id() -> str:
@@ -153,7 +183,8 @@ def _list_of(t):
 def _records(v) -> bool:
     need = {"id", "source_file", "line_number", "area", "clause", "severity", "title"}
     return isinstance(v, dict) and all(isinstance(k, str) and isinstance(rs, list) and all(
-        isinstance(r, dict) and need <= set(r) for r in rs) for k, rs in v.items())
+        isinstance(r, dict) and need <= set(r) and isinstance(r["line_number"], int) and not isinstance(
+            r["line_number"], bool) and isinstance(r.get("amount", 0), (int, float)) for r in rs) for k, rs in v.items())
 
 
 def _uploads(v) -> bool:
@@ -220,10 +251,17 @@ def load_into_session() -> None:
         data = json.loads(raw) if raw else None
     except (OSError, ValueError, sqlite3.Error):
         data = None
+    for k in KEYS + ["sim"]:            # a fresh load replaces this tab's copy entirely - no stale value survives
+        S.pop(k, None)
+    sim = read_sim(S["sid"])
+    if sim is not None:
+        S["sim"] = sim
+        S["_sim_saved"] = json.dumps(sim, sort_keys=True, default=str)
     if not data:
         S["_saved"] = ""
         return
     data, bad = clean(data)
+    data.pop("sim", None)                # older saves kept the run in the main row
     for k, v in data.items():
         S[k] = v
     try:
@@ -254,19 +292,59 @@ def load_into_session() -> None:
     if bad:
         S["_restore_note"] = ("Some saved work could not be read and was set aside: " + ", ".join(sorted(set(bad)))
                               + ". Everything else was restored.")
-    S["_restored"] = bool(data.get("decisions") or data.get("sim"))
+    S["_restored"] = bool(data.get("decisions") or S.get("sim"))
     S["_saved"] = json.dumps(snapshot(), sort_keys=True, default=str)
+    _replay(S)                           # after _saved: the replayed changes differ from it, so they get saved
 
 
-def save_uploads() -> None:
-    """Save uploaded files once, when they change (not on every click)."""
+def _replay(S) -> None:
+    """After a conflict: re-apply this tab's own decisions and undos on top of the teammate's newer work. A decision
+    a teammate already made on the same finding wins; the person is told what was and was not re-applied."""
+    ops = S.pop("_replay", None)
+    if not ops:
+        return
+    from . import common as C
+    from . import custom
+    done, skipped = 0, 0
+    for kind, dataset, fid, status, reason in ops:
+        if (S.get("dataset") or None) != (dataset or None):
+            custom.activate(dataset)
+        if kind == "decide" and fid not in S.get("decisions", {}):
+            C.decide(fid, status, reason)
+            done += 1
+        elif kind == "undo" and fid in S.get("decisions", {}):
+            C.undo(fid)
+            done += 1
+        else:
+            skipped += 1
+    S["_restore_note"] = ("A teammate saved at the same moment. Their changes are loaded"
+                          + (f" and your {done} change(s) re-applied on top" if done else "")
+                          + (f"; {skipped} of yours were already decided by them and were left as they decided"
+                             if skipped else "") + ". Other edits (notes, cleared holds) may need redoing.")
+
+
+def save_uploads(removed: tuple[str, ...] = ()) -> None:
+    """Save uploaded files, when they change. Merged with what is saved, so two people uploading at once both keep
+    their files; removed names are taken out."""
     S = st.session_state
     sid = S.get("sid")
-    if sid:
-        try:
-            _write(sid + ":uploads", json.dumps(S.get("uploads", {})))
-        except (OSError, sqlite3.Error):
-            pass
+    if not sid:
+        return
+    try:
+        with _db() as con:              # read and write in one transaction
+            con.execute("BEGIN IMMEDIATE")
+            row = con.execute("SELECT data FROM state WHERE sid = ?", (sid + ":uploads",)).fetchone()
+            saved = json.loads(row[0]) if row else {}
+            saved = saved if _uploads(saved) else {}
+            merged = {**saved, **S.get("uploads", {})}
+            for k in removed:
+                merged.pop(k, None)
+            con.execute("INSERT INTO state (sid, data, updated) VALUES (?, ?, ?) ON CONFLICT(sid) DO UPDATE SET "
+                        "data = excluded.data, updated = excluded.updated", (sid + ":uploads", json.dumps(merged),
+                                                                            time.time()))
+        S["uploads"] = merged
+    except (OSError, ValueError, sqlite3.Error):
+        pass
 
 
 def save_if_changed() -> None:
@@ -275,6 +353,13 @@ def save_if_changed() -> None:
     sid = S.get("sid")
     if not sid:
         return
+    sim = json.dumps(S.get("sim"), sort_keys=True, default=str)
+    if sim != S.get("_sim_saved") and S.get("sim") is not None:
+        try:
+            _put(sid + ":sim", sim)
+            S["_sim_saved"] = sim
+        except (OSError, sqlite3.Error):
+            pass
     text = json.dumps(snapshot(), sort_keys=True, default=str)
     if text == S.get("_saved"):
         return
@@ -282,12 +367,12 @@ def save_if_changed() -> None:
         ver = _write(sid, text, S.get("_ver"))
     except (OSError, sqlite3.Error):
         return  # a read-only disk must never break the app
-    if ver is None:                  # a teammate saved since this page loaded: show their work, never overwrite it
+    if ver is None:                  # a teammate saved since this page loaded: load their work, then redo ours on top
         S["_store_ready"] = False
-        S["_restore_note"] = ("Someone else saved changes at the same moment, so the latest work is shown. "
-                              "If your last click is missing, please do it again.")
+        S["_replay"] = S.pop("_pending_ops", [])
         st.rerun()
     S["_ver"], S["_saved"] = ver, text
+    S.pop("_pending_ops", None)
 
 
 def reset() -> None:

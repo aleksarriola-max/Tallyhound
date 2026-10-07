@@ -18,7 +18,8 @@ It is built to withstand:
 
 - **Hostile uploaded files.** Text from files and models is escaped before display; spreadsheet output keeps
   formula-like cells as text; zips are size-limited (also once unpacked), lines are length-limited, and nothing from a
-  zip is ever used as a file path. Invoice PDFs are parsed in a separate process with a time and memory limit.
+  zip is ever used as a file path. Invoice PDFs are parsed in a separate process with a time limit and, on Linux and
+  macOS, a memory limit (Windows has no per-process memory limit here; the time limit still applies).
   Regular expressions applied to uploads are written so they cannot backtrack catastrophically; a test sweeps them.
 - **Tampering with the audit trail.** Entries are hash-chained and the whole trail is sealed with a key held by the
   server, so edited, removed, added, reordered or truncated entries - and decisions that disagree with the trail - are

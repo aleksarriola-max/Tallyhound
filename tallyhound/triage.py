@@ -139,3 +139,8 @@ def shadow_precision(clause: str) -> tuple[int, float]:
 def ready_to_promote(clause: str) -> bool:
     n, p = shadow_precision(clause)
     return n >= PROMOTE_MIN_MARKS and p >= PROMOTE_PRECISION
+
+
+def case_amount(g: list) -> float:
+    """What a case is worth: its largest finding (the findings in a case overlap, so they are not added up)."""
+    return max((float(x.amount) for x in g), default=0.0)

@@ -60,7 +60,7 @@ class Source:
         for pos, lines in sorted(self.groups, key=lambda g: -g[0]):
             body[pos:pos] = lines
         lines = ([self.header] if self.header is not None else []) + body
-        (SRC / self.name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (SRC / self.name).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
         self.lines = lines
 
     def line_no(self, text):

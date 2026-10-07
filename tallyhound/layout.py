@@ -70,6 +70,9 @@ APPROVE_HELP = ("Approve = this is a real problem to follow up; it goes into the
                 "approve any invoice. If it is not a problem, open Details and reject it with a reason.")
 
 
+PAGE, MORE = 20, 50       # review list: first page, then this many more per click
+
+
 def queue_findings():
     """The findings the review queue shows: everything except clauses running in shadow mode."""
     f = C.findings()
@@ -87,9 +90,8 @@ def _holds() -> tuple[int, float]:
     name, (gdf, clearable) = next(iter(pages.gate_runs().items()))
     if gdf.empty:
         return 0, 0.0
-    cleared = st.session_state.cleared if clearable else {}
-    held = gdf[(gdf.decision == "HOLD") & ~gdf.line.astype(str).isin(cleared)]
-    return len(held), float(held.amount.sum())
+    t = C.gate_totals(gdf, st.session_state.cleared if clearable else None)    # the same numbers as everywhere else
+    return t["hold_n"], t["hold_amt"]
 
 
 def home() -> None:
@@ -125,7 +127,7 @@ def home() -> None:
         for g in todo[:5]:                       # the next five undecided cases, so the list refills as you decide
             r = g[0]
             st.markdown(f"{C.sev_badge(r.severity)} &nbsp; {C.esc(r.title)} &nbsp; "
-                        f"<span class='th-muted'>{C.money(r.amount)}</span>", unsafe_allow_html=True)
+                        f"<span class='th-muted'>{C.money(triage.case_amount(g))}</span>", unsafe_allow_html=True)
         st.button("Open the review queue", on_click=C.goto, args=("Review",), key="home_review")
     elif n:
         st.success("Every case is decided. Download the results from Review.")
@@ -179,7 +181,8 @@ def case_row(g: list) -> None:
     c1, c2, c3, c4 = st.columns([6.2, 1.4, 1.3, 1.1], vertical_alignment="center")
     extra = f" <span class='th-muted'>+{len(others)} related</span>" if others else ""
     c1.markdown(f"{C.sev_badge(r.severity)} &nbsp; {C.esc(r.title)}{extra}", unsafe_allow_html=True)
-    c2.markdown(f"<div style='text-align:right;font-weight:600'>{C.money(r.amount)}</div>", unsafe_allow_html=True)
+    c2.markdown(f"<div style='text-align:right;font-weight:600'>{C.money(triage.case_amount(g))}</div>",
+                unsafe_allow_html=True)
     if left == 0 and len(set(statuses)) == 1:
         c3.markdown(C.badge(statuses[0], C.RELEASE if statuses[0] == "Approved" else C.HOLD), unsafe_allow_html=True)
     elif left == 0:
@@ -291,22 +294,29 @@ def findings_tab() -> None:
                   disabled=not conf_ids or bool(why), key="bulk_all", help=APPROVE_HELP, **C.bw())
 
     def minor(r) -> bool:
-        return (float(r.amount) < L["materiality"] and r.severity != "High") or triage.demoted(str(r.clause))
+        # small money, not High; a finding about risk rather than money (amount 0, e.g. an unverified bank change)
+        # is never minor
+        return (0 < float(r.amount) < L["materiality"] and r.severity != "High") or triage.demoted(str(r.clause))
     main = [g for g in groups if not all(minor(r) for r in g)]
     small = [g for g in groups if all(minor(r) for r in g)]
     done = sum(all(x.id in S.decisions for x in g) for g in main)
     st.caption(f"{len(main)} cases ({done} decided), most important first: severity, amount and the Skeptic's "
                "confidence together, so a large Medium can come before a small High.")
-    limit = len(main) if S.get("rev_all") else 20
+    limit = S.get("rev_n", PAGE)
     for g in main[:limit]:
         case_row(g)
-    if len(main) > 20:
-        st.toggle(f"Show all {len(main)} cases", key="rev_all")
+    if len(main) > limit:                 # a page at a time: thousands of rows of buttons would take minutes to draw
+        st.button(f"Show {min(MORE, len(main) - limit)} more ({len(main) - limit} not shown)", key="rev_more",
+                  on_click=lambda: S.update(rev_n=limit + MORE))
     if small:
         with st.expander(f"Minor items ({sum(len(g) for g in small)}): under ${L['materiality']:,.0f}, or from a rule "
                          "reviewers usually reject"):
-            for g in small:
-                case_row(g)
+            if st.toggle("Show them", key="minor_show"):   # drawn only when asked (an expander renders even closed)
+                for g in small[:S.get("minor_n", PAGE)]:
+                    case_row(g)
+                if len(small) > S.get("minor_n", PAGE):
+                    st.button(f"Show {MORE} more", key="minor_more",
+                              on_click=lambda: S.update(minor_n=S.get("minor_n", PAGE) + MORE))
     if not in_shadow.empty:
         with st.expander(f"Shadow rules would have raised {len(in_shadow)} more"):
             st.caption("Mark a few. Once enough are real, the rule can be promoted under Settings > Rules.")
@@ -350,7 +360,7 @@ def _remove_upload(label: str) -> None:
     if S.get("dataset") == label:
         custom.activate(None)
     from . import store
-    store.save_uploads()
+    store.save_uploads(removed=(label,))
 
 
 def data_settings() -> None:

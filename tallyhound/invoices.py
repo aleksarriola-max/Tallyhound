@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import io
 import re
+import threading
+
+from . import llm
 
 NAME = "invoices.txt"
 MATCH_CHARS = 400
@@ -49,7 +52,8 @@ def pdf_lines(data: bytes, max_pages: int = 5) -> list[str] | None:
 
 PDF_SECONDS = 8.0        # one PDF may take this long to read (includes starting the worker)
 PDF_TOTAL_SECONDS = 90.0  # all PDFs of one upload together
-PDF_MEMORY_MB = 512
+PDF_MEMORY_MB = 256 if llm.public() else 512
+_PDF_SLOTS = None          # one batch of PDFs is read at a time per server (each worker may use PDF_MEMORY_MB)
 
 
 def read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
@@ -57,12 +61,19 @@ def read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
     limit, so a hostile PDF (a page-tree or decompression bomb) can never freeze the app for everyone else. A PDF that
     takes longer than PDF_SECONDS gives None and the worker is restarted for the rest. Falls back to reading in this
     process, with the page-count guard only, if a worker cannot be started."""
+    global _PDF_SLOTS
+    if _PDF_SLOTS is None:
+        _PDF_SLOTS = threading.BoundedSemaphore(1)
+    with _PDF_SLOTS:
+        return _read_pdfs(items)
+
+
+def _read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
     import base64
     import json
     import queue
     import subprocess
     import sys
-    import threading
     import time as _t
     from pathlib import Path
     out: dict[str, list[str] | None] = {}
@@ -75,7 +86,8 @@ def read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
             break
         try:
             proc = subprocess.Popen([sys.executable, "-m", "tallyhound.pdfworker", str(PDF_MEMORY_MB)], cwd=root,
-                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                    encoding="utf-8", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except OSError:
             out.update({n: pdf_lines(b) for n, b in todo})
             break
@@ -107,11 +119,19 @@ def read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
                     out[todo[0][0]] = None
                     todo = todo[1:]
                     break                              # and start a fresh worker for the rest
-                res = json.loads(msg)
-                out[res["name"]] = res["lines"]
-                todo = [x for x in todo if x[0] != res["name"]]
+                try:
+                    res = json.loads(msg)
+                    name, lines = res["name"], res["lines"]
+                except (ValueError, KeyError, TypeError):
+                    continue                           # stray output (a library printing): not a result
+                out[name] = lines
+                todo = [x for x in todo if x[0] != name]
         finally:
             proc.kill()
+            try:
+                proc.wait(timeout=2)                   # reap it: no zombie processes left behind
+            except subprocess.TimeoutExpired:
+                pass
     return out
 
 

@@ -39,6 +39,18 @@ with st.sidebar:
                      on_change=lambda: custom.activate(None if st.session_state.ds_pick == "Sample company"
                                                        else st.session_state.ds_pick))
     if auth.current_user():
+        def _teammates():
+            """Every 10 s: did a teammate save since this tab loaded? Then offer their work instead of discovering
+            it only when a click is refused."""
+            sid, ver = st.session_state.get("sid"), st.session_state.get("_ver")
+            try:
+                newer = sid and store._version(sid) not in (None, ver)
+            except Exception:  # noqa: BLE001 - a status hint must never break the page
+                newer = False
+            if newer:
+                st.info("A teammate saved changes.")
+                st.button("Load the latest", key="load_latest", on_click=lambda: st.session_state.update(_store_ready=False))
+        st.fragment(run_every=10)(_teammates)()
         st.caption(f"Signed in as {auth.current_user()} ({auth.role()})")
         st.button("Sign out", key="sign_out", on_click=auth.sign_out, type="tertiary")
     st.markdown(f"<div class='th-foot'>Quotes verified {C.quote_pct()}% · offline · work saved automatically</div>",

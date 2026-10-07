@@ -2,6 +2,32 @@
 
 All notable changes. Dates are release dates; the project follows [Semantic Versioning](https://semver.org/) from 1.0.
 
+## 0.6.1 - 2026-10-06
+
+**Team workspace**
+- Saves are refused if the work changed or was deleted (a reset) since the tab loaded it; the refused tab reloads
+  and re-applies its own decisions on top, and every signed-in tab is told when a teammate saved.
+- Uploads from two people are merged, never overwritten. Run progress has its own record and only one tab drives a
+  run (another takes over if it goes quiet); a run is finalised once, and records who started it, so segregation of
+  duties holds whoever's tab finishes it.
+- Two PDFs with the same name in one zip are both read.
+
+**Scale**: pages stay around a second with 13,000 findings (indexed quote check, cached findings and data check,
+paged review list, downloads prepared on request, memo tables capped at 200 rows).
+
+**Numbers**: a case counts once in the approved value (its largest finding); shadow-mode findings are not pending;
+suppressions never hide a decided finding (and now apply to the sample too); the memo includes an uploaded payment
+run; negative amounts read -$500.00 and never lower a total; payment-run lines without a usable amount are held;
+findings about risk rather than money are never "minor"; a meal over the limit with no head count is flagged.
+
+**Accessibility**: badge, chip and table colours meet WCAG AA; visible focus and current-page marking in the
+sidebar; quoted lines are marked by symbol as well as colour and the source view is keyboard-scrollable; text at
+least 12.8 px.
+
+**Platforms**: `.gitattributes` keeps the sample data byte-identical on every OS; Windows keeps saved work out of
+OneDrive; private files are written binary-safe with retries; explicit UTF-8 everywhere; tighter limits on public
+copies; dependency upper bounds in `requirements.txt`.
+
 ## 0.6.0 - 2026-10-06 - first public release
 
 **Open-source readiness**

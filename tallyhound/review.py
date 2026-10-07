@@ -101,6 +101,21 @@ def _mark_shadow(key: str, value: int) -> None:
 
 
 
+def _download_sig() -> str:
+    """What the files depend on: the data in review and every decision, note and cleared hold."""
+    import hashlib
+    import json
+    S = st.session_state
+    parts = [S.get("dataset"), S.get("_fver", 0), S.get("decisions"), len(S.get("audit_log", [])), S.get("cleared"),
+             S.get("notes"), S.get("suppressions"), S.get("shadow")]
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _prepare_downloads(sig: str) -> None:
+    st.session_state["_dl"] = dict(sig=sig, wb=exports.build_workbook(False), memo=exports.build_memo(),
+                                   draft=exports.build_workbook(True))
+
+
 def step4() -> None:
     f = C.findings()
     dc = C.decision_counts(f)
@@ -109,14 +124,22 @@ def step4() -> None:
     m[1].metric("Rejected", dc["rejected"])
     m[2].metric("Approved value", C.money(dc["value"]))
     m[3].metric("Pending", dc["pending"])
-    b1, b2, b3 = st.columns([2, 2, 2])
-    b1.download_button("Download Excel workbook", data=exports.build_workbook(False), file_name="tallyhound_workbook.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", on_click=guide.mark_downloaded, **C.bw())
-    b2.download_button("Download Memo (PDF)", data=exports.build_memo(), file_name="tallyhound_memo.pdf",
-                       mime="application/pdf", on_click=guide.mark_downloaded, **C.bw())
-    b3.download_button("Download draft (not reviewed)", data=exports.build_workbook(True),
-                       file_name="tallyhound_draft_not_reviewed.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="tertiary", on_click=guide.mark_downloaded, **C.bw())
+    S = st.session_state
+    sig = _download_sig()
+    ready = S.get("_dl", {}).get("sig") == sig
+    if not ready:                         # built when asked, not on every click: big data takes a while to export
+        st.button("Prepare the downloads", type="primary", key="dl_prepare", on_click=_prepare_downloads, args=(sig,))
+    else:
+        d = S["_dl"]
+        b1, b2, b3 = st.columns([2, 2, 2])
+        b1.download_button("Download Excel workbook", data=d["wb"], file_name="tallyhound_workbook.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary",
+                           on_click=guide.mark_downloaded, **C.bw())
+        b2.download_button("Download Memo (PDF)", data=d["memo"], file_name="tallyhound_memo.pdf",
+                           mime="application/pdf", on_click=guide.mark_downloaded, **C.bw())
+        b3.download_button("Download draft (not reviewed)", data=d["draft"], file_name="tallyhound_draft_not_reviewed.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="tertiary",
+                           on_click=guide.mark_downloaded, **C.bw())
     st.caption("The workbook and memo record your decisions; while findings are pending they say \"partly reviewed\". "
                "The draft is the findings alone, before anyone has decided, for sharing early.")
     df = exports.decisions_frame()

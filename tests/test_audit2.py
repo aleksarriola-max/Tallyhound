@@ -255,8 +255,8 @@ def test_watch_exit_codes(tmp_path):
     zipfile.ZipFile(io.BytesIO(challenge.to_zip(f, k, p))).extractall(good)
     bad = tmp_path / "bad"
     bad.mkdir()
-    (bad / "payments.csv").write_text("nonsense,columns\n1,2\n")
-    (bad / "payment_run.csv").write_text("a,b\n1,2\n")
+    (bad / "payments.csv").write_text("nonsense,columns\n1,2\n", encoding="utf-8")
+    (bad / "payment_run.csv").write_text("a,b\n1,2\n", encoding="utf-8")
     run = lambda d: subprocess.run([sys.executable, str(root / "scripts" / "watch.py"), str(d)], capture_output=True, text=True)
     assert run(good).returncode == 0
     r = run(bad)

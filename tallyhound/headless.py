@@ -70,7 +70,7 @@ def write_report(folder: Path, res: dict, remember: bool = True) -> tuple[Path, 
     out = folder / REPORT_DIR
     out.mkdir(exist_ok=True)
     state_file = out / "last.json"
-    before = set(json.loads(state_file.read_text())["fingerprints"]) if state_file.exists() else set()
+    before = set(json.loads(state_file.read_text(encoding="utf-8"))["fingerprints"]) if state_file.exists() else set()
     hits = res["hits"]
     new = [h for h in hits if fingerprint(h) not in before]
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -112,7 +112,7 @@ def remember_hits(folder: Path, hits: list) -> None:
     """Record these findings as already reported, so the next run alerts only on new ones. Call it only once the alert
     went out: if it failed, the next run must alert again."""
     (folder / REPORT_DIR / "last.json").write_text(json.dumps(
-        {"fingerprints": [fingerprint(h) for h in hits], "time": datetime.now().strftime("%Y-%m-%d_%H%M")}))
+        {"fingerprints": [fingerprint(h) for h in hits], "time": datetime.now().strftime("%Y-%m-%d_%H%M")}), encoding="utf-8")
 
 
 PROBLEM_NOTES = ("missing columns", "Skipped", "Stopped at", "could not", "no readable text", "Two files", "not a valid zip")

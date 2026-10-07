@@ -1,12 +1,16 @@
 """Simulated agent run. One tick = one second. Agents only propose; nothing here approves anything."""
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime
 
 import streamlit as st
 
 from . import common as C
+from . import llm
+
+BEAT_SECONDS = 6          # a run whose driving tab has not ticked for this long is taken over by another tab
 
 TICKS_PER_AGENT = 3
 FAIL_AGENT = "Expenses"   # fails once in the demo, so a visitor can try Retry
@@ -24,8 +28,11 @@ def new_item(label: str, workflow: str, option: str, skip: frozenset = frozenset
     if workflow == "audit" and custom.uploaded(option):
         extra = dict(custom=option, engine={"Ollama agents": "ollama", "Built-in rules + Ollama Skeptic": "rules+skeptic",
                             "Ollama agents with tools": "ollama-tools"}.get(S.get("adv_engine"), "rules"),
-                     model=S.get("adv_model") or "qwen3.5:9b", url=S.get("adv_url") or "http://localhost:11434")
+                     model=S.get("adv_model") or llm.DEFAULT_MODEL, url=S.get("adv_url") or llm.DEFAULT_URL)
+    import secrets
+    from . import auth
     return dict(**extra, label=label, workflow=workflow, option=option, est=int(row["est_min"]),
+                run_id=secrets.token_hex(6), started_by=auth.current_user() or "",
                 result=int(row["result_findings"]), status="Queued", started="", ticks=0,
                 agents=[dict(name=n, status="Skipped" if n in skip else "Waiting", pct=0, secs=0) for n in agent_names()])
 
@@ -41,9 +48,18 @@ def build_queue(selection: dict, skip: frozenset = frozenset()) -> list[dict]:
     return q
 
 
+def tab_id() -> str:
+    """This browser tab (one Streamlit session). Only one tab drives a run; others watch its saved progress."""
+    import secrets
+    S = st.session_state
+    if "_tab" not in S:
+        S["_tab"] = secrets.token_hex(8)
+    return S["_tab"]
+
+
 def start(queue: list[dict]) -> None:
     S = st.session_state
-    S.sim = dict(queue=queue, running=True, log=[])
+    S.sim = dict(queue=queue, running=True, log=[], tab=tab_id(), beat=time.time())
     log("Orchestrator", f"Queue created with {len(queue)} item(s)")
 
 
@@ -74,9 +90,58 @@ def agent_summary(item: dict, agent: str) -> str:
     return f"{agent} agent finished"
 
 
+def _follow() -> bool | None:
+    """Only one tab drives a run; the others show its saved progress. Returns None when this tab should drive (it
+    started the run, or the driving tab went quiet - closed, reloaded or asleep), else whether to rerun the page.
+    The driver checks too: if another tab took over while it slept, it steps aside instead of driving twice."""
+    from . import store
+    S = st.session_state
+    mine = tab_id()
+    if S.sim.get("tab") is None:
+        return None
+    if S.sim.get("tab") != mine and time.time() - S.get("_follow_at", 0) < 1:
+        return False                            # a watching tab looks at most once a second
+    S["_follow_at"] = time.time()
+    latest = store.read_sim(S.get("sid")) or S.sim
+    owner = latest.get("tab")
+    if owner in (None, mine):
+        return None
+    if latest.get("running") and time.time() - float(latest.get("beat") or 0) > BEAT_SECONDS:
+        latest["tab"] = mine                    # the driver went quiet: take over
+        S.sim = latest
+        return None
+    finished = S.sim.get("running") and not latest.get("running")
+    text = json.dumps(latest, sort_keys=True, default=str)
+    changed = text != json.dumps(S.sim, sort_keys=True, default=str)
+    S.sim = latest
+    S["_sim_saved"] = text                      # not this tab's to save
+    if finished:
+        S["_store_ready"] = False               # the driver saved the results: load them
+    return bool(changed)                        # redraw only when the driver's progress actually moved
+
+
+def _heartbeat() -> None:
+    """The driver saves its progress (and so its heartbeat) every 2 s, also between full page reruns."""
+    from . import store
+    S = st.session_state
+    S.sim["beat"] = time.time()
+    if time.time() - S.get("_beat_saved", 0) >= 2 and S.get("sid"):
+        text = json.dumps(S.sim, sort_keys=True, default=str)
+        try:
+            store._put(S["sid"] + ":sim", text)
+            S["_sim_saved"], S["_beat_saved"] = text, time.time()
+        except Exception:  # noqa: BLE001 - progress display must never break the run
+            pass
+
+
 def tick() -> bool:
     """Advance the simulation by one step. Returns True when a full page rerun is needed."""
     S = st.session_state
+    if S.sim and S.sim.get("running"):
+        follow = _follow()
+        if follow is not None:
+            return follow
+        _heartbeat()
     sim = S.sim
     if not sim or not sim["running"]:
         return False

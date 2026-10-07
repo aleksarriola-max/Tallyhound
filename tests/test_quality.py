@@ -111,10 +111,10 @@ def test_anonymiser_keeps_structure_and_hides_names(tmp_path):
     src = tmp_path / "src"
     src.mkdir()
     for n, v in files.items():
-        (src / n).write_text("\n".join(v) + "\n")
+        (src / n).write_text("\n".join(v) + "\n", encoding="utf-8")
     subprocess.run([sys.executable, str(Path(__file__).resolve().parent.parent / "scripts" / "anonymise.py"), str(src),
                     "--out", str(tmp_path / "out")], check=True, capture_output=True)
-    out = {p.name: p.read_text().splitlines() for p in (tmp_path / "out").iterdir()}
+    out = {p.name: p.read_text(encoding="utf-8").splitlines() for p in (tmp_path / "out").iterdir()}
     some_vendor = rules.rows(files["vendors.csv"])[0][1]["name"]
     assert some_vendor not in "\n".join(out["vendors.csv"])
     before = [(h.clause, h.source_file, h.line_number) for h in rules.analyze(files)]

@@ -148,8 +148,8 @@ every page):
 - **No HTML or links from files**: names, notes and model text are escaped before display, so a supplier called
   `<img onerror=...>` or `[click](http://...)` shows as plain text. Spreadsheet cells that start with `=` stay text, not
   formulas, in the workbook and in the folder-check CSV, and the PDF memo handles `&` and `<`.
-- **Limits**: 50 MB per zip and per file, 100 MB once unpacked (stops zip bombs), 300,000 lines, lines cut at 4,000
-  characters, 300 PDFs per zip. Invoice PDFs are read by a separate worker process with a time and memory limit, so a
+- **Limits**: 50 MB per zip and per file, 100 MB once unpacked (stops zip bombs; 20 MB on a public copy, which also
+  runs one analysis at a time), 300,000 lines, lines cut at 4,000 characters, 300 PDFs per zip. Invoice PDFs are read by a separate worker process with a time and memory limit, so a
   hostile PDF cannot freeze the app. Password-protected or corrupt entries become a note, not a crash. Two files for
   the same slot are reported, never merged.
 - **Encodings**: UTF-8, UTF-16 and Windows-1252 (Excel's "Save as CSV") keep their accents.
@@ -162,7 +162,8 @@ every page):
 - **Sessions and sign-in**: without sign-in (the demo), saved work is keyed by a random 128-bit id in the page address -
   anyone with that address sees that work. With sign-in on, everyone signed in shares one team workspace on the server
   and the address is ignored, so nobody can plant a link that captures someone else's work; signing out clears the
-  browser tab. Five wrong passwords lock a name for a minute; a users file that cannot be read keeps sign-in on and
+  browser tab. When two people save at the same moment, the second person's decisions are re-applied on top of the
+  first person's (a decision already made on the same finding wins), and every tab is told when a teammate saved. Five wrong passwords lock a name for a minute; a users file that cannot be read keeps sign-in on and
   lets nobody in; only an admin can reset (it erases the audit trail). Password hashes, the trail key and the saved
   work are readable only by the server's user.
 
@@ -285,7 +286,9 @@ Ollama is the default. For LM Studio, vLLM or llama.cpp, upload your files, then
 - **Exports** - *Review > Download* builds an Excel workbook (with an audit trail sheet) and a PDF memo; both say
   "partly reviewed" while findings are still pending. The draft is the findings alone, before anyone decides.
 - **Saved work** - decisions, reasons, cleared holds, the audit trail and a run in progress are saved in a small SQLite
-  database, so a reload keeps them. Saved work is deleted after 14 days without use (the team workspace is kept).
+  database, so a reload keeps them. Saved work is deleted after 14 days without use (the team workspace is kept). On
+  Windows it lives in `%LOCALAPPDATA%\Tallyhound` (not in a OneDrive-synced folder); set `TALLYHOUND_STATE_DIR` to
+  choose another place.
 - **Four engines for uploads** (*Engine and agents* in the Check new files dialog): *Built-in rules* are fixed tests of
   the policy, fast and repeatable, no AI. *Rules + Ollama Skeptic* finds candidates with the rules and lets the model
   challenge them. *Ollama agents* send each file to a model on your computer, then a Skeptic pass challenges every

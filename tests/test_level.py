@@ -48,7 +48,7 @@ def users(tmp_path, monkeypatch):
 
 
 def test_passwords_are_hashed_and_checked(users):
-    stored = json.loads(Path(users.users_file()).read_text())
+    stored = json.loads(Path(users.users_file()).read_text(encoding="utf-8"))
     assert "correct horse 1" not in json.dumps(stored)
     assert users.check("rita", "correct horse 1") == "reviewer" and users.check("rita", "wrong") is None
     assert users.check("nobody", "x") is None
@@ -69,6 +69,7 @@ def test_sign_in_is_required_when_users_exist(users):
 def test_segregation_of_duties_blocks_reviewing_your_own_run(users):
     at = AppTest.from_file(APP, default_timeout=60).run()
     at.session_state.user, at.session_state.role = "rita", "reviewer"
+    at.run()                                       # signing in loads the team workspace; set the scene after that
     at.session_state.custom = {"mine": [dict(id="F-01", area="Payments", clause="5.2", severity="High", amount=1.0,
                                             title="t", source_file="payments.csv", line_number=2, related_lines=[],
                                             verdict="Confirmed", reason="r", innocent="", fix="")]}

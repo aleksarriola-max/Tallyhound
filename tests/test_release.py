@@ -162,11 +162,12 @@ def test_signing_out_clears_the_tab(signin):
 
 
 def test_a_damaged_users_file_lets_nobody_in(signin):
-    (signin / "users.json").write_text("{not json")
+    (signin / "users.json").write_text("{not json", encoding="utf-8")
     assert auth.enabled() and not auth.can("policy")
     assert auth.check("rita", "pw-rita-1") is None
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits; Windows uses the user profile's ACLs")
 def test_state_files_are_private(signin):
     C._trail_key()
     store._write("cd" * 16, "{}")

@@ -1,0 +1,11 @@
+# Keep the sample data byte-for-byte identical on every OS: findings quote exact lines, and CI checks that
+# scripts/make_data.py reproduces data/ exactly. Git must never rewrite their line endings.
+data/** -text
+tests/cases/** -text
+# Source files use LF everywhere.
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.txt text eol=lf
+*.png binary

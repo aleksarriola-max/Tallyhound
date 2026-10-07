@@ -176,7 +176,7 @@ def agents_body() -> None:
     else:
         agents, title = item["agents"], f"{item['label']} - {item['status']}"
     st.markdown(f"**{title}**")
-    colors = {"Waiting": C.MUTED, "Running": C.TEAL, "Done": C.RELEASE, "Failed": C.HOLD, "Skipped": C.MUTED}
+    colors = {"Waiting": C.MUTED, "Running": C.TEAL_DARK, "Done": C.RELEASE, "Failed": C.HOLD, "Skipped": C.MUTED}
     for a in agents:
         c1, c2, c3, c4 = st.columns([3, 1.2, 4, 0.8], vertical_alignment="center")
         c1.markdown(f"**{a['name']}**<br><span class='th-muted'>{roles.get(a['name'], '')}</span>", unsafe_allow_html=True)

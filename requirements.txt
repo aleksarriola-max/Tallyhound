@@ -1,6 +1,8 @@
-streamlit>=1.55
-pandas
-altair
-openpyxl
-reportlab
-pypdf
+# Lower bounds: what the app needs. Upper bounds: the next major versions, so a new release cannot break the hosted
+# demo without anyone changing a line (CI's "latest" job still shows early when a bound should move).
+streamlit>=1.55,<2
+pandas>=2.2,<4
+altair>=5,<7
+openpyxl>=3.1,<4
+reportlab>=4,<6
+pypdf>=5,<7

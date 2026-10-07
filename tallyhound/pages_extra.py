@@ -46,9 +46,13 @@ def scorecard_page() -> None:
     if S.get("sc_pick") not in with_key:
         S["sc_pick"] = cur if cur in with_key else SAMPLE
     pick = st.selectbox("Data with an answer key", with_key, key="sc_pick")
+    if cur and cur not in with_key:
+        st.info(f"\"{C.esc(cur)}\" (the data in review) has no answer key, so it cannot be graded here. Grading needs "
+                "planted problems: make a challenge below, or add an answer_key.csv to your zip.")
     key, files = _dataset(pick)
 
     hits = rules.analyze(files, C.limits())
+    # the rules are re-run here with today's limits, so their row can differ from the findings of an earlier run
     runs = {"Built-in rules (now)": [dict(source_file=h.source_file, line_number=h.line_number,
                                          related_lines=[ln for _, ln in h.related]) for h in hits]}
     for h in _history(pick):
@@ -305,6 +309,8 @@ def trends_page() -> None:
                                         High=sum(p.get("severity") == "High" for p in h["proposed"]),
                                         Flagged=C.money(sum(p.get("amount", 0) for p in h["proposed"])))
                                    for h in hist][::-1]), hide_index=True, **C.dfw())
+    st.caption("Per run, as the engine proposed them - before review, shadow mode or suppressions - so these totals "
+               "can be larger than the Review and Download numbers. \"Flagged\" adds up the findings' amounts.")
     st.subheader("Who carries the most risk")
     st.caption("For the data in review. Score: 10 per finding weighted by severity (High 3, Medium 2, Low 1), plus up "
                "to 30 for the money at stake. A way to choose where to look first, not a verdict on anyone.")
