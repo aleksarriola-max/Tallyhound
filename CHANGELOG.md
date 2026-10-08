@@ -2,6 +2,41 @@
 
 All notable changes. Dates are release dates; the project follows [Semantic Versioning](https://semver.org/) from 1.0.
 
+## 0.7.0 - 2026-10-08
+
+**Real exports**
+- Pick files directly (CSV, Excel `.xlsx`, tab-separated, PDF) or a zip; several at once become one dataset.
+- Excel workbooks are read from their fullest sheet. Report-style exports from QuickBooks, Xero and similar are
+  tidied (title lines, `Total for ...` lines and footers dropped; vendor group headings written onto their rows), and
+  every change is listed in the upload notes.
+- Files with unfamiliar names are recognised from their columns, only when columns that belong to one kind of file
+  are there (a bank statement or payment run also needs its name or a balance column), and never in place of a file
+  named the Tallyhound way. camelCase headers such as Xero's `*ContactName` match; a note says when every column has
+  a suggested match. `docs/example-exports/` has a fictional month to try.
+- Excel: hidden sheets are skipped, a stale stored sheet size never cuts columns, formulas without a saved value are
+  reported, and a cell cap keeps big workbooks in bounds. A quoted value that runs over two lines stays in its row.
+- Next month's exports with this month's file names become a new dataset ("name (2)") instead of being taken for
+  files already read. A dataset is read once per pick, not on every click.
+
+**New checks**, each with its own policy clause, planted in generated months with a trap that must stay quiet. They
+are patterns, not breaches, so the rules engine marks them doubted and "Approve all confirmed" leaves them alone.
+- 5.6: the same invoice paid twice under a re-keyed number with the same invoice date (a suffix added, two digits
+  swapped far apart in the series, a look-alike letter) - never the next numbers in a series or instalments.
+- 4.5: a new vendor paid more than the director limit within 30 days of set-up (the window is a setting); a set-up
+  date shared by most vendors is read as the date the list was imported and ignored.
+- 1.6: one requester's approvals bunched just under the director limit, to different suppliers, with no director
+  approval.
+- 6.6: three or more receipt-free claims by one person just under the receipt limit within 30 days (not mileage or
+  allowances).
+
+**Reports > Patterns**: a first-digit (Benford's law) test with a verdict only on enough data, the share of round
+amounts, and amounts bunched just under each limit. Not findings; nothing here reaches Review or the downloads.
+
+**Generator**: a planted unrecorded payment is always early enough for the statement to show it missing.
+
+**Code health**: type checking with mypy (no errors), a coverage report with an 85% floor in CI (about 90%), upload
+reading moved into `uploads.py`, and `scripts/screenshots.py` to re-make the screenshots and the demo GIF.
+
 ## 0.6.1 - 2026-10-06
 
 **Team workspace**

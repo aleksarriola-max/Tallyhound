@@ -131,7 +131,7 @@ def build_memo() -> bytes:
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm,
                             title="Tallyhound audit memo")
     story = [
-        Paragraph(f"Uploaded files: {html.escape(C.custom_label())}" if C.custom_label() else "FICTIONAL TEST DATA - not a real company", ParagraphStyle("b", parent=ss["Normal"], textColor=colors.HexColor("#0a3a4f"), fontSize=9)),
+        Paragraph(f"Uploaded files: {html.escape(ds_label)}" if (ds_label := C.custom_label()) else "FICTIONAL TEST DATA - not a real company", ParagraphStyle("b", parent=ss["Normal"], textColor=colors.HexColor("#0a3a4f"), fontSize=9)),
         Spacer(1, 4),
         Paragraph("Tallyhound audit memo", ss["Title"]),
         Paragraph(("Uploaded data - " if C.custom_label() else "Bramblecourt Instruments Ltd (fictional) - ") + datetime.now().strftime("%Y-%m-%d"), ss["Normal"]),

@@ -5,7 +5,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from . import challenge, custom, rules, score
+from . import challenge, custom, patterns, rules, score
 from . import common as C
 
 ENGINE_NAMES = {"rules": "Built-in rules", "rules+skeptic": "Rules + Ollama Skeptic", "ollama": "Ollama agents",
@@ -130,7 +130,7 @@ def _add_challenge() -> None:
 
 def _save_limits() -> None:
     S = st.session_state
-    new = {k: float(S[f"lim_{k}"]) if k not in ("split_days", "bank_days") else int(S[f"lim_{k}"]) for k in rules.LIMIT_LABELS}
+    new = {k: float(S[f"lim_{k}"]) if k not in rules.DAY_LIMITS else int(S[f"lim_{k}"]) for k in rules.LIMIT_LABELS}
     S["po_exempt_words"] = [w.strip() for w in S.get("lim_exempt_words", "").split(",") if w.strip()]
     S["po_exempt_vendors"] = [w.strip() for w in S.get("lim_exempt_vendors", "").splitlines() if w.strip()]
     changed = {k: v for k, v in new.items() if v != C.limits()[k]}
@@ -163,8 +163,8 @@ def policy_limits() -> None:
             cols = st.columns(4)
             for col, (k, label) in zip(cols, items[i:i + 4]):
                 S.setdefault(f"lim_{k}", L[k])
-                if k in ("split_days", "bank_days"):
-                    col.number_input(label, min_value=0, max_value=30, step=1, key=f"lim_{k}")
+                if k in rules.DAY_LIMITS:
+                    col.number_input(label, min_value=0, max_value=90, step=1, key=f"lim_{k}")
                 else:
                     col.number_input(label, min_value=0.0, step=50.0 if L[k] >= 100 else 1.0, key=f"lim_{k}")
         S.setdefault("lim_exempt_words", ", ".join(L["po_exempt_words"]))
@@ -315,3 +315,67 @@ def trends_page() -> None:
     st.caption("For the data in review. Score: 10 per finding weighted by severity (High 3, Medium 2, Low 1), plus up "
                "to 30 for the money at stake. A way to choose where to look first, not a verdict on anyone.")
     st.dataframe(vendor_risk(C.findings()).head(15), hide_index=True, **C.dfw())
+
+
+def _pattern_files() -> tuple[str, dict[str, list[str]]]:
+    from . import custom
+    label = C.custom_label()
+    if label and label in st.session_state.get("uploads", {}):
+        return label, custom.view(label)
+    return "the sample company", {n: C.read_source(n) for n in patterns.SOURCES}
+
+
+def patterns_page() -> None:
+    """Population-level patterns in the amounts. Not findings: a prompt to sample deeper, nothing more."""
+    who, files = _pattern_files()
+    s = patterns.summary(files, C.limits())
+    st.subheader("Patterns worth a look")
+    st.caption(f"Across every amount in {C.esc(who)}'s payments, approvals and expenses. These are not findings and "
+               "never go into Review, the workbook or the memo; they help you decide where to sample more.")
+    if not s["per_file"]:
+        st.info("No payments, approvals or expenses amounts to look at.")
+        return
+    b = s["benford"]
+    with st.container(border=True):
+        st.markdown("**First digits (Benford's law)**")
+        if not b["usable"]:
+            st.caption(f"Needs at least {patterns.MIN_BENFORD} amounts spanning two orders of magnitude (from tens to "
+                       f"thousands, say); this data has {b['n']} spanning {b['span']}. With less, the test is mostly "
+                       "noise, so no verdict is shown.")
+        else:
+            st.markdown(f"{b['n']:,} amounts. Mean absolute deviation {b['mad']:.4f}: **{b['verdict']}**.")
+        rows = [dict(Digit=str(d), Share=b["observed"][d], Expected=b["expected"][d],
+                     Observed=f"{b['observed'][d]:.1%}", Benford=f"{b['expected'][d]:.1%}") for d in range(1, 10)]
+        df = pd.DataFrame(rows)
+        bars = alt.Chart(df).mark_bar(color=C.TEAL, cornerRadiusTopLeft=4, cornerRadiusTopRight=4, size=26).encode(
+            x=alt.X("Digit:N", title="First digit", axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("Share:Q", title="Share of amounts", axis=alt.Axis(format="%", grid=True, gridOpacity=0.35)),
+            tooltip=[alt.Tooltip("Digit:N"), alt.Tooltip("Observed:N", title="In this data"),
+                     alt.Tooltip("Benford:N", title="Benford's law")])
+        ticks = alt.Chart(df).mark_tick(color=C.INK, thickness=3, size=36).encode(
+            x="Digit:N", y="Expected:Q",
+            tooltip=[alt.Tooltip("Digit:N"), alt.Tooltip("Benford:N", title="Benford's law")])
+        st.altair_chart((bars + ticks).properties(height=240), **C.dfw())
+        st.caption("Bars: this data. Dark ticks: what Benford's law expects. Real-world amounts start with 1 about "
+                   "30% of the time and with 9 under 5%; a big bump on one digit can mean amounts set to dodge a "
+                   "limit, or invented ones.")
+        with st.expander("As a table"):
+            st.dataframe(df[["Digit", "Observed", "Benford"]], hide_index=True, **C.dfw())
+    r = s["round"]
+    c1, c2 = st.columns(2)
+    with c1.container(border=True):
+        st.markdown("**Round amounts**")
+        if r["n"]:
+            st.markdown(f"{r['round']} of {r['n']} payments and approvals of $500 or more are whole hundreds "
+                        f"(**{r['share']:.0%}**).")
+            st.caption("Invoices for goods rarely come to round numbers. Above about 10-15%, look at which suppliers "
+                       "the round amounts go to: advances, estimates and made-up invoices tend to be round.")
+        else:
+            st.caption("No payments or approvals of $500 or more.")
+    with c2.container(border=True):
+        st.markdown("**Bunched under a limit**")
+        for u in s["under"]:
+            mark = "▲ " if u["flag"] else ""
+            st.markdown(f"{mark}{C.esc(u['name']).capitalize()} ({C.money(u['limit'])}): {u['below']} just under, "
+                        f"{u['above']} just over" + (" - **more under than chance suggests**" if u["flag"] else ""))
+        st.caption("Counts amounts within 4% under each limit against the same band just over it.")

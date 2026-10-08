@@ -33,16 +33,16 @@ REPORT_DIR = "tallyhound-reports"
 
 def load_folder(folder: Path) -> tuple[dict[str, list[str]], list[str]]:
     """Read the audit files (and invoice PDFs) from a folder, or from the newest zip in it."""
-    from . import custom
+    from . import uploads
     zips = sorted(folder.glob("*.zip"), key=lambda p: p.stat().st_mtime)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for p in folder.rglob("*"):
-            if p.is_file() and REPORT_DIR not in p.parts and p.suffix.lower() in (".csv", ".txt", ".pdf"):
+            if p.is_file() and REPORT_DIR not in p.parts and p.suffix.lower() in (".csv", ".txt", ".pdf", ".xlsx", ".tsv"):
                 z.write(p, p.relative_to(folder).as_posix())
-    files, notes = custom.parse_zip(buf.getvalue())
+    files, notes = uploads.parse_zip(buf.getvalue())
     if not any(n in files for n in rules.FILES.values()) and zips:
-        files, notes = custom.parse_zip(zips[-1].read_bytes())
+        files, notes = uploads.parse_zip(zips[-1].read_bytes())
         notes.insert(0, f"Read {zips[-1].name}")
     files.pop("answer_key.csv", None)
     return files, notes

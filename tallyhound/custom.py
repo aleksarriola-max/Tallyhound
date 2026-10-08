@@ -4,143 +4,20 @@ from __future__ import annotations
 import io
 import threading
 import time
-import zipfile
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
 from . import agents, llm, rules
 from . import common as C
+# reading a zip or loose files lives in uploads.py; these names stay importable from here
+from .uploads import MAX_LINE_CHARS, MAX_LINES, MAX_UNZIPPED_MB, MAX_ZIP_MB, STEMS, bundle, decode, parse_zip  # noqa: F401
 
-MAX_ZIP_MB = 50
-MAX_LINES = 300_000
-STEMS = {"payments": "payments.csv", "approvals": "approvals.csv", "vendors": "vendors.csv",
-         "contracts": "contracts.txt", "expenses": "expenses.csv", "payment_run": "payment_run.csv",
-         "bank_statement": "bank_statement.csv", "bank": "bank_statement.csv",
-         "invoices": "invoices.txt"}
 SEV_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 COLS = ["id", "severity", "area", "clause", "amount", "title", "skeptic_verdict", "evidence", "related_evidence",
         "source_file", "line_number", "innocent_explanations", "skeptic_reason", "proposed_fix"]
-
-
-# ---------------------------------------------------------------- reading a zip
-MAX_LINE_CHARS = 4000
-# a public copy (the hosted demo, ~1 GB of memory shared by every visitor) gets tighter limits than your own server
-MAX_UNZIPPED_MB = 20 if llm.public() else 100          # everything in one zip, once unpacked (stops "zip bombs")
-
-
-def decode(raw: bytes) -> str:
-    """Text of an uploaded file. UTF-8 (with or without BOM), UTF-16 from Excel's "Unicode text", else Windows-1252,
-    which is what Excel on Windows writes for 'Save as CSV'. Never fails: unknown bytes become U+FFFD."""
-    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
-        return raw.decode("utf-16", errors="replace")
-    try:
-        return raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        return raw.decode("cp1252", errors="replace")
-
-
-def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
-    """Returns (files, notes). Reads in memory only; nothing is written to disk and no path is ever used."""
-    notes: list[str] = []
-    if len(data) > MAX_ZIP_MB * 1024 * 1024:
-        return {}, [f"That zip is larger than {MAX_ZIP_MB} MB."]
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(data))
-        infos = zf.infolist()
-    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, ValueError):
-        return {}, ["That file is not a valid zip."]
-    files: dict[str, list[str]] = {}
-    origin: dict[str, str] = {}
-    total = 0
-    unpacked = 0
-    pdfs: list[tuple[str, list[str]]] = []
-    pdf_raw: list[tuple[str, bytes]] = []
-
-    def read(info) -> bytes | None:
-        nonlocal unpacked
-        if info.flag_bits & 0x1:
-            notes.append(f"Skipped {base}: it is password-protected. Zip it again without a password.")
-            return None
-        if info.file_size > MAX_ZIP_MB * 1024 * 1024:
-            notes.append(f"Skipped {base}: too large.")
-            return None
-        if unpacked + info.file_size > MAX_UNZIPPED_MB * 1024 * 1024:
-            notes.append(f"Stopped at {MAX_UNZIPPED_MB} MB of unpacked data; {base} and later files were skipped.")
-            return None
-        try:
-            raw = zf.read(info)
-        except (zipfile.BadZipFile, RuntimeError, NotImplementedError, OSError, EOFError, ValueError) as e:
-            notes.append(f"Skipped {base}: it could not be unpacked ({type(e).__name__}).")
-            return None
-        unpacked += len(raw)
-        return raw
-
-    for info in infos:
-        base = info.filename.replace("\\", "/").rsplit("/", 1)[-1]
-        if info.is_dir() or base.startswith(".") or "__MACOSX" in info.filename:
-            continue
-        stem = base.rsplit(".", 1)[0].lower()
-        if base.lower().endswith(".pdf"):
-            from . import invoices
-            if len(pdf_raw) >= invoices.MAX_PDFS:
-                notes.append(f"Skipped {base}: more than {invoices.MAX_PDFS} PDFs in one upload.")
-                continue
-            raw = read(info)
-            if raw is not None:
-                name, k = base, 2
-                while any(n == name for n, _ in pdf_raw):     # north/invoice.pdf and south/invoice.pdf: keep both
-                    name, k = f"{base.rsplit('.', 1)[0]} ({k}).pdf", k + 1
-                pdf_raw.append((name, raw))
-            continue
-        if stem == "answer_key" and base.lower().endswith(".csv"):
-            raw = read(info)
-            if raw is not None:
-                files["answer_key.csv"] = decode(raw).splitlines()
-                notes.append("Found answer_key.csv: the Scorecard page will grade runs on this data.")
-            continue
-        match = next((v for k, v in STEMS.items() if stem == k or stem.startswith(k + "_") or stem.endswith("_" + k)), None)
-        if match is None:
-            notes.append(f"Ignored {base} (not one of the audit files).")
-            continue
-        if match in files:
-            notes.append(f"Two files are read as {match}: kept {origin[match]}, skipped {info.filename}. "
-                         "Upload one month per zip, or rename the extra file.")
-            continue
-        raw = read(info)
-        if raw is None:
-            continue
-        lines = decode(raw).replace("\x00", "").splitlines()
-        long_ = [i for i, ln in enumerate(lines, start=1) if len(ln) > MAX_LINE_CHARS]
-        if long_:                     # no real export has lines this long; cutting them keeps every check fast
-            lines = [ln[:MAX_LINE_CHARS] for ln in lines]
-            notes.append(f"{base}: {len(long_)} line(s) longer than {MAX_LINE_CHARS:,} characters were cut "
-                         f"(first: line {long_[0]}).")
-        total += len(lines)
-        if total > MAX_LINES:
-            notes.append(f"Stopped at {MAX_LINES} lines; {base} and later files were skipped.")
-            break
-        missing = rules.missing_columns(match, lines)
-        if missing:
-            notes.append(f"{match} is missing columns: {', '.join(missing)}. Match its columns below, or it is skipped.")
-        files[match] = lines
-        origin[match] = info.filename
-    if pdf_raw:
-        from . import invoices
-        for base, lines in invoices.read_pdfs(pdf_raw).items():
-            if lines:
-                pdfs.append((base, lines))
-            elif lines is None:
-                notes.append(f"Skipped {base}: it could not be read safely (too slow, too large, or more than "
-                             f"{invoices.MAX_PDF_PAGES} pages).")
-            else:
-                notes.append(f"{base} has no readable text (a scan?). It was skipped; scanned PDFs need OCR first.")
-    if pdfs:
-        from . import invoices
-        files[invoices.NAME] = invoices.combine(sorted(pdfs))
-        notes.append(f"Read {len(pdfs)} invoice PDF(s) into invoices.txt for the Invoices agent.")
-    return files, notes
 
 
 def add_upload(label: str, files: dict[str, list[str]], key: list[dict] | None = None) -> None:
@@ -191,7 +68,6 @@ def view(label: str) -> dict[str, list[str]]:
     """The uploaded files as the checks see them: only the header line is renamed by the column matching.
     Data lines are untouched, so every quote is still an exact line of the file the person uploaded."""
     import csv
-    import io
     out = {}
     orders = st.session_state.get("date_order", {}).get(label, {})
     for name, lines in st.session_state.uploads[label].items():
@@ -229,9 +105,11 @@ class Job:
         self.limits = dict(limits or rules.LIMITS)
         self.label, self.files, self.engine, self.model, self.url = label, files, engine, model, url
         self.policy, self.skip = policy, set(skip)
-        self.agents = {n: dict(status="Skipped" if n in self.skip else "Waiting", pct=0, secs=0, msg="") for n in
-                       ["Orchestrator", *rules.FILES, "Skeptic"]}
+        self.agents: dict[str, dict[str, Any]] = {
+            n: dict(status="Skipped" if n in self.skip else "Waiting", pct=0, secs=0, msg="") for n in
+            ["Orchestrator", *rules.FILES, "Skeptic"]}
         self.records: list[dict] = []
+        self.run_id = ""                    # set by the caller after construction; read back with getattr
         self.thread: threading.Thread | None = None
         self.t0 = self.touched = time.time()
         self.lock = threading.Lock()
@@ -293,8 +171,10 @@ class Job:
                     area=h.area, clause=h.clause, severity=h.severity, amount=h.amount, title=h.title,
                     source_file=h.source_file, line_number=h.line_number, related_lines=[ln for _, ln in h.related],
                     innocent=rules.INNOCENT.get(h.clause, ""), fix=rules.FIXES.get(h.clause, ""),
-                    **(dict(verdict="Confirmed",
-                            reason=f"Fixed rule check, no AI. Clause {h.clause}: {self.policy.get(h.clause + '|' + h.area, '')}")
+                    **(dict(verdict="Doubtful" if h.clause in rules.PATTERN_CLAUSES else "Confirmed",
+                            reason=("Fixed rule check, no AI. A pattern worth a look, not a breach on its own"
+                                    if h.clause in rules.PATTERN_CLAUSES else "Fixed rule check, no AI")
+                            + f". Clause {h.clause}: {self.policy.get(h.clause + '|' + h.area, '')}")
                        if self.engine == "rules" else {})))
                 r = recs[-1]
                 src = self.files.get(r["source_file"], [])          # cross-file checks quote other files

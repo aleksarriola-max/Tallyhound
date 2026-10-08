@@ -1,0 +1,16 @@
+Bramblecourt Instruments Ltd
+Transaction List by Vendor
+"September 1-30, 2026"
+
+,Date,Transaction Type,Num,Due Date,Invoice Date,Invoice No,Original Amount,Amount Paid,Memo/Description
+Ashby Components,,,,,,,,,
+,09/01/2026,Bill Payment (Check),1001,,09/01/2026,ASH-6100,"1,960.17","1,960.17",
+,09/12/2026,Bill Payment (Check),1007,,09/01/2026,ASH-6100,"1,960.17","1,960.17",second run
+Total for Ashby Components,,,,,,,,"$3,920.34",
+Corwin Plastics,,,,,,,,,
+,09/05/2026,Bill Payment (Check),1002,,09/03/2026,COR-6101,"9,366.95","9,366.95",
+Total for Corwin Plastics,,,,,,,,"$9,366.95",
+TOTAL,,,,,,,,"$13,287.29",
+
+
+"Thursday, October 08, 2026 03:12 PM GMT-04:00"

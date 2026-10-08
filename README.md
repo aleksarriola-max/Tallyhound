@@ -14,7 +14,7 @@ data is entirely fictional (Bramblecourt Instruments Ltd, its suppliers, staff a
 > replace an auditor, it does not move money, and its findings are suggestions to check. Use your own judgement and
 > your organisation's controls. See [SECURITY.md](SECURITY.md) before putting real company data into it.
 
-![Home](docs/home.png)
+![From a QuickBooks and Xero export to a reviewed case, in 30 seconds](docs/demo.gif)
 
 ## Why it exists
 
@@ -30,6 +30,10 @@ recorded in a tamper-evident audit trail.
 | Reports | Scorecard |
 |---|---|
 | ![Reports](docs/reports.png) | ![Scorecard](docs/scorecard.png) |
+
+| Real exports, matched column by column | Patterns worth a look |
+|---|---|
+| ![Importing a QuickBooks report and a Xero workbook](docs/import.png) | ![First-digit test and round amounts](docs/patterns.png) |
 
 ## Quick start
 
@@ -47,7 +51,9 @@ streamlit run app.py
 Your browser opens at http://localhost:8501. The checklist on Home walks you through a run, a failed agent and a
 retry, reviewing a case, and downloading the results (about five minutes). Best viewed at least 1280px wide.
 
-To try your own files, press **Check new files** on Home and upload a zip (see [Your own files](#your-own-files)).
+To try your own files, press **Check new files** on Home and pick your exports, or a zip of them (see
+[Your own files](#your-own-files)). The four files in `docs/example-exports/` are a fictional month laid out the way
+QuickBooks and Xero export it - upload them together to see the importer at work.
 To try the AI engines, install [Ollama](https://ollama.com), run `ollama serve` and `ollama pull qwen3.5:9b`, then pick
 an Ollama engine under *Engine and agents* in the same dialog.
 
@@ -185,7 +191,8 @@ Runs that fail (for example because the model server is not running) are reporte
 
 ## Your own files
 
-Press *Check new files* on Home and upload a zip containing any of:
+Press *Check new files* on Home and pick the files - CSV, Excel (`.xlsx`), tab-separated or PDF - or a zip of them.
+Tallyhound needs any of:
 
 | File | Needed columns |
 |---|---|
@@ -198,8 +205,18 @@ Press *Check new files* on Home and upload a zip containing any of:
 | `contracts.txt` | see `data/source/contracts.txt` |
 | invoice PDFs | any names; PDFs with a text layer |
 
-Files with other column names can be matched once (*Settings > Data*); only the header is renamed, so quotes are still
-exact lines of your file. To try it quickly, zip the `data/source/` folder. Pick the upload under *Data to check* and
+Exports straight from an accounting package work too:
+
+- **Excel workbooks** are read from the sheet with the most rows, using the values Excel shows (formulas are not run).
+- **Report-style exports** (QuickBooks, Xero, Sage, NetSuite) are tidied: the title lines above the column names,
+  `Total for ...` lines and the printed footer are dropped, and vendor group headings are written onto each row of
+  their group. The notes under *Files* say exactly what was changed.
+- **Files with other names** ("Bill Payment List.csv", "Export (3).xlsx") are recognised from their columns.
+- **Other column names** are matched once, with suggestions pre-filled (Xero's `*ContactName` or `InvoiceAmountPaid`
+  included), and the matching is remembered for next month's export with the same columns. Only the header is renamed,
+  so quotes are still exact lines of the file the checks read.
+
+To try it quickly, upload the files in `docs/example-exports/`, or zip the `data/source/` folder. Pick the upload under *Data to check* and
 press **Run**. Findings, review, the payment run and downloads then work on your files; supplier recovery and
 subscriptions are sample-only. The zip is read in memory and never written to disk as a file; each dataset keeps its
 own decisions.
@@ -276,6 +293,16 @@ Ollama is the default. For LM Studio, vLLM or llama.cpp, upload your files, then
 - **Column matching** - suggestions are pre-filled from common export column names (QuickBooks, Xero, NetSuite, bank
   downloads), and a matching you save is reused for files with the same header. Dates in several formats and amounts
   like `$1,234.50`, `1.234,50`, `(12.00)`, `120.00-` or `250.00 CR` are understood.
+- **Fraud-pattern checks** - each with its own policy clause, and marked doubted rather than confirmed, because a
+  pattern is worth a look but is not a breach on its own: the same invoice paid twice under a re-keyed number with
+  the same invoice date (5.6: `ASH-6100` and `ASH-6100A`, two digits swapped, a letter O for a zero - but not the
+  next numbers in a series, nor instalments), a new vendor paid more than the director limit within 30 days of being
+  set up (4.5; a set-up date shared by most of the vendor list is taken as the date it was imported, and ignored),
+  one person's approvals bunched just under the director limit and not approved by a director (1.6), and three or more
+  receipt-free claims by one person just under the receipt limit within 30 days (6.6; mileage and allowances aside).
+- **Patterns worth a look** (*Reports > Patterns*) - a first-digit (Benford's law) test with a verdict only when there
+  are enough amounts, the share of round amounts, and amounts bunched just under each limit. These describe the whole
+  population and are never findings.
 - **Learning from reviewers** - when rejecting, tick "Don't flag clause ... again for ..." to set that pattern aside on
   later runs (listed, and removable, under *Settings > Rules*). Repeated rejections just over a limit produce a
   suggested new limit.
@@ -305,9 +332,11 @@ app.py                 page setup, sidebar navigation, run ticker
 tallyhound/
   layout.py            the five sections: Home, Review, Reports, Settings, How we know it's right
   run_analysis.py      upload, data check, column matching, engine settings, run progress
+  uploads.py           reading a zip or loose files;  importer.py  Excel, report-style exports, recognising files
   review.py            decisions, downloads, test-case export
   pages.py             Reports summary, Payment run, Recovery, Subscriptions, Audit trail, Guardrails
-  pages_extra.py       Scorecard, Settings > Policy and Rules, Trends and vendor risk
+  pages_extra.py       Scorecard, Settings > Policy and Rules, Trends and vendor risk, Patterns
+  patterns.py          first-digit test, round amounts, bunching under limits
   rules.py             the built-in rule checks (start here to add a rule)
   gate.py              payment gate checks for uploaded runs
   invoices.py          invoice PDF reading and checks;  pdfworker.py  the sandboxed PDF reader process
@@ -322,7 +351,9 @@ tallyhound/
   sim.py               simulated demo run;  guide.py  the guided tour checklist
 data/*.csv             the sample company's data (regenerate with scripts/make_data.py)
 data/source/           the fictional source files that findings quote
-scripts/               make_data, make_challenge, benchmark, watch, add_user, anonymise
+scripts/               make_data, make_challenge, make_example_exports, screenshots, benchmark, watch, add_user,
+                       anonymise
+docs/example-exports/  a fictional month as QuickBooks and Xero export it
 tests/                 automated tests (test_quality.py: the false-alarm gates; cases/: regression cases)
 Dockerfile, docker-compose.yml
 ```
@@ -332,12 +363,14 @@ Dockerfile, docker-compose.yml
 ```bash
 pip install -r requirements-dev.txt
 ruff check .
-pytest
+mypy
+pytest --cov
 ```
 
 The tests check that the data keeps its promises, that every page renders, that the review and export flow works,
 that hostile files are handled, and that the rules raise no false alarms on the traps. CI runs them on Python 3.12 and,
-with the oldest supported Streamlit, on Python 3.10. See [CONTRIBUTING.md](CONTRIBUTING.md) - including how to add a
+with the oldest supported Streamlit, on Python 3.10, with type checking and a coverage floor of 85% (it is about 90%).
+`scripts/screenshots.py` re-makes the screenshots and the demo GIF from a running copy. See [CONTRIBUTING.md](CONTRIBUTING.md) - including how to add a
 rule - and the [Code of Conduct](CODE_OF_CONDUCT.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Notes

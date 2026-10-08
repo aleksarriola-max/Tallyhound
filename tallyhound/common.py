@@ -87,7 +87,8 @@ def policy() -> dict:
     """Clause texts, with the amounts shown as currently set under Settings > Policy."""
     L = limits()
     swap = {"$2,500": f"${L['po_limit']:,.0f}", "$10,000": f"${L['director_limit']:,.0f}",
-            "$75.00": f"${L['meal_limit']:,.2f}", "$25.00": f"${L['receipt_limit']:,.2f}"}
+            "$75.00": f"${L['meal_limit']:,.2f}", "$25.00": f"${L['receipt_limit']:,.2f}",
+            "within 30 days of being set up": f"within {int(L['new_vendor_days'])} days of being set up"}
     out = {}
     for k, text in _policy_base().items():
         for a, b in swap.items():

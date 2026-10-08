@@ -12,3 +12,5 @@ challenge-*.zip
 anonymised/
 tallyhound-reports/
 .env
+.mypy_cache/
+.coverage

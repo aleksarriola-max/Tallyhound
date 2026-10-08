@@ -16,6 +16,7 @@ import io
 import random
 import zipfile
 from datetime import date, timedelta
+from typing import Any, cast
 
 HEADERS = {
     "payments.csv": ["payment_id", "pay_date", "invoice_date", "vendor_id", "supplier", "invoice_no", "invoice_amount",
@@ -38,18 +39,23 @@ ISSUES = ["pay_dup", "pay_over", "pay_noinv", "pay_early", "pay_weekend", "app_s
           "exp_duprec", "exp_weekend", "exp_personal", "con_surcharge", "con_rate", "con_term", "con_renew",
           "bank_unrecorded", "bank_uncleared", "inv_bank", "inv_total", "inv_unknown", "inv_dup"]
 COUNTS = {"easy": 8, "medium": 14, "hard": len(ISSUES)}
+# added in 0.7: planted from their own random stream after everything else, so the problems above stay where they were
+EXTRA_ISSUES = ["pay_neardup", "app_underlimit", "ven_newfast", "exp_underlimit"]
+EXTRA_COUNTS = {"easy": 1, "medium": 2, "hard": len(EXTRA_ISSUES)}
 
 
 class _Gen:
     def __init__(self, seed: int, difficulty: str, traps: bool = True):
         self.r = random.Random(seed)
+        self.r2 = random.Random(seed * 7919 + 17)      # the 0.7 problems and traps
+        self.difficulty = difficulty
         self.with_traps = traps
         self.dayfirst = False
         self.hard = difficulty == "hard"
         self.days = [date(2026, 9, d) for d in range(1, 31)]
         self.weekdays = [d for d in self.days if d.weekday() < 5]
         self.weekends = [d for d in self.days if d.weekday() >= 5]
-        self.rows = {k: [] for k in HEADERS}
+        self.rows: dict[str, list[dict]] = {k: [] for k in HEADERS}
         self.contracts: list[list[dict]] = []      # pairs of text lines kept together
         self.key: list[dict] = []
         self.bank_extra: list[dict] = []           # bank lines with no recorded payment (planted)
@@ -212,6 +218,7 @@ class _Gen:
             for _ in range(2):
                 inv = self.approval(v["name"], self.amt(600, 9500), self.wd(1, 24))
                 self.payment(v, inv)
+        self.clean_payments = list(self.rows["payments.csv"])
         self.open_invoices = []
         for v in self.r.sample(self.paid_vendors, 6):      # approved, not yet paid: these go on the payment run
             self.open_invoices.append((v, self.approval(v["name"], self.amt(600, 9000), self.wd(20, 30))))
@@ -222,13 +229,14 @@ class _Gen:
             else:
                 self.expense()
         for _ in range(5):
-            v = self.names.pop()
-            self.contract_pair(v, "Clause 2.1", "Prices are fixed for the term as per the schedule.",
+            vname = self.names.pop()
+            self.contract_pair(vname, "Clause 2.1", "Prices are fixed for the term as per the schedule.",
                                f"Line 1: Contracted supply {self.amt(1000, 6000):.2f}")
 
     # -------- the planted problems
     def issue(self, kind: str) -> None:
         r, hard = self.r, self.hard
+        v: Any                 # a vendor record in some branches, a vendor name in others
         if kind == "pay_dup":
             v = r.choice(self.paid_vendors)
             orig = r.choice([p for p in self.rows["payments.csv"] if p["vendor_id"] == v["vendor_id"]])
@@ -326,7 +334,9 @@ class _Gen:
             self.plant(kind, "5.5", "Payments", "bank_statement.csv", b, [], f"Bank transfer to {who} with no recorded payment")
         elif kind == "bank_uncleared":
             v = r.choice(self.paid_vendors)
-            inv = self.approval(v["name"], self.amt(900, 7000), self.wd(10, 18))    # mid-month: inside the statement
+            # early enough that the statement runs well past it: a payment younger than the clearing window is
+            # still on its way, and no check (or person) should call it missing
+            inv = self.approval(v["name"], self.amt(900, 7000), self.wd(5, 10))
             p = self.payment(v, inv)
             p["_nobank"] = True
             self.plant(kind, "5.5", "Payments", "payments.csv", p, [], f"{p['payment_id']} recorded but not on the bank statement")
@@ -356,6 +366,68 @@ class _Gen:
                                       f"Annual renewal {self.amt(1200, 6000):.2f} - no notice of cancellation on file",
                                       day=date(2026, 10, 1))
             self.plant(kind, "7.4", "Contracts", "contracts.txt", i, [c], f"{v} auto-renewed with no decision on file")
+
+    # -------- problems and traps added in 0.7 (own random stream)
+    def extra_issue(self, kind: str) -> None:
+        r, hard = self.r2, self.hard
+        if kind == "pay_neardup":
+            v = r.choice(self.paid_vendors)
+            orig = r.choice([p for p in self.clean_payments if p["vendor_id"] == v["vendor_id"]])
+            no = orig["invoice_no"]
+            pre, num = no.rsplit("-", 1)
+            twin = f"{pre}-{num[0]}{num[2]}{num[1]}{num[3:]}" if hard and len(num) >= 3 and num[1] != num[2] else f"{no}A"
+            later = [d for d in self.weekdays if d > date.fromisoformat(orig["pay_date"])][:4] or [self.weekdays[-1]]
+            dup = {k: x for k, x in orig.items() if not k.startswith("_")}
+            dup.update(payment_id=f"P-{self.nxt('pay')}", invoice_no=twin, pay_date=r.choice(later).isoformat())
+            self.rows["payments.csv"].append(dup)
+            self.plant(kind, "5.6", "Payments", "payments.csv", dup, [orig], f"{no} paid again as {twin}")
+        elif kind == "app_underlimit":
+            who = r.choice(PEOPLE)
+            lim = 10000.0
+            parts = [self.approval(self.names.pop(), round(r.uniform(lim * 0.965, lim - 1), 2), self.wd(), requested_by=who,
+                                   approved_by=r.choice([p for p in PEOPLE if p != who])) for _ in range(2)]
+            self.plant(kind, "1.6", "Approvals", "approvals.csv", parts[-1], parts[:-1],
+                       f"{who} raised two approvals just under the director limit")
+        elif kind == "ven_newfast":
+            made = self.wd(1, 12)
+            v = self.vendor(created_on=made.isoformat(), last_paid_on=(made + timedelta(days=r.randint(3, 12))).isoformat(),
+                            last_paid_amount=f"{(10400.0 if hard else r.uniform(14000, 38000)):.2f}")
+            self.plant(kind, "4.5", "Vendors", "vendors.csv", v, [], f"{v['vendor_id']} paid a large amount soon after set-up")
+        elif kind == "exp_underlimit":
+            who = self.under_who = r.choice(PEOPLE)
+            claims = [self.expense(employee=who, category="PARKING" if hard else "SUPPLIES", amount=f"{r.uniform(22.6, 24.99):.2f}",
+                                   receipt_ref="", notes="Business purpose recorded") for _ in range(3)]
+            self.plant(kind, "6.6", "Expenses", "expenses.csv", claims[-1], claims[:-1],
+                       f"{who} claimed three times just under the receipt limit")
+
+    def extra_traps(self) -> None:
+        r = self.r2
+        # a weekly bill: same amount, numbers in series, a week apart
+        v = r.choice(self.paid_vendors)
+        start = self.wd(1, 8)
+        amount = self.amt(300, 900)
+        series = []
+        for k in range(3):
+            day = start + timedelta(days=7 * k)
+            inv = self.approval(v["name"], amount, day, doc_no=f"WK-{4100 + k}")
+            series.append(self.payment(v, inv))
+        self.trap("series", "Payments", "payments.csv", series[-1], series[:-1], "weekly bill, same amount, numbers in series")
+        # two licences for two sites: same supplier, same amount, same day, consecutive numbers
+        v = r.choice(self.paid_vendors)
+        day = self.wd(5, 20)
+        a = self.payment(v, self.approval(v["name"], 1250.00, day, doc_no="LIC-7730"))
+        b = self.payment(v, self.approval(v["name"], 1250.00, day, doc_no="LIC-7731"))
+        self.trap("two_sites", "Payments", "payments.csv", b, [a], "two site licences, same amount and day")
+        # a new vendor paid a small amount soon after set-up
+        made = self.wd(2, 10)
+        n = self.vendor(created_on=made.isoformat(), last_paid_on=(made + timedelta(days=5)).isoformat(),
+                        last_paid_amount=f"{self.amt(400, 2400):.2f}")
+        self.trap("new_small", "Vendors", "vendors.csv", n, [], "new vendor, small first payment")
+        # parking just under the receipt limit, twice: not a pattern yet
+        who = r.choice([x for x in PEOPLE if x != getattr(self, "under_who", None)])
+        p = [self.expense(employee=who, category="PARKING", amount="24.00", receipt_ref="", notes="Client visit parking")
+             for _ in range(2)]
+        self.trap("parking", "Expenses", "expenses.csv", p[-1], p[:-1], "two parking claims just under the receipt limit")
 
     # -------- supplier invoice PDFs: one per open invoice, some with planted problems
     def invoice_docs(self) -> list[tuple[str, list[str], str | None]]:
@@ -428,6 +500,10 @@ class _Gen:
             self.issue(kind)
         if self.with_traps:
             self.traps()
+        for kind in self.r2.sample(EXTRA_ISSUES, EXTRA_COUNTS[self.difficulty]):
+            self.extra_issue(kind)
+        if self.with_traps:
+            self.extra_traps()
         files, where = {}, {}
         for name, head in HEADERS.items():
             rows = list(self.rows[name])
@@ -457,7 +533,8 @@ class _Gen:
         docs = self.invoice_docs()
         for name, lines_, _ in docs:
             self.pdfs[name] = invoices.render_pdf(lines_)
-        extracted = sorted((name, invoices.pdf_lines(self.pdfs[name])) for name, _, _ in docs)
+        # our own small generated PDFs are never refused, so pdf_lines gives a list here, never None
+        extracted = sorted((name, cast("list[str]", invoices.pdf_lines(self.pdfs[name]))) for name, _, _ in docs)
         files[invoices.NAME] = invoices.combine(extracted)
         start = {}
         for n, ln in enumerate(files[invoices.NAME], start=1):
@@ -471,17 +548,17 @@ class _Gen:
                 i += 1
             return i + 1
         inv_key = []
-        for name, _, kind in docs:
+        for name, _, doc_kind in docs:
             no_line = find(name, "Invoice No")
-            if kind == "inv_bank":
+            if doc_kind == "inv_bank":
                 inv_key.append(("8.2", find(name, "Pay to account"), [no_line], f"{name}: bank details differ from the vendor master"))
-            elif kind == "inv_total":
+            elif doc_kind == "inv_total":
                 inv_key.append(("8.1", find(name, "Total due"), [no_line], f"{name}: total differs from the approved amount"))
-            elif kind == "inv_unknown":
+            elif doc_kind == "inv_unknown":
                 inv_key.append(("8.1", no_line, [], f"{name}: invoice has no approval record"))
-            elif kind == "inv_dup":
+            elif doc_kind == "inv_dup":
                 inv_key.append(("8.3", find(name.replace(".pdf", "-copy.pdf"), "Invoice No"), [no_line], f"{name} submitted twice"))
-            elif kind == "trap_net_total":
+            elif doc_kind == "trap_net_total":
                 inv_key.append(("-", find(name, "Net total"), [find(name, "Total due"), no_line],
                                 f"TRAP (net_total): {name} shows the net total before tax"))
         bank = self.bank_rows()

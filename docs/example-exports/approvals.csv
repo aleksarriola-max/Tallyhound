@@ -1,0 +1,54 @@
+record_id,type,doc_no,date,vendor,amount,requested_by,approved_by,approver_role,po_no
+A-327,INVOICE,CAL-7032,2026-09-01,Calder Electrical,1226.14,T. Walsh,L. Fontaine,Manager,PO-4027
+A-347,INVOICE,QUA-7053,2026-09-01,Quarry Electrical,9933.99,D. Abara,M. Lindqvist,Manager,PO-4047
+A-309,INVOICE,DUN-7009,2026-09-01,Dunmore Plastics,3688.31,D. Abara,J. Okoro,Manager,PO-4009
+A-349,INVOICE,WK-4100,2026-09-01,Dunmore Plastics,543.73,L. Fontaine,S. Nakamura,Manager,PO-4049
+A-337,INVOICE,NOR-7043,2026-09-02,Northgate Property Rent,8500.00,J. Okoro,R. Mehta,Manager,
+A-305,INVOICE,QUA-7005,2026-09-02,Quarry Software,2963.52,P. Herrera,T. Walsh,Manager,PO-4005
+A-344,INVOICE,CAL-7050,2026-09-02,Calder Components,6000.00,S. Nakamura,M. Lindqvist,Manager,PO-4044
+A-306,INVOICE,QUA-7006,2026-09-03,Quarry Software,6833.72,D. Abara,J. Okoro,Manager,PO-4006
+A-314,INVOICE,ELL-7014,2026-09-03,Ellery Components,2951.10,P. Herrera,S. Nakamura,Manager,PO-4014
+A-307,INVOICE,CAL-7007,2026-09-03,Calder Components,7734.49,S. Nakamura,J. Okoro,Manager,PO-4007
+A-335,INVOICE,PEM-7041,2026-09-06,Pembury Cleaning,906.51,J. Okoro,P. Herrera,Manager,PO-4035
+A-336,INVOICE,CAL-7042,2026-09-06,Calder Components,3163.25,L. Fontaine,P. Herrera,Manager,PO-4036
+A-334,INVOICE,CAL-7040,2026-09-06,Calder Tooling,1902.02,T. Walsh,J. Okoro,Manager,PO-4034
+A-345,INVOICE,NOR-7051,2026-09-07,Northam Metals,1807.00,S. Nakamura,R. Mehta,Manager,PO-4045
+A-343,INVOICE,QUA-7049,2026-09-07,Quarry Software,2667.36,M. Lindqvist,R. Mehta,Manager,PO-4043
+A-311,INVOICE,WEX-7011,2026-09-07,Wexcombe Software,9338.75,J. Okoro,T. Walsh,Manager,PO-4011
+A-333,INVOICE,CAL-7039,2026-09-07,Calder Tooling,5452.48,D. Abara,L. Fontaine,Manager,PO-4033
+A-350,INVOICE,WK-4101,2026-09-08,Dunmore Plastics,543.73,P. Herrera,L. Fontaine,Manager,PO-4050
+A-312,INVOICE,WEX-7012,2026-09-08,Wexcombe Software,1002.61,P. Herrera,T. Walsh,Manager,PO-4012
+A-313,INVOICE,ELL-7013,2026-09-08,Ellery Components,2539.01,J. Okoro,P. Herrera,Manager,PO-4013
+A-348,INVOICE,CAL-7054,2026-09-09,Calder Plastics,9845.12,D. Abara,M. Lindqvist,Manager,PO-4048
+A-342,INVOICE,CAL-7048,2026-09-09,Calder Tooling,5000.00,P. Herrera,S. Nakamura,Manager,PO-4042
+A-332,INVOICE,CAL-7038,2026-09-10,Calder Print,21321.18,T. Walsh,S. Nakamura,Manager,PO-4032
+A-310,INVOICE,DUN-7010,2026-09-10,Dunmore Plastics,5176.69,T. Walsh,J. Okoro,Manager,PO-4010
+A-316,INVOICE,PEM-7016,2026-09-10,Pembury Cleaning,6173.42,T. Walsh,P. Herrera,Manager,PO-4016
+A-339,INVOICE,CIT-7045,2026-09-11,City Power & Light,3684.31,L. Fontaine,R. Mehta,Manager,
+A-341,INVOICE,CIT-7047,2026-09-11,City Power & Light,3663.10,P. Herrera,L. Fontaine,Manager,
+A-340,INVOICE,CIT-7046,2026-09-11,City Power & Light,3578.92,R. Mehta,P. Herrera,Manager,
+A-338,INVOICE,SHI-7044,2026-09-14,Shield Insurance Co,5765.59,P. Herrera,D. Abara,Manager,
+A-318,INVOICE,CAL-7018,2026-09-14,Calder Tooling,6613.80,D. Abara,S. Nakamura,Manager,PO-4018
+A-303,INVOICE,GAR-7003,2026-09-14,Garrow Tooling,2492.94,M. Lindqvist,R. Mehta,Manager,PO-4003
+A-351,INVOICE,WK-4102,2026-09-15,Dunmore Plastics,543.73,M. Lindqvist,J. Okoro,Manager,PO-4051
+A-328,PO,PO-4027,2026-09-16,Calder Electrical,1226.14,M. Lindqvist,P. Herrera,Manager,PO-4027
+A-329,INVOICE,KES-7034,2026-09-16,Kestrel Fasteners,3907.08,R. Mehta,P. Herrera,Manager,
+A-330,INVOICE,KES-7035,2026-09-17,Kestrel Fasteners,4423.85,S. Nakamura,J. Okoro,Manager,
+A-319,INVOICE,VAR-7019,2026-09-17,Varley Cleaning,9446.31,S. Nakamura,M. Lindqvist,Manager,PO-4019
+A-331,INVOICE,KES-7036,2026-09-17,Kestrel Fasteners,4595.60,M. Lindqvist,T. Walsh,Manager,
+A-352,INVOICE,LIC-7730,2026-09-18,Quarry Software,1250.00,S. Nakamura,R. Mehta,Manager,PO-4052
+A-353,INVOICE,LIC-7731,2026-09-18,Quarry Software,1250.00,R. Mehta,D. Abara,Manager,PO-4053
+A-308,INVOICE,CAL-7008,2026-09-18,Calder Components,9449.32,D. Abara,T. Walsh,Manager,PO-4008
+A-317,INVOICE,CAL-7017,2026-09-21,Calder Tooling,2653.55,T. Walsh,R. Mehta,Manager,PO-4017
+A-324,INVOICE,CAL-7024,2026-09-21,Calder Components,8631.79,R. Mehta,D. Abara,Manager,PO-4024
+A-321,INVOICE,ELL-7021,2026-09-21,Ellery Components,2957.36,D. Abara,L. Fontaine,Manager,PO-4021
+A-320,INVOICE,VAR-7020,2026-09-22,Varley Cleaning,631.96,T. Walsh,S. Nakamura,Manager,PO-4020
+A-325,INVOICE,QUA-7025,2026-09-22,Quarry Software,5213.52,J. Okoro,L. Fontaine,Manager,PO-4025
+A-301,INVOICE,NOR-7001,2026-09-23,Northam Metals,6496.03,R. Mehta,T. Walsh,Manager,PO-4001
+A-315,INVOICE,PEM-7015,2026-09-23,Pembury Cleaning,1351.90,P. Herrera,L. Fontaine,Manager,PO-4015
+A-304,INVOICE,GAR-7004,2026-09-23,Garrow Tooling,6886.28,R. Mehta,P. Herrera,Manager,PO-4004
+A-326,INVOICE,NOR-7026,2026-09-23,Northam Metals,4051.44,D. Abara,S. Nakamura,Manager,PO-4026
+A-302,INVOICE,NOR-7002,2026-09-24,Northam Metals,5118.65,J. Okoro,R. Mehta,Manager,PO-4002
+A-323,INVOICE,WEX-7023,2026-09-24,Wexcombe Software,4892.09,L. Fontaine,R. Mehta,Manager,PO-4023
+A-322,INVOICE,GAR-7022,2026-09-24,Garrow Tooling,8458.96,D. Abara,S. Nakamura,Manager,PO-4022
+A-346,INVOICE,DUN-7052,2026-09-25,Dunmore Plastics,922.36,S. Nakamura,R. Mehta,Manager,PO-4046

@@ -64,7 +64,7 @@ def check_url(url: str) -> str | None:
     except (socket.gaierror, UnicodeError, OSError):
         return None                               # unreachable anyway; the call reports it
     for a in addrs:
-        ip = ipaddress.ip_address(a.split("%")[0])
+        ip = ipaddress.ip_address(str(a).split("%")[0])
         if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
             return "That address is not allowed."
     return None
@@ -157,7 +157,7 @@ def chat_tools(messages: list[dict], tools: list[dict], model: str = DEFAULT_MOD
     payload = {"model": model, "stream": False, "think": False, "tools": tools, "messages": messages,
                "options": {"temperature": 0, "num_ctx": num_ctx}}
     out = _call(url, "/api/chat", payload, timeout)
-    msg = out.get("message")
-    if not isinstance(msg, dict):
+    reply = out.get("message")
+    if not isinstance(reply, dict):
         raise LLMError("Ollama sent back no message.")
-    return msg
+    return reply

@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import re
 import threading
+from typing import Any
 
 from . import llm
 
@@ -165,7 +166,8 @@ def _bank(ln: str) -> str | None:
 def blocks(lines: list[str]) -> list[dict]:
     """One dict per invoice: its name, and the line number (1-based) and value of each field found. A PDF that holds
     several invoices gives several blocks: a new invoice number after a total starts the next one."""
-    out, cur = [], None
+    out: list[dict] = []
+    cur: dict[str, Any] | None = None
     for n, full in enumerate(lines, start=1):
         ln = full[:MATCH_CHARS]                   # fields sit at the start of short lines; never scan a huge one
         m = HEAD.match(ln)
@@ -224,14 +226,15 @@ def check(files: dict[str, list[str]]) -> list:
     lines = files.get(NAME)
     if not lines:
         return []
-    A = None
+    A: dict[str, list] | None = None
     if files.get("approvals.csv"):
         A = {}
         for _, r in rules.rows(files["approvals.csv"]):
             if r["type"].strip().upper() in rules.INVOICE_TYPES:
                 A.setdefault(rules.inv_key(r["doc_no"]), []).append(r)
     V = {rules.norm_name(r["name"]): r for _, r in rules.rows(files.get("vendors.csv", []))} if files.get("vendors.csv") else None
-    out, seen = [], {}
+    out = []
+    seen: dict[str, list[tuple]] = {}
     for b in blocks(lines):
         if "number" not in b:
             continue

@@ -198,6 +198,7 @@ def trail_status() -> None:
     ok, bad = C.verify_trail(log)
     off = C.decisions_mismatch(log, st.session_state.decisions)
     if not ok:
+        assert bad is not None               # verify_trail names the broken entry whenever ok is False
         st.error(f"Audit trail broken at entry {bad + 1}: an entry was changed or removed after it was written."
                  if bad < len(log) else "Audit trail broken: entries were removed from the end, or the trail was replaced.")
     elif off:

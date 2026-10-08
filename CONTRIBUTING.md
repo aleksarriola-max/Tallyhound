@@ -15,10 +15,11 @@ source .venv/bin/activate              # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 streamlit run app.py                   # the app
 ruff check .                           # lint (configured in pyproject.toml)
-pytest                                 # about a minute; CI runs the same
+mypy                                   # type check (configured in pyproject.toml)
+pytest --cov                           # about a minute; CI runs the same, with a coverage floor
 ```
 
-Before opening a pull request, `ruff check .` and `pytest` must pass. If you change anything under `scripts/make_data.py`,
+Before opening a pull request, `ruff check .`, `mypy` and `pytest` must pass. If you change anything under `scripts/make_data.py`,
 run it and commit the regenerated `data/` too: CI checks that running it reproduces `data/` exactly.
 
 ## The one rule
@@ -62,12 +63,16 @@ Say you want to flag *payments to a supplier whose vendor record has no tax ID*.
    and `same_person()` for names, and the limits in `L` (add new ones to `LIMITS` and `LIMIT_LABELS`).
 3. **Explain it** - add one line each to `rules.INNOCENT` (an honest innocent explanation), `rules.FIXES` (what to do)
    and `triage.CLEARS` (what would clear it).
-4. **Plant it** - in `tallyhound/challenge.py`, add an issue kind to `ISSUES` and a branch in `_Gen.issue()` that plants
-   one realistic example and records it with `self.plant(...)`. Note that hard mode plants every kind, so this changes
-   the generated months; re-run `python scripts/benchmark.py`.
+4. **Plant it** - in `tallyhound/challenge.py`, add an issue kind to `EXTRA_ISSUES` and a branch in
+   `_Gen.extra_issue()` that plants one realistic example and records it with `self.plant(...)`. Extra issues use their
+   own random stream (`self.r2`) and are planted after everything else, so the older problems in each generated month
+   stay put. Re-run `python scripts/benchmark.py`. (`ISSUES` and `_Gen.issue()` hold the original set; adding there
+   changes every generated month.)
+   A check for a pattern that is worth a look but not a breach on its own goes in `rules.PATTERN_CLAUSES`: the rules
+   engine then marks its findings doubted instead of confirmed, so "Approve all confirmed" leaves them for a person.
 5. **Think about traps** - what legitimate data looks like this? (A new supplier not yet invoiced? A remit-to record?)
-   If there is a common one, plant it as a trap with `self.trap(...)` so the quality gates prove the rule does not
-   raise it.
+   If there is a common one, plant it as a trap with `self.trap(...)` (in `_Gen.extra_traps()` for new ones) so the
+   quality gates prove the rule does not raise it.
 6. **Test** - `pytest`. `tests/test_quality.py` fails if any trap is flagged or precision or recall drops; add a small
    focused test of your rule next to the others in `tests/test_audit3.py` (the "real-world shapes" tests are a good
    model). Rules must stay fast: no regex that can backtrack badly on a long line (one `\s*` per gap, bounded repeats).

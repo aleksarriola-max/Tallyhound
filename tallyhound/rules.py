@@ -18,6 +18,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from functools import lru_cache
+from typing import cast
 
 FILES = {"Payments": "payments.csv", "Approvals": "approvals.csv", "Vendors": "vendors.csv",
          "Contracts": "contracts.txt", "Expenses": "expenses.csv", "Invoices": "invoices.txt"}
@@ -32,11 +33,13 @@ REQUIRED = {
 }
 
 LIMITS = dict(po_limit=2500.0, director_limit=10000.0, meal_limit=75.0, receipt_limit=25.0, split_days=3, bank_days=5,
-              tolerance=1.0, materiality=50.0)
+              tolerance=1.0, materiality=50.0, new_vendor_days=30)
+DAY_LIMITS = ("split_days", "bank_days", "new_vendor_days")       # whole days; the other limits are money
 LIMIT_LABELS = dict(po_limit="Purchase order needed above ($)", director_limit="Director approval needed above ($)",
                     meal_limit="Meal limit per person ($)", receipt_limit="Receipt needed above ($)",
                     split_days="Split-order window (days)", bank_days="Bank clearing window (days)",
-                    tolerance="Ignore amount differences up to ($)", materiality="Minor-item threshold ($)")
+                    tolerance="Ignore amount differences up to ($)", materiality="Minor-item threshold ($)",
+                    new_vendor_days="New vendor: second review for big payments within (days)")
 # Bills that normally have no purchase order. Editable under Settings > Policy.
 # Phrases, not single words, where a single word also names ordinary suppliers ("Power Tools Direct", "Northern Gas
 # Turbine Parts" must still need a PO).
@@ -181,7 +184,7 @@ EU_NUMBER = re.compile(r"^-?\(?[$€£]?\d{1,3}(\.\d{3})*,\d{2}\)?$")
 CURRENCY = re.compile(r"^(?:USD|EUR|GBP|CAD|AUD|CHF)|(?:USD|EUR|GBP|CAD|AUD|CHF)$", re.I)
 
 
-def _f(s: str) -> float:
+def _f(s: str | float) -> float:
     t = str(s).strip().replace("\u2212", "-").replace("$", "").replace("£", "").replace("€", "").replace(" ", "").replace("\u00a0", "")
     t = t.replace("'", "")                       # 1'234.50 (Swiss)
     t = CURRENCY.sub("", t)                      # USD 1,200.00 / 1.200,00 EUR
@@ -266,7 +269,8 @@ def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     """Duplicates count money, not rows: instalments and void-and-reissue add up to the invoice and are fine;
     a payment that takes the total above the invoice is a duplicate. Only overpayments beyond the tolerance are
     flagged - paying less (a discount, a short payment) is not money lost."""
-    R, out, groups = rows(lines), [], {}
+    R, out = rows(lines), []
+    groups: dict[tuple, dict] = {}
     tol = L.get("tolerance", 1.0)
     for ln, r in R:
         pa, ia = _f(r["paid_amount"]), _f(r["invoice_amount"])
@@ -299,6 +303,93 @@ def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     for g in groups.values():          # judged on the whole file: a reversal further down undoes an earlier re-issue
         if g["cand"] and g["net"] > g["inv"] + tol:
             out += g["cand"]
+    out += _near_duplicates(R, groups, L)
+    return out
+
+
+CONFUSABLE = str.maketrans({"O": "0", "I": "1", "L": "1", "S": "5", "B": "8", "Z": "2"})
+PATTERN_CLAUSES = {"1.6", "4.5", "5.6", "6.6"}   # worth a look, not a breach on their own: never "Confirmed" by rules
+
+
+def _inv_text(s: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(s).upper())
+
+
+def _num(s: str) -> int | None:
+    d = re.findall(r"\d+", s)
+    return int(d[-1]) if d and len(d[-1]) <= 12 else None
+
+
+def similar_invoice(a: str, b: str) -> bool:
+    """Two invoice numbers that are probably one invoice keyed twice: one inside the other ('6100' and 'ASH-6100',
+    'ASH-6100' and 'ASH-6100A'), two neighbouring digits swapped far apart in the series ('ASH-6100' and 'ASH-6010'),
+    or a letter typed for a look-alike digit ('INV-1O01'). Numbers close together in a series are NOT similar:
+    'INV-1001' and 'INV-1002', or 'SC-4101' and 'SC-4110', are normally the next invoices."""
+    return _similar_text(_inv_text(a), _inv_text(b))
+
+
+def _similar_text(x: str, y: str) -> bool:
+    if not x or not y or x == y:
+        return False
+    if min(len(x), len(y)) >= 4 and (x in y or y in x):
+        return True
+    if len(x) == len(y) >= 4:
+        diff = [i for i in range(len(x)) if x[i] != y[i]]
+        if len(diff) == 2 and diff[1] == diff[0] + 1 and x[diff[0]] == y[diff[1]] and x[diff[1]] == y[diff[0]]:
+            nx, ny = _num(x), _num(y)
+            return nx is None or ny is None or abs(nx - ny) > 50
+        if x.translate(CONFUSABLE) == y.translate(CONFUSABLE):
+            return True
+    return False
+
+
+NEAR_WINDOW = 7          # days between two payments of a near-duplicate pair (when there is no invoice date)
+NEAR_NEIGHBOURS = 50     # payments compared on each side: keeps a file of thousands of equal amounts fast
+
+
+def _near_duplicates(R, groups: dict, L: dict) -> list[Hit]:
+    """The same supplier paid the same amount twice under invoice numbers that differ only the way a re-keyed number
+    does, with the same invoice date (or, without one, paid within a week). Exact repeats are caught above. Left
+    alone: a series of equal bills (numbers run on), instalments under suffixed numbers (together they do not exceed
+    the invoice), and anything voided."""
+    tol = L.get("tolerance", 1.0)
+    buckets: dict[tuple, list] = {}
+    for ln, r in R:
+        pa, inv = _f(r["paid_amount"]), r["invoice_no"].strip()
+        if pa < L.get("materiality", 50.0) or not inv:
+            continue
+        who = r["vendor_id"].strip().upper() or norm_name(r["supplier"])
+        key = inv_key(inv)
+        g = groups.get((who, key))
+        if g and g["net"] <= tol:
+            continue                                  # voided or reversed: nothing was paid on this number
+        # a re-keyed invoice keeps its invoice date, so rows with one are only compared with the same date
+        idate = r.d("invoice_date")
+        buckets.setdefault((who, round(pa, 2), idate), []).append(
+            (r.d("pay_date") or date.max, ln, r, key, _inv_text(inv), _f(r["invoice_amount"])))
+    out, pairs = [], set()
+    for (who, pa, idate), items in buckets.items():
+        if len(items) < 2:
+            continue
+        items.sort(key=lambda x: (x[0], x[1]))
+        for i, (pday, ln, r, key, text, billed) in enumerate(items):
+            for opday, oln, o, okey, otext, obilled in items[i + 1:i + 1 + NEAR_NEIGHBOURS]:
+                if idate is None and pday != date.max and opday != date.max and (opday - pday).days > NEAR_WINDOW:
+                    break                              # sorted by payment date: nothing further on is close enough
+                if key == okey or not _similar_text(text, otext):
+                    continue
+                pair = (who, frozenset((key, okey)))
+                if pair in pairs:
+                    continue
+                bill = max(billed, obilled)
+                if bill and pa * 2 <= bill + tol:
+                    continue                           # two parts of one bill: instalments, not a repeat
+                pairs.add(pair)
+                (fl, fa), (sl, sa) = sorted([(ln, r["invoice_no"].strip()), (oln, o["invoice_no"].strip())])
+                out.append(Hit("Payments", "5.6", "Medium", pa,
+                               f"{fa} and {sa} look like one invoice paid twice "
+                               f"(${pa:,.2f} each to {r['supplier'].strip() or who})", "payments.csv", sl,
+                               [("payments.csv", fl)]))
     return out
 
 
@@ -317,14 +408,43 @@ def approvals(lines: list[str], L: dict = LIMITS) -> list[Hit]:
             out.append(Hit("Approvals", "1.3", "Medium", amt,
                            f"{label} for ${amt:,.2f} approved by a {r['approver_role'] or 'non-director'}, not a director",
                            "approvals.csv", ln))
-    out += _split_orders(R, L) + _po_after_invoice(R)
+    out += _split_orders(R, L) + _po_after_invoice(R) + _just_under(R, L)
+    return out
+
+
+def person_key(s: str) -> str:
+    """One key per spelling of a name ('Lowe, Kate' and 'Kate Lowe' agree; 'K. Lowe' and 'Kim Lowe' do not), so
+    grouping never merges two people the way a looser match could."""
+    return " ".join(sorted(_person(s)))
+
+
+def _just_under(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
+    """One requester raising several approvals just under the director limit (within 4%), to different suppliers,
+    none approved by a director: each passes, together they look like the limit being steered around. Same-supplier
+    splits are caught by the split check."""
+    lim = L["director_limit"]
+    by: dict[str, list[tuple[int, Row]]] = {}
+    for ln, r in R:
+        amt = _f(r["amount"])
+        if r["type"].strip().upper() in INVOICE_TYPES and lim * 0.96 <= amt < lim and person_key(r["requested_by"]) \
+                and not DIRECTOR.search(r["approver_role"]):
+            by.setdefault(person_key(r["requested_by"]), []).append((ln, r))
+    out = []
+    for items in by.values():
+        if len(items) >= 2 and len({norm_name(r["vendor"]) for _, r in items}) >= 2:
+            last = max(items, key=lambda x: x[0])
+            out.append(Hit("Approvals", "1.6", "Low", round(sum(_f(r["amount"]) for _, r in items), 2),
+                           f"{last[1]['requested_by'].strip()} raised {len(items)} approvals just under the "
+                           f"${lim:,.0f} director limit", "approvals.csv", last[0],
+                           [("approvals.csv", ln) for ln, _ in items if ln != last[0]]))
     return out
 
 
 def _split_orders(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
     """Several invoices from one vendor raised by the same person, each under the director limit and without a PO,
     close together in time, adding up to more than the director limit. Bills that never carry a PO do not count."""
-    out, groups = [], {}
+    out = []
+    groups: dict[tuple, list] = {}
     for ln, r in R:
         if r["type"].strip().upper() in INVOICE_TYPES and not has_po(r) and r.d("date") \
                 and _f(r["amount"]) <= L["director_limit"] and not po_exempt(r["vendor"], L):
@@ -355,8 +475,8 @@ def _po_after_invoice(R: list[tuple[int, Row]]) -> list[Hit]:
         if r["type"].strip().upper() != "INVOICE":
             continue
         hit = pos.get(r["po_no"].strip().lower())
-        if hit and hit[1].d("date") and r.d("date") and hit[1].d("date") > r.d("date"):
-            days = (hit[1].d("date") - r.d("date")).days
+        if hit and (po_d := hit[1].d("date")) and (inv_d := r.d("date")) and po_d > inv_d:
+            days = (po_d - inv_d).days
             out.append(Hit("Approvals", "1.1", "Medium", _f(r["amount"]),
                            f"{hit[1]['doc_no']} raised {days} days after invoice {r['doc_no']}", "approvals.csv", hit[0],
                            [("approvals.csv", ln)]))
@@ -450,7 +570,7 @@ def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
     if not drcr:
         lines_ = [(ln, r, -_f(r["amount"]) if signed else _f(r["amount"])) for ln, r in bank]
     pays = [(ln, r, _f(r["paid_amount"])) for ln, r in rows(P) if r.d("pay_date")]
-    first, last = min(r.d("date") for _, r in bank), max(r.d("date") for _, r in bank)
+    first, last = min(cast(date, r.d("date")) for _, r in bank), max(cast(date, r.d("date")) for _, r in bank)
     by_cents: dict[int, list] = {}
     for pl, p, pa in pays:                      # index by amount, then date, so big files stay fast
         by_cents.setdefault(round(pa * 100), []).append((p.d("pay_date"), pl, p))
@@ -462,7 +582,7 @@ def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
     for ln, r, amt in lines_:
         if amt > 0 and NON_AP_BANK.search(r["description"] + " " + r["reference"]):
             continue
-        d, ref = r.d("date"), (r["reference"] + " " + r["description"]).lower()
+        d, ref = cast(date, r.d("date")), (r["reference"] + " " + r["description"]).lower()
         k = round(amt * 100)
         best = None
         for dk in sorted(range(-BANK_CENTS, BANK_CENTS + 1), key=abs):   # exact amount first, then a few cents off
@@ -489,9 +609,9 @@ def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
             unmatched.append((ln, r, amt))
     out = []
     by_day = sorted((p.d("pay_date"), pl, round(pa * 100), norm_name(p["supplier"])) for pl, p, pa in pays if pa > 0)
-    days = [x[0] for x in by_day]
+    days = [cast(date, x[0]) for x in by_day]       # pays only holds rows with a pay date
     for ln, r, amt in unmatched:                 # batch transfers: several open payments adding up to the debit
-        d = r.d("date")
+        d = cast(date, r.d("date"))
         lo, hi = bisect_left(days, d - timedelta(days=L["bank_days"])), bisect_right(days, d)
         desc = f"{r['description']} {r['reference']}"
         if BATCH_WORDS.search(desc):        # a payment-run batch: many suppliers in one debit
@@ -510,7 +630,7 @@ def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
                            f"Bank payment of ${amt:,.2f} on {r['date']} ({r['description'].strip()}) has no recorded payment",
                            "bank_statement.csv", ln))
     for pl, p, pa in pays:
-        pdte = p.d("pay_date")
+        pdte = cast(date, p.d("pay_date"))         # pays only holds rows with a pay date
         if pl not in used and pa > 0 and first <= pdte and pdte + timedelta(days=L["bank_days"]) <= last:
             out.append(Hit("Payments", "5.5", "Low", pa,
                            f"{p['payment_id']} (${pa:,.2f} to {p['supplier']}) is not on the bank statement", "payments.csv", pl))
@@ -523,7 +643,15 @@ PLACEHOLDER_ID = {"na", "none", "unknown", "pending", "tbc", "tba", "notapplicab
 
 
 def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
-    R, out, tax = rows(lines), [], {}
+    R, out = rows(lines), []
+    tax: dict[str, tuple] = {}
+    made_on: dict[date, int] = {}
+    for _, r in R:
+        if d := r.d("created_on"):
+            made_on[d] = made_on.get(d, 0) + 1
+    # a set-up date shared by many vendors is when the vendor list was imported into this system, not when they
+    # became suppliers: a "new vendor" check against it would flag every big payment of the following month
+    migrated = {d for d, n in made_on.items() if n >= 5 and n >= 0.3 * len(R)}
     for ln, r in R:
         paid = _f(r["last_paid_amount"])
         # anything but a clear yes is unverified: blank, "N", "PENDING", "FALSE" are as risky as "NO"
@@ -548,6 +676,12 @@ def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
         if r["w9_on_file"].strip().upper() in NO and r["last_paid_on"].strip():
             out.append(Hit("Vendors", "4.4", "Low", paid, f"{r['vendor_id']} paid " + (f"${paid:,.2f} " if paid else "")
                            + "with no tax form on file", "vendors.csv", ln))
+        made, paid_on = r.d("created_on"), r.d("last_paid_on")
+        if made and paid_on and 0 <= (paid_on - made).days <= L.get("new_vendor_days", 30) \
+                and paid > L["director_limit"] and status.startswith("ACTIVE") and made not in migrated:
+            out.append(Hit("Vendors", "4.5", "Medium", paid,
+                           f"{r['vendor_id']} was paid ${paid:,.2f} {(paid_on - made).days} days after it was set up",
+                           "vendors.csv", ln))
         t = re.sub(r"[^0-9a-z]", "", r["tax_id"].lower())
         if t and t not in PLACEHOLDER_ID and set(t) != {"0"} and len(t) >= 4:      # "N/A" or "000000000" is not an ID
             remit = re.search(r"remit[ -]?to", r["name"], re.I)
@@ -564,7 +698,7 @@ def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
 
 def contracts(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     out = []
-    contract = {}   # vendor -> list of (line, text)
+    contract: dict[str, list[tuple[int, str, str]]] = {}   # vendor -> list of (line, text)
     for i, ln in enumerate(lines, start=1):
         m = re.match(r"\[CONTRACT (\S+) \| ([^|]+?) \| ([^\]]+)\] (.*)", ln)
         if m:
@@ -596,7 +730,7 @@ def contracts(lines: list[str], L: dict = LIMITS) -> list[Hit]:
                                "contracts.txt", i, [("contracts.txt", cline)]))
             end = re.search(r"ends on (\d{4}-\d{2}-\d{2})", text, re.I)
             svc = re.search(r"Service period (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})", body)
-            if end and svc and _d(svc.group(2)) and _d(end.group(1)) and _d(svc.group(2)) > _d(end.group(1)):
+            if end and svc and (svc_end := _d(svc.group(2))) and (c_end := _d(end.group(1))) and svc_end > c_end:
                 out.append(Hit("Contracts", "7.3", "Medium", amt, f"{vendor} billed for service after the contract ended",
                                "contracts.txt", i, [("contracts.txt", cline)]))
     return out
@@ -619,13 +753,15 @@ def _count(s) -> int:
 
 
 def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
-    out, seen = [], {}
+    out = []
+    seen: dict[str, int] = {}
     R = rows(lines)
     trips: dict[str, list[date]] = {}
     for _, r in R:
-        if r.d("date") and (re.search(r"\b(travel|airfare|hotel)\b", r["category"], re.I) or TRAVEL.search(r["notes"])) \
+        if (trip_d := r.d("date")) \
+                and (re.search(r"\b(travel|airfare|hotel)\b", r["category"], re.I) or TRAVEL.search(r["notes"])) \
                 and r["notes"].strip().lower() != "business purpose recorded":
-            trips.setdefault(r["employee"].strip().lower(), []).append(r.d("date"))
+            trips.setdefault(r["employee"].strip().lower(), []).append(trip_d)
     for ln, r in R:
         amt = _f(r["amount"])
         if r["category"].strip().upper() in MEAL_CATEGORIES:
@@ -660,6 +796,36 @@ def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
                 0 < abs((d - t).days) <= 1 for t in trips.get(r["employee"].strip().lower(), []))
             if not near_trip:
                 out.append(Hit("Expenses", "6.4", "Low", amt, f"Weekend expense {r['claim_id']} with no reason given", "expenses.csv", ln))
+    out += _under_receipt_limit(R, L)
+    return out
+
+
+NO_RECEIPT_KINDS = re.compile(r"\b(mileage|per ?diem|allowance|subsistence)\b", re.I)   # never have a receipt
+
+
+def _under_receipt_limit(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
+    """Three or more claims by one person within 30 days, each within 10% under the receipt limit and without a
+    receipt. Mileage and allowances, which never carry a receipt, do not count."""
+    lim = L["receipt_limit"]
+    by: dict[str, list[tuple[int, Row]]] = {}
+    for ln, r in R:
+        amt = _f(r["amount"])
+        ref = "" if r["receipt_ref"].strip().upper() in NO_RECEIPT else r["receipt_ref"].strip()
+        if lim * 0.9 <= amt <= lim and not ref and person_key(r["employee"]) and r.d("date") \
+                and not NO_RECEIPT_KINDS.search(r["category"] + " " + r["notes"]):
+            by.setdefault(person_key(r["employee"]), []).append((ln, r))
+    out = []
+    for items in by.values():
+        items.sort(key=lambda x: cast(date, x[1].d("date")))
+        for i in range(len(items) - 2):
+            win = [x for x in items[i:] if (cast(date, x[1].d("date")) - cast(date, items[i][1].d("date"))).days <= 30]
+            if len(win) >= 3:
+                last = max(win, key=lambda x: x[0])
+                out.append(Hit("Expenses", "6.6", "Low", round(sum(_f(r["amount"]) for _, r in win), 2),
+                               f"{last[1]['employee'].strip()} made {len(win)} claims without a receipt just under "
+                               f"the ${lim:,.2f} receipt limit within 30 days", "expenses.csv", last[0],
+                               [("expenses.csv", ln) for ln, _ in win if ln != last[0]]))
+                break
     return out
 
 
@@ -679,6 +845,10 @@ INNOCENT = {
     "4.2": "Two entities may legitimately share a tax ID (a parent and a branch).",
     "4.3": "The supplier may have been verified by phone outside the system.",
     "4.4": "The tax form may be held on paper.",
+    "4.5": "A new supplier may have been set up for an urgent, approved purchase.",
+    "5.6": "The supplier may really have sent two invoices for the same amount on the same day.",
+    "1.6": "Prices near a round limit happen; several from one person are worth a look, not proof.",
+    "6.6": "Small, regular costs such as parking can sit just under the limit.",
     "7.1": "A variation order may have been agreed verbally.",
     "7.2": "A rate change may have been agreed after the contract copy was filed.",
     "7.3": "The contract may have been extended in writing.",
@@ -706,6 +876,10 @@ FIXES = {
     "4.2": "Merge the vendor records and check no payment was made twice.",
     "4.3": "Hold payments until Treasury records a call-back verification.",
     "4.4": "Obtain the tax form before any further payment.",
+    "4.5": "Have someone outside purchasing confirm the vendor is real (registration, address, phone) and the work was done.",
+    "5.6": "Check both invoices against the supplier's statement; if it shows one, recover the second payment.",
+    "1.6": "Ask the requester's manager to review the orders together.",
+    "6.6": "Ask for the receipts, or lower the receipt limit for this kind of claim.",
     "7.1": "Dispute the charge and ask for a credit note.",
     "7.2": "Dispute the difference and ask for a corrected invoice.",
     "7.3": "Check for a written extension; otherwise refuse the invoice.",

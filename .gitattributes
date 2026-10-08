@@ -2,6 +2,8 @@
 # scripts/make_data.py reproduces data/ exactly. Git must never rewrite their line endings.
 data/** -text
 tests/cases/** -text
+tests/exports/** -text
+docs/example-exports/** -text
 # Source files use LF everywhere.
 *.py text eol=lf
 *.md text eol=lf
@@ -9,3 +11,5 @@ tests/cases/** -text
 *.yml text eol=lf
 *.txt text eol=lf
 *.png binary
+*.gif binary
+*.xlsx binary

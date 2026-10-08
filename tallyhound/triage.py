@@ -35,6 +35,10 @@ CLEARS = {
     "4.2": "the records are the same supplier's remit-to address, or a parent and subsidiary",
     "4.3": "a call-back verification of the new bank details is recorded",
     "4.4": "a W-9 or W-8 form is on file",
+    "4.5": "someone outside purchasing has confirmed the vendor is real and the work was delivered",
+    "5.6": "the supplier's statement shows two separate invoices",
+    "1.6": "the orders are for separate, unrelated needs and were priced independently",
+    "6.6": "the receipts are provided or the costs are routine",
     "6.1": "the attendee list shows enough people",
     "6.2": "the receipt is provided",
     "6.3": "the item had a business purpose",
@@ -70,7 +74,7 @@ def cases(f: pd.DataFrame) -> list[list]:
             parent[i] = parent[parent[i]]
             i = parent[i]
         return i
-    owner = {}
+    owner: dict[tuple, int] = {}
     for i, r in enumerate(rows):
         for ln in set(r.matched_lines) | {int(r.line_number)}:
             k = (r.source_file, ln)
@@ -117,6 +121,7 @@ def demoted(clause: str, approved: int | None = None, rejected: int | None = Non
     if approved is None:
         h = S.get("_health", {})
         approved, rejected = h.get(str(clause), (0, 0))
+    assert approved is not None and rejected is not None, "pass both counts or neither"
     n = approved + rejected
     return n >= DEMOTE_MIN_DECISIONS and rejected / n >= DEMOTE_REJECT_RATE
 

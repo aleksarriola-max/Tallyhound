@@ -50,19 +50,49 @@ def dataset_label(filename: str) -> str:
     return re.sub(r"[^\w .-]+", "_", filename.rsplit(".", 1)[0]).strip(" ._")[:40] or "uploaded"
 
 
-def add_zip(up) -> str | None:
-    """Read an uploaded zip, register it, and show what was found. Returns the dataset name."""
-    from . import custom
+def upload_name(names: list[str]) -> str:
+    """One zip or file: its name. Several files: the first one's name and how many more, so the same pick gets
+    the same dataset name on every rerun."""
+    first = sorted(names)[0]
+    return first if len(names) == 1 else f"{first.rsplit('.', 1)[0]} and {len(names) - 1} more"
+
+
+def _free_label(base: str, files: dict[str, list[str]]) -> str:
+    """The dataset name for these files: the plain name, or "name (2)", "name (3)"... when a dataset of that name
+    already holds different files. Next month's exports usually have this month's names, and must not be mistaken
+    for files already read."""
     S = st.session_state
-    files, notes = custom.parse_zip(up.getvalue())
+    if base in C.read_csv("workflow_options.csv").query("workflow == 'audit'")["option"].values:
+        base += " (upload)"
+    have = S.get("uploads", {})
+    mine = {k: v for k, v in files.items() if k != "answer_key.csv"}
+    label, n = base, 2
+    while label in have and have[label] != mine:
+        label, n = f"{base} ({n})", n + 1
+    return label
+
+
+def add_zip(ups) -> str | None:
+    """Read an uploaded zip, or loose files picked together, register them, and show what was found. Returns the
+    dataset name."""
+    from . import custom, uploads
+    S = st.session_state
+    import hashlib
+    ups = ups if isinstance(ups, list) else [ups]
+    picked = [(u.name, u.getvalue()) for u in ups]
+    digest = hashlib.sha256(b"".join(hashlib.sha256(n.encode() + b"\0" + raw).digest() for n, raw in picked)).hexdigest()
+    cached = S.get("_upload_parse")
+    if cached and cached[0] == digest:                 # every rerun of the dialog would otherwise read it all again
+        files, notes = cached[1], cached[2]
+    else:
+        files, notes = uploads.read_uploads(picked)
+        S["_upload_parse"] = (digest, files, notes)
     if not files:
         for n in notes:
             st.warning(n)
         st.error("No usable audit files found.")
         return None
-    label = dataset_label(up.name)
-    if label in C.read_csv("workflow_options.csv").query("workflow == 'audit'")["option"].values:
-        label += " (upload)"
+    label = _free_label(dataset_label(upload_name([u.name for u in ups])), files)
     if label not in S.get("uploads", {}):
         custom.add_upload(label, files)
     st.success(f"Read \"{C.esc(label)}\": {len(files)} file(s).")
@@ -171,7 +201,7 @@ def agents_body() -> None:
     roles = dict(zip(C.read_csv("agents.csv")["agent"], C.read_csv("agents.csv")["role"]))
     if item is None:
         st.info("Nothing is running yet. Use Check new files on Home to start a run.")
-        agents = [dict(name=n, status="Waiting", pct=0, secs=0) for n in sim.agent_names()]
+        agents: list[dict] = [dict(name=n, status="Waiting", pct=0, secs=0) for n in sim.agent_names()]
         title = "No run yet"
     else:
         agents, title = item["agents"], f"{item['label']} - {item['status']}"

@@ -4,15 +4,18 @@ clause,area,text
 1.3,Approvals,"Any amount over $10,000 needs approval from a director."
 1.4,Approvals,Orders must not be split to stay under an approval limit.
 1.5,Approvals,"Only current, authorised approvers may approve."
+1.6,Approvals,"Several approvals by one requester just under the $10,000 director limit are reviewed together."
 4.1,Vendors,Payments may only go to active vendors.
 4.2,Vendors,"Each supplier has one vendor record, identified by its tax ID."
 4.3,Vendors,No payment may be released to a changed bank account until verification is recorded.
 4.4,Vendors,A tax form must be on file before the first payment to a vendor.
+4.5,Vendors,"A vendor paid more than $10,000 within 30 days of being set up needs a second review that it is real."
 5.1,Payments,The amount paid must match the approved invoice amount.
 5.2,Payments,A single invoice may be paid once only.
 5.3,Payments,Every payment must reference an approved invoice dated on or before the payment date.
 5.4,Payments,Payments are released on working days only.
 5.5,Payments,"Every payment that leaves the bank must match a recorded, approved payment."
+5.6,Payments,Equal payments to one supplier under near-identical invoice numbers are checked against the supplier's statement.
 8.1,Invoices,"Every supplier invoice must match an approved invoice record, number and amount."
 8.2,Invoices,Bank details on an invoice must match the vendor master; changes go through verification.
 8.3,Invoices,An invoice number may be submitted once only.
@@ -21,6 +24,7 @@ clause,area,text
 6.3,Expenses,Personal items are not reimbursable.
 6.4,Expenses,Weekend expenses need a business reason.
 6.5,Expenses,Each receipt may be claimed once only.
+6.6,Expenses,Repeated claims just under the $25.00 receipt limit need the receipts or a reason.
 7.1,Contracts,Charges not listed in the contract price schedule may not be billed.
 7.2,Contracts,Rates billed must match the contract rate card.
 7.3,Contracts,Services may only be billed within the contract term.

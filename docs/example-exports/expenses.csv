@@ -1,0 +1,28 @@
+claim_id,date,employee,category,amount,receipt_ref,notes,people
+E-2011,01/09/2026,P. Herrera,TRAVEL,130.55,RC-50011,Business purpose recorded,
+E-2015,01/09/2026,P. Herrera,TAXI,168.04,RC-50015,Business purpose recorded,
+E-2022,01/09/2026,L. Fontaine,MEAL,264.00,RC-50022,Team dinner - 5 people,
+E-2019,01/09/2026,P. Herrera,TAXI,58.00,RC-50019,Airport taxi,
+E-2018,02/09/2026,P. Herrera,TRAINING,387.74,,Hotel one night,
+E-2006,03/09/2026,L. Fontaine,MEAL,60.78,RC-50006,Team lunch,2
+E-2021,06/09/2026,L. Fontaine,SUPPLIES,68.23,RC-50021,,
+E-2020,08/09/2026,J. Okoro,TAXI,58.00,RC-50019,Airport taxi,
+E-2023,08/09/2026,D. Abara,TRAINING,185.00,RC-50023,Annual CPA society membership,
+E-2007,09/09/2026,J. Okoro,TRAINING,119.54,RC-50007,Business purpose recorded,
+E-2008,09/09/2026,R. Mehta,SUPPLIES,107.93,RC-50008,Business purpose recorded,
+E-2009,16/09/2026,P. Herrera,MEAL,122.52,RC-50009,Team lunch,3
+E-2026,16/09/2026,J. Okoro,PARKING,24.00,,Client visit parking,
+E-2010,17/09/2026,R. Mehta,TRAINING,132.28,RC-50010,Business purpose recorded,
+E-2017,18/09/2026,L. Fontaine,MEAL,135.95,RC-50017,Client dinner,1
+E-2001,18/09/2026,L. Fontaine,MEAL,45.36,RC-50001,Team lunch,2
+E-2005,21/09/2026,R. Mehta,TAXI,162.42,RC-50005,Business purpose recorded,
+E-2027,21/09/2026,J. Okoro,PARKING,24.00,,Client visit parking,
+E-2004,22/09/2026,S. Nakamura,MEAL,75.06,RC-50004,Team lunch,2
+E-2012,22/09/2026,T. Walsh,TRAVEL,39.02,RC-50012,Business purpose recorded,
+E-2013,23/09/2026,T. Walsh,TRAINING,84.60,RC-50013,Business purpose recorded,
+E-2003,24/09/2026,R. Mehta,TRAVEL,63.51,RC-50003,Business purpose recorded,
+E-2024,25/09/2026,T. Walsh,TRAVEL,420.00,RC-50024,Flight to client site,
+E-2025,26/09/2026,T. Walsh,TAXI,46.00,RC-50025,,
+E-2016,29/09/2026,D. Abara,MEAL,174.93,RC-50016,Team lunch,3
+E-2002,29/09/2026,D. Abara,TRAINING,190.56,RC-50002,Business purpose recorded,
+E-2014,30/09/2026,M. Lindqvist,MEAL,43.68,RC-50014,Team lunch,2

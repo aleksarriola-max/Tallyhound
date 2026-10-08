@@ -61,7 +61,7 @@ def is_suppressed(clause: str, source_file: str, who: str) -> bool:
 def limit_hints(findings, decisions: dict, limits: dict) -> list[dict]:
     """Suggest a higher limit when two or more findings under one limit clause were rejected and all sit within
     25% of the limit."""
-    out = []
+    out: list[dict] = []
     rejected = {i for i, d in decisions.items() if isinstance(d, dict) and d.get("status") == "Rejected"}
     if len(rejected) < 2:
         return out

@@ -34,7 +34,7 @@ def users_file() -> Path:
     return Path(os.environ.get("TALLYHOUND_USERS") or store.state_dir() / "users.json")
 
 
-BROKEN = {"__unreadable__": {}}      # stands for "sign-in is on but nobody can sign in" (fail closed)
+BROKEN: dict[str, dict] = {"__unreadable__": {}}      # stands for "sign-in is on but nobody can sign in" (fail closed)
 
 
 def load_users() -> dict:
@@ -122,7 +122,10 @@ def can(action: str) -> bool:
     """With sign-in off, everyone can do everything (demo mode)."""
     if not enabled():
         return True
-    return bool(role()) and action in ROLES.get(role(), set())
+    r = role()
+    if not r:
+        return False
+    return action in ROLES.get(r, set())
 
 
 def started_by_me(dataset: str | None) -> bool:

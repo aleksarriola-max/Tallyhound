@@ -37,14 +37,17 @@ def _start(choice: str) -> None:
 @st.dialog("Check new files", width="large")
 def run_dialog() -> None:
     S = st.session_state
-    up = st.file_uploader("Upload a zip of your files", type="zip", disabled=not auth.can("run"),
-                          help=None if auth.can("run") else "Only a preparer or admin can add files.")
-    st.caption("Any of payments.csv, approvals.csv, vendors.csv, contracts.txt, expenses.csv, bank_statement.csv, "
-               "payment_run.csv and invoice PDFs. Read in memory, never written to disk.")
-    label = run_analysis.add_zip(up) if up is not None else None
+    ups = st.file_uploader("Upload your files", type=["zip", "csv", "xlsx", "tsv", "txt", "pdf"],
+                           accept_multiple_files=True, disabled=not auth.can("run"),
+                           help=None if auth.can("run") else "Only a preparer or admin can add files.")
+    st.caption("A zip, or the files themselves: CSV or Excel exports of payments, approvals, vendors, expenses, a "
+               "bank statement or a payment run (QuickBooks, Xero and other report exports are tidied and recognised "
+               "from their columns), contracts.txt and invoice PDFs. Read in memory, never written to disk.")
+    label = run_analysis.add_zip(ups) if ups else None
     options = [SAMPLE, *S.get("uploads", {})]
-    if label and S.get("_last_upload") != up.file_id:     # a new upload: select it
-        S["_last_upload"] = up.file_id
+    ids = "|".join(str(u.file_id) for u in ups or [])
+    if label and S.get("_last_upload") != ids:            # a new upload: select it
+        S["_last_upload"] = ids
         S["run_choice"] = label
     if S.get("run_choice") not in options:
         S["run_choice"] = options[-1]
@@ -284,8 +287,12 @@ def findings_tab() -> None:
                 for x in todo]
     if S.get("_bulk_ask") and conf_ids:          # two steps: approving many findings at once is a deliberate act
         y, n = t2.columns(2)
+
+        def bulk_yes(ids=tuple(conf_ids)) -> None:
+            review.bulk_approve(list(ids))
+            S.pop("_bulk_ask", None)
         y.button(f"Yes, approve {len(conf_ids)}", type="primary", key="bulk_yes", disabled=bool(why), **C.bw(),
-                 on_click=lambda ids=tuple(conf_ids): (review.bulk_approve(list(ids)), S.pop("_bulk_ask", None)))
+                 on_click=bulk_yes)
         n.button("Cancel", key="bulk_no", on_click=lambda: S.pop("_bulk_ask", None), **C.bw())
         st.caption(f"This approves the {len(conf_ids)} undecided findings that the Skeptic confirmed, each as one "
                    "decision in the audit trail with the reason \"Bulk: confirmed by the Skeptic\".")
@@ -341,14 +348,16 @@ def review_page() -> None:
 
 # ============================================================== Reports, Settings, Trust
 def reports() -> None:
-    tabs = st.tabs(["Summary", "Trends and risk", "Recovery", "Subscriptions"])
+    tabs = st.tabs(["Summary", "Trends and risk", "Patterns", "Recovery", "Subscriptions"])
     with tabs[0]:
         pages.overview()
     with tabs[1]:
         pages_extra.trends_page()
     with tabs[2]:
-        pages.recovery_page()
+        pages_extra.patterns_page()
     with tabs[3]:
+        pages.recovery_page()
+    with tabs[4]:
         pages.subscriptions_page()
 
 
