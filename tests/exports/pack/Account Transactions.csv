@@ -1,0 +1,10 @@
+Account Transactions
+Ashgrove Instruments Ltd (fictional)
+For the period 1 September 2026 to 30 September 2026
+
+Date,Source,Description,Reference,Debit,Credit,Running Balance
+Business Bank Account,,,,,,
+02 Sep 2026,Payable Payment,Ashby Components,ASH-6100,1960.17,,48039.83
+05 Sep 2026,Payable Payment,Bexley Plastics,BEX-221,9366.95,,38672.88
+10 Sep 2026,Receive Money,Customer receipt,INV-9001,,4000.00,42672.88
+Total Business Bank Account,,,,11327.12,4000.00,

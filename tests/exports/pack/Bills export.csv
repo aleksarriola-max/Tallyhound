@@ -1,0 +1,6 @@
+﻿*ContactName,EmailAddress,*InvoiceNumber,Reference,*InvoiceDate,*DueDate,PaidDate,Total,InvoiceAmountPaid,InvoiceAmountDue,*Description,*Quantity,*UnitAmount,LineAmount,*AccountCode,Currency
+Ashby Components,ap@ashby.example,ASH-6100,PO-2100,2026-09-01,2026-09-30,2026-09-02,1960.17,1960.17,0.00,Brackets,10,96.00,960.00,300,USD
+Ashby Components,ap@ashby.example,ASH-6100,PO-2100,2026-09-01,2026-09-30,2026-09-02,1960.17,1960.17,0.00,Housings,4,250.04,1000.17,300,USD
+Bexley Plastics,ar@bexley.example,BEX-221,PO-2101,2026-09-03,2026-10-03,2026-09-05,9366.95,9366.95,0.00,Resin,1,9366.95,9366.95,300,USD
+Calder Logistics,billing@calder.example,CAL-77,,2026-09-04,2026-10-04,2026-09-08,640.00,640.00,0.00,Freight,1,640.00,640.00,310,USD
+Calder Logistics,billing@calder.example,CAL-77,,2026-09-04,2026-10-04,2026-09-08,640.00,640.00,0.00,Fuel note,1,0.00,0.00,310,USD

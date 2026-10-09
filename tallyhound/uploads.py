@@ -119,11 +119,14 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
             if got is None:
                 notes.append(f"Skipped {base}: {'; '.join(why)}.")
                 continue
-            lines, said = got, list(why)
+            lines, said = _cut(got, base, notes), list(why)
         else:
-            lines = decode(raw).replace("\x00", "").splitlines()
+            lines = _cut(decode(raw).replace("\x00", "").splitlines(), base, notes)
             if table and (ext == "tsv" or (lines and "\t" in lines[0] and "," not in lines[0])):
                 lines = _tsv_to_csv(lines)
+            elif table and lines and lines[0].count(";") >= 2 and "," not in lines[0]:
+                lines = _tsv_to_csv(lines, ";")     # Excel in much of Europe saves "CSV" with semicolons
+                said.append("read as semicolon-separated")
             if table:
                 lines, joined = _join_quoted(lines)
                 if joined:
@@ -134,19 +137,20 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         if match is None:
             match, conf = importer.guess(base, lines, set(files))
             if match is None:
-                notes.append(f"Ignored {base}: its columns do not clearly match one of the audit files. Rename it "
-                             "payments.csv, approvals.csv, vendors.csv, expenses.csv, bank_statement.csv or "
-                             "payment_run.csv to read it as that file.")
+                notes.append(f"Ignored {base}: {importer.explain(base, lines)}. Its columns do not clearly match one "
+                             "of the audit files; rename it payments.csv, approvals.csv, vendors.csv, expenses.csv, "
+                             "bank_statement.csv or payment_run.csv to read it as that file.")
                 continue
             said.append(f"read as {match}, recognised from its columns ({conf:.0%} of the needed columns found) - "
                         f"if that is wrong, rename the file")
+        if match in ("payments.csv", "approvals.csv"):
+            lines, items = importer.collapse_line_items(lines)
+            if items:
+                said.append(f"{items} line-item row(s) repeating a bill already read were set aside (one row per bill "
+                            "is kept)")
         if said:
             notes.append(f"{base}: " + "; ".join(said) + ".")
-        long_ = [i for i, ln in enumerate(lines, start=1) if len(ln) > MAX_LINE_CHARS]
-        if long_:                     # no real export has lines this long; cutting them keeps every check fast
-            lines = [ln[:MAX_LINE_CHARS] for ln in lines]
-            notes.append(f"{base}: {len(long_)} line(s) longer than {MAX_LINE_CHARS:,} characters were cut "
-                         f"(first: line {long_[0]}).")
+        lines = [ln[:MAX_LINE_CHARS] for ln in lines]          # joining or tidying may have made one longer
         total += len(lines)
         if total > MAX_LINES:
             notes.append(f"Stopped at {MAX_LINES} lines; {base} and later files were skipped.")
@@ -182,11 +186,21 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
     return files, notes
 
 
-def _tsv_to_csv(lines: list[str]) -> list[str]:
+def _cut(lines: list[str], base: str, notes: list[str]) -> list[str]:
+    """No real export has lines this long; cutting them before anything else keeps every later step fast."""
+    long_ = [i for i, ln in enumerate(lines, start=1) if len(ln) > MAX_LINE_CHARS]
+    if not long_:
+        return lines
+    notes.append(f"{base}: {len(long_)} line(s) longer than {MAX_LINE_CHARS:,} characters were cut "
+                 f"(first: line {long_[0]}).")
+    return [ln[:MAX_LINE_CHARS] for ln in lines]
+
+
+def _tsv_to_csv(lines: list[str], sep: str = "\t") -> list[str]:
     import csv
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    for row in csv.reader(lines, delimiter="\t"):
+    for row in csv.reader(lines, delimiter=sep):
         w.writerow(row)
     return buf.getvalue().splitlines()
 

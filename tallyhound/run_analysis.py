@@ -89,7 +89,7 @@ def add_zip(ups) -> str | None:
         S["_upload_parse"] = (digest, files, notes)
     if not files:
         for n in notes:
-            st.warning(n)
+            st.warning(C.esc(n))                 # notes quote file, folder and sheet names from the upload
         st.error("No usable audit files found.")
         return None
     label = _free_label(dataset_label(upload_name([u.name for u in ups])), files)
@@ -98,7 +98,7 @@ def add_zip(ups) -> str | None:
     st.success(f"Read \"{C.esc(label)}\": {len(files)} file(s).")
     with st.expander(f"Files ({len(files)})" + (f" and {len(notes)} note(s)" if notes else "")):
         for n in notes:
-            st.caption(n)
+            st.caption(C.esc(n))
         st.dataframe(pd.DataFrame([dict(file=n, lines=len(v)) for n, v in sorted(files.items())]), hide_index=True, **C.dfw())
     column_matching(label)
     data_check(label)

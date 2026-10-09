@@ -1,0 +1,2 @@
+record_id	type	doc_no	date	vendor	amount	requested_by	approved_by	approver_role	po_no
+A-1	INVOICE	ASH-6100	2026-09-01	Ashby Components	1960.17	T. Brandt	T. Brandt	Manager	PO-2100

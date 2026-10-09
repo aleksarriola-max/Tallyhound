@@ -27,6 +27,7 @@ from datetime import date, datetime, time
 from . import columns, rules
 
 MAX_SHEET_ROWS = 300_000
+MAX_CELL_CHARS = 4000               # the same cut uploads applies to a line: no real cell or heading is longer
 LINE_BREAKS = re.compile(r"[\r\n\x0b\x0c\x1c\x1d\x1e\x85  ]+")     # everything str.splitlines splits on
 
 # words in real export names -> Tallyhound file. A tie-breaker only: the columns decide.
@@ -52,8 +53,9 @@ SIGNATURE: dict[str, list[tuple[str, ...]]] = {
 }
 NEEDS_NAME = {"bank_statement.csv", "payment_run.csv"}
 # "Total", "TOTAL:", "Total for Ashby Components", "Grand total" - but not a supplier called "Total Office Supplies"
-TOTAL = re.compile(r"^\s*(?:grand\s+)?totals?(?:\s+for\b.*|\s*:?\s*)$", re.I)
-NUMERIC = re.compile(r"^[\s$€£(+-]*\d[\d,.' ]*\)?\s*(?:CR|DR)?$", re.I)
+# (matched against stripped text, and written so that a long run of spaces can never make them slow)
+TOTAL = re.compile(r"^(?:grand\s)?\s*totals?(?:\s+for\b.*|:)?$", re.I)
+NUMERIC = re.compile(r"^[$€£(+-]{0,3}\d[\d,.']*(?: [\d,.']+)*\)?(?: ?(?:CR|DR))?$", re.I)
 DATEISH = re.compile(r"^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}")
 NAME_COLUMNS = {"vendor", "supplier", "payee", "name", "vendor name", "supplier name", "payee name", "contact",
                 "contact name", "merchant", "employee"}
@@ -73,7 +75,7 @@ def _cell(v) -> str:
         if v.is_integer() and abs(v) < 1e15:
             return str(int(v))
         return f"{v:.2f}" if abs(v - round(v, 2)) < 1e-9 else repr(v)
-    return LINE_BREAKS.sub(" ", str(v))
+    return LINE_BREAKS.sub(" ", str(v)[:MAX_CELL_CHARS])
 
 
 def _formulas_without_value(zf: zipfile.ZipFile) -> int:
@@ -83,7 +85,7 @@ def _formulas_without_value(zf: zipfile.ZipFile) -> int:
     for info in zf.infolist():
         if info.filename.startswith("xl/worksheets/") and info.filename.endswith(".xml"):
             xml = zf.read(info)
-            n += len(re.findall(rb"<f[ >/]", xml)) - len(re.findall(rb"(?:</f>|<f [^>]*/>)\s*<v>[^<]", xml))
+            n += len(re.findall(rb"<f[ >/]", xml)) - len(re.findall(rb"(?:</f>|<f [^<>]{0,300}/>)<v>[^<]", xml))
     return max(n, 0)
 
 
@@ -91,7 +93,11 @@ def xlsx_lines(raw: bytes, max_unpacked_mb: float = 100, max_cells: int = 3_000_
     """(CSV lines of the fullest visible sheet, notes). None when the workbook cannot be read safely."""
     try:
         zf = zipfile.ZipFile(io.BytesIO(raw))
-        if sum(i.file_size for i in zf.infolist()) > max_unpacked_mb * 1024 * 1024:
+        # the sheets are read row by row and stopped at max_cells, so they may be larger; everything else (shared
+        # text, styles) is read whole and must fit the normal limit
+        sheets_mb = sum(i.file_size for i in zf.infolist() if i.filename.startswith("xl/worksheets/")) / 2 ** 20
+        rest_mb = sum(i.file_size for i in zf.infolist()) / 2 ** 20 - sheets_mb
+        if rest_mb > max_unpacked_mb or sheets_mb > 4 * max_unpacked_mb:
             return None, [f"it unpacks to more than {max_unpacked_mb:g} MB"]
         if any(i.flag_bits & 0x1 for i in zf.infolist()):
             return None, ["it is password-protected"]
@@ -113,16 +119,19 @@ def xlsx_lines(raw: bytes, max_unpacked_mb: float = 100, max_cells: int = 3_000_
     try:
         sheets_all = list(wb.worksheets)
         visible = [ws for ws in sheets_all if getattr(ws, "sheet_state", "visible") == "visible"] or sheets_all
-        cells = 0
+        cells = chars = 0
+        char_budget = int(2 * max_unpacked_mb * 2 ** 20)   # text read out, however much one shared string repeats
         for ws in visible:
             sheets += 1
             if hasattr(ws, "reset_dimensions"):
                 ws.reset_dimensions()                  # never trust the stored size: it can be stale and cut columns
             rows: list[list[str]] = []
             for r in ws.iter_rows(values_only=True):
-                rows.append([_cell(v) for v in r])
+                row = [_cell(v) for v in r]
+                rows.append(row)
                 cells += len(r)
-                if len(rows) > MAX_SHEET_ROWS or cells > max_cells:
+                chars += sum(map(len, row))
+                if len(rows) > MAX_SHEET_ROWS or cells > max_cells or chars > char_budget:
                     cut = True
                     break
             while rows and not any(c.strip() for c in rows[-1]):
@@ -170,12 +179,12 @@ def _looks_like_header(cells: list[str]) -> bool:
     f = _filled(cells)
     if len(f) < 3:
         return False
-    text = [c for c in f if not NUMERIC.match(c) and not DATEISH.match(c.strip())]
+    text = [c for c in f if not NUMERIC.match(c.strip()) and not DATEISH.match(c.strip())]
     return len(text) >= 0.8 * len(f) and len(set(c.strip().lower() for c in f)) == len(f)
 
 
 def _looks_like_data(cells: list[str]) -> bool:
-    return sum(bool(NUMERIC.match(c) or DATEISH.match(c.strip())) for c in _filled(cells)) >= 2
+    return sum(bool(NUMERIC.match(c.strip()) or DATEISH.match(c.strip())) for c in _filled(cells)) >= 2
 
 
 def _header_index(lines: list[str]) -> int:
@@ -183,9 +192,14 @@ def _header_index(lines: list[str]) -> int:
     Title lines (company, report name, "Report period:, From ..., To ...") come first and are narrower. Any other
     wide line before the data means an unfamiliar layout, and the file is taken as it is."""
     best, width = 0, 0
-    for i, ln in enumerate(lines[:25]):
+    top = lines[:25]
+    for i, ln in enumerate(top):
         cells = _cells(ln)
         if _looks_like_data(cells):
+            # "From, 09/01/2026, To, 09/30/2026" has dates but is a title if wider column names follow it
+            later = [len(_filled(_cells(x))) for x in top[i + 1:] if _looks_like_header(_cells(x))]
+            if not best and later and max(later) > len(_filled(cells)) and len(_filled(cells)) <= 4:
+                continue
             break
         if _looks_like_header(cells):
             if len(_filled(cells)) > width:
@@ -215,7 +229,13 @@ def tidy(lines: list[str]) -> tuple[list[str], list[str]]:
         notes.append(f"dropped {h} title line(s) above the column names")
     width = len(head)
     body = lines[h + 1:]
-    grouped = not head[0].strip()
+    one_cell = any(len(f := _filled(c := _cells(x))) == 1 and c[0].strip() == f[0].strip()
+                   and not NUMERIC.match(f[0].strip()) for x in body)              # a heading is a name, not a number
+    if h == 0 and not one_cell:
+        return lines, []                       # a blank first column name and no headings (a pandas index): as it is
+    # group headings go into the first column: a blank one, or one that names the supplier ("Supplier") but is
+    # left empty on the rows under each heading
+    grouped = not head[0].strip() or (columns.norm_header(head[0]) in NAME_COLUMNS and one_cell)
     named = any(columns.norm_header(c) in NAME_COLUMNS for c in head[1:])
     tail = len(body)
     while tail and len(_filled(_cells(body[tail - 1]))) < 2:          # printed footer, blank lines
@@ -224,15 +244,16 @@ def tidy(lines: list[str]) -> tuple[list[str], list[str]]:
     kept: list[str] = []
     totals = headings = filled = 0
     current, seen = "", set()
+    budget = 2 * sum(map(len, lines)) + 2 ** 20      # filling headings in may not multiply the file's size
     for ln in body[:tail]:
         cells = _cells(ln)
         f = _filled(cells)
         if not f:
             continue
         first = cells[0].strip()
-        if grouped and len(f) == 1 and first and not (TOTAL.match(first) and first.lower().rstrip(":") not in
-                                                      ("total", "totals")):     # a heading: its own line, first column only
-            current = first
+        if len(f) == 1 and first and not (TOTAL.match(first) and first.lower().rstrip(":") not in
+                                          ("total", "totals")):     # a heading: its own line, first column only
+            current = first[:200] if grouped else ""          # a vendor name, not a paragraph
             seen.add(first.lower())
             headings += 1
             continue
@@ -241,14 +262,19 @@ def tidy(lines: list[str]) -> tuple[list[str], list[str]]:
             totals += 1                                              # "Total for X", "TOTAL", "Total X" after X
             current = ""
             continue
-        if grouped and not first and current and not named:
+        if grouped and not first and current and not named and budget > 0:
             cells = [current] + cells[1:]
             filled += 1
             ln = _row(cells, width)
+            budget -= len(ln)
         kept.append(ln)
-    if grouped and headings:
+    if headings and not grouped:
+        notes.append(f"dropped {headings} section heading line(s)")
+    elif headings:
         if named:
             notes.append(f"dropped {headings} group heading line(s) (the file has its own name column)")
+        elif head[0].strip():
+            notes.append(f"wrote {headings} group heading(s) into the {head[0].strip()} column on {filled} row(s)")
         else:
             head = ["Vendor"] + head[1:]
             notes.append(f"wrote {headings} vendor heading(s) into a Vendor column on {filled} row(s)")
@@ -298,6 +324,53 @@ def guess(base: str, lines: list[str], taken: frozenset[str] | set[str] = frozen
     best, top = ranked[0]
     if hint in ok and best != hint:
         return None, 0.0          # the name fits one kind and the columns fit better another: let the person rename it
-    if top < 0.6 or (len(ranked) > 1 and top - ranked[1][1] < 0.1 and ranked[0][0] != hint):
+    floor = 0.4 if best == hint else 0.6       # a vendor list called "Contacts" with fewer columns is still one
+    if top < floor or (len(ranked) > 1 and top - ranked[1][1] < 0.1 and ranked[0][0] != hint):
         return None, 0.0
     return best, round(top, 2)
+
+
+def explain(base: str, lines: list[str]) -> str:
+    """Why an unfamiliar file was not read: the kind it came closest to and what it lacks for it."""
+    if not lines:
+        return "it is empty"
+    header = _cells(lines[0])
+    best = max(rules.REQUIRED, key=lambda n: (score(n, header), n))
+    m = matched(best, header)
+    if not m:
+        return "its columns do not look like any of the audit files"
+    lacks = [g for g in SIGNATURE.get(best, []) if not any(c in m for c in g)]
+    what = (" and ".join(" or ".join(c.replace("_", " ") for c in g) for g in lacks) if lacks else
+            "enough of its columns" if score(best, header) < 0.6 else "a name that says so (or a balance column)")
+    return f"it comes closest to {best}, but has no {what}" if lacks else f"it may be {best}, but it lacks {what}"
+
+
+LINE_ITEM = re.compile(r"\b(description|quantity|qty|unit (?:amount|price|cost)|line (?:amount|total|description)|"
+                       r"item|account code|tax (?:type|amount)|tracking|discount)\b")
+
+
+QTY = re.compile(r"\b(quantity|qty|unit (?:amount|price|cost)|line (?:amount|total))\b")
+
+
+def collapse_line_items(lines: list[str]) -> tuple[list[str], int]:
+    """A bill export with one row per line item repeats the bill's number and totals on every line; read as
+    payments, each repeat would look like the bill paid again. Rows that agree on every column except the line-item
+    ones (description, quantity, unit amount ...) are one bill: the first row is kept, as it is."""
+    if len(lines) < 3:
+        return lines, 0
+    head = _cells(lines[0])
+    item = {i for i, h in enumerate(head) if LINE_ITEM.search(columns.norm_header(h))}
+    # a description or memo column alone is not a line-item export: two payments that differ only in their memo
+    # are two payments
+    if not any(QTY.search(columns.norm_header(head[i])) for i in item) or len(item) == len(head):
+        return lines, 0
+    out, seen, dropped = [lines[0]], set(), 0
+    for ln in lines[1:]:
+        cells = _cells(ln)
+        key = tuple(c.strip() for i, c in enumerate(cells) if i not in item)
+        if key in seen and any(key):
+            dropped += 1
+            continue
+        seen.add(key)
+        out.append(ln)
+    return out, dropped

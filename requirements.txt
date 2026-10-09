@@ -4,5 +4,6 @@ streamlit>=1.55,<2
 pandas>=2.2,<4
 altair>=5,<7
 openpyxl>=3.1,<4
+defusedxml>=0.7,<1     # openpyxl uses it to refuse XML bombs in uploaded workbooks
 reportlab>=4,<6
 pypdf>=5,<7

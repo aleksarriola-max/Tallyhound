@@ -17,6 +17,15 @@ All notable changes. Dates are release dates; the project follows [Semantic Vers
   reported, and a cell cap keeps big workbooks in bounds. A quoted value that runs over two lines stays in its row.
 - Next month's exports with this month's file names become a new dataset ("name (2)") instead of being taken for
   files already read. A dataset is read once per pick, not on every click.
+- Tested against an export pack (`tests/exports/pack`, 15 fictional files in the layouts of QuickBooks Online and
+  Desktop, Xero, Sage 50, NetSuite, Expensify and bank downloads): each is read as the right file or refused with the
+  reason. That added semicolon-separated files, month-name dates (`02 Sep 2026`, `Sep 2, 2026`), section headings,
+  headings in a named first column, Xero bill exports folded from line items into one row per bill, vendor lists with
+  fewer columns when their name says so, and a reason on every refusal ("comes closest to payments.csv, but has no
+  invoice no").
+- Hardened after an audit: long lines are cut before any tidying (no slow patterns on hostile input), workbooks are
+  bounded by cells and text read rather than refused outright, upload notes are escaped (no links or formatting from
+  file names), and `defusedxml` is a dependency so workbooks cannot carry XML bombs.
 
 **New checks**, each with its own policy clause, planted in generated months with a trap that must stay quiet. They
 are patterns, not breaches, so the rules engine marks them doubted and "Approve all confirmed" leaves them alone.
@@ -32,7 +41,13 @@ are patterns, not breaches, so the rules engine marks them doubted and "Approve 
 **Reports > Patterns**: a first-digit (Benford's law) test with a verdict only on enough data, the share of round
 amounts, and amounts bunched just under each limit. Not findings; nothing here reaches Review or the downloads.
 
+**Bank reconciliation**: exact amounts are matched across the whole statement before amounts a few cents off, so a
+batch transfer within cents of one supplier's payment no longer takes it (the one trap the rules still flagged, in 1
+of 180 generated months). Rules now flag 0 of 4,680 traps.
+
 **Generator**: a planted unrecorded payment is always early enough for the statement to show it missing.
+
+**Accessibility**: the Patterns chart's bars and axis text meet WCAG AA contrast.
 
 **Code health**: type checking with mypy (no errors), a coverage report with an 85% floor in CI (about 90%), upload
 reading moved into `uploads.py`, and `scripts/screenshots.py` to re-make the screenshots and the demo GIF.

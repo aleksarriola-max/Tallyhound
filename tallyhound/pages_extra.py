@@ -317,6 +317,10 @@ def trends_page() -> None:
     st.dataframe(vendor_risk(C.findings()).head(15), hide_index=True, **C.dfw())
 
 
+BAR = "#00899c"           # 3.9:1 on the page and 4.4:1 under the dark ticks (WCAG 1.4.11 needs 3:1)
+AXIS = dict(labelColor=C.MUTED, titleColor=C.MUTED, labelFontSize=12)    # 5.4:1, not Streamlit's paler default
+
+
 def _pattern_files() -> tuple[str, dict[str, list[str]]]:
     from . import custom
     label = C.custom_label()
@@ -347,9 +351,9 @@ def patterns_page() -> None:
         rows = [dict(Digit=str(d), Share=b["observed"][d], Expected=b["expected"][d],
                      Observed=f"{b['observed'][d]:.1%}", Benford=f"{b['expected'][d]:.1%}") for d in range(1, 10)]
         df = pd.DataFrame(rows)
-        bars = alt.Chart(df).mark_bar(color=C.TEAL, cornerRadiusTopLeft=4, cornerRadiusTopRight=4, size=26).encode(
-            x=alt.X("Digit:N", title="First digit", axis=alt.Axis(labelAngle=0)),
-            y=alt.Y("Share:Q", title="Share of amounts", axis=alt.Axis(format="%", grid=True, gridOpacity=0.35)),
+        bars = alt.Chart(df).mark_bar(color=BAR, cornerRadiusTopLeft=4, cornerRadiusTopRight=4, size=26).encode(
+            x=alt.X("Digit:N", title="First digit", axis=alt.Axis(labelAngle=0, **AXIS)),
+            y=alt.Y("Share:Q", title="Share of amounts", axis=alt.Axis(format="%", grid=True, gridOpacity=0.35, **AXIS)),
             tooltip=[alt.Tooltip("Digit:N"), alt.Tooltip("Observed:N", title="In this data"),
                      alt.Tooltip("Benford:N", title="Benford's law")])
         ticks = alt.Chart(df).mark_tick(color=C.INK, thickness=3, size=36).encode(

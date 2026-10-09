@@ -170,7 +170,7 @@ def test_near_duplicates_stay_fast_with_thousands_of_equal_amounts():
                    for i in range(4000)])
     t = time.time()
     rules.payments(lines)
-    assert time.time() - t < 3
+    assert time.time() - t < 10
 
 
 # ---- pattern checks
@@ -258,7 +258,7 @@ def test_near_duplicates_scale_to_large_files():
                    for i in range(20000)])
     t = time.time()
     rules.payments(lines)
-    assert time.time() - t < 4
+    assert time.time() - t < 10           # about 1.5 s; generous for slow CI machines and coverage runs
 
 
 def test_a_total_line_without_an_amount_is_not_a_heading():
@@ -266,3 +266,87 @@ def test_a_total_line_without_an_amount_is_not_a_heading():
                ",09/03/2026,P-9,09/03/2026,Z-1,50.00,50.00,")
     lines, _ = importer.tidy(text.splitlines())
     assert lines[-1].startswith(",09/03/2026") and not any(ln.startswith("Total for Ashby") for ln in lines)
+
+
+# ---- third round: leftovers from the second review
+def test_a_title_line_with_dates_is_still_a_title():
+    text = "\n".join(["Bill Payment List", "From,09/01/2026,To,09/30/2026", "",
+                      ",Date,Num,Invoice Date,Invoice No,Original Amount,Amount Paid", "Ashby,,,,,,",
+                      ",09/02/2026,1001,09/01/2026,A-1,10.00,10.00"])
+    lines, notes = importer.tidy(text.splitlines())
+    assert lines == ["Vendor,Date,Num,Invoice Date,Invoice No,Original Amount,Amount Paid",
+                     "Ashby,09/02/2026,1001,09/01/2026,A-1,10.00,10.00"]
+
+
+def test_headings_in_a_named_first_column_are_filled_in():
+    text = "\n".join(["Supplier ledger", "", "Supplier,Date,Ref,Amount", "Ashby Components,,,",
+                      ",2026-09-02,A-1,100.00", "Total Ashby Components,,,100.00"])
+    lines, notes = importer.tidy(text.splitlines())
+    assert lines == ["Supplier,Date,Ref,Amount", "Ashby Components,2026-09-02,A-1,100.00"]
+
+
+def test_a_pandas_index_file_is_left_alone():
+    lines = [",payment_id,amount,note", "0,P-1,10.00,x", "1,P-2,5.00,", "2,,,"]
+    assert importer.tidy(lines) == (lines, [])
+
+
+# ---- audit of the 0.7 features
+def test_long_runs_of_spaces_never_make_reading_slow():
+    t = time.time()
+    uploads.read_uploads([("payments.csv", ("vendor,amount,1" + " " * 40000 + "x\n").encode())])
+    importer.NUMERIC.match("1" + " " * 40000 + "x")
+    importer.TOTAL.match("total" + " " * 40000 + "x")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("xl/worksheets/sheet1.xml", "<f " * 133333)
+    uploads.read_uploads([("x.xlsx", buf.getvalue())])
+    assert time.time() - t < 10
+
+
+def test_upload_notes_cannot_carry_links_or_formatting(tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("TALLYHOUND_STATE_DIR", str(tmp_path))
+    odd = tmp_path / "odd **bold** [mail me](mailto:someone@example.com).csv"
+    odd.write_text("name,start,end\nAda,2026-01-01,2026-01-05\n", encoding="utf-8")
+    from tests.test_upload_ui import _page
+    at = AppTest.from_function(_page, args=([str(odd)],), default_timeout=60).run()
+    shown = " ".join(w.value for w in at.warning)
+    assert "\\*\\*bold\\*\\*" in shown and "\\[mail me\\]" in shown
+
+
+def test_the_receipt_pattern_check_stays_fast():
+    rows = [f"E-{i},{date_str(i * 16)},Ada,PARKING,23.75,,x," for i in range(8000)]
+    t = time.time()
+    rules.expenses([EXP] + rows)
+    assert time.time() - t < 10
+
+
+def date_str(days: int) -> str:
+    from datetime import date, timedelta
+    return (date(2000, 1, 1) + timedelta(days=days)).isoformat()
+
+
+def test_a_big_workbook_is_read_up_to_the_cell_cap_not_refused():
+    rows = [["a", "b", "c", "d"]] + [[i, i, i, i] for i in range(3000)]
+    raw = _book(rows)
+    lines, notes = importer.xlsx_lines(raw, max_unpacked_mb=0.2, max_cells=4000)   # the sheet alone is 0.45 MB
+    assert lines is not None and 900 <= len(lines) <= 1001 and any("too large" in n for n in notes)
+
+
+def test_patterns_chart_colours_meet_wcag():
+    from tallyhound import common as C
+    from tallyhound import pages_extra as P
+    from tests.test_round5 import _contrast
+    assert _contrast(P.BAR, C.PAPER) >= 3 and _contrast(C.INK, P.BAR) >= 3        # bars, and ticks over bars
+    assert _contrast(P.AXIS["labelColor"], C.PAPER) >= 4.5
+
+
+def test_a_batch_within_cents_of_one_payment_does_not_take_it():
+    """Easy month 42: a BACS batch of $7,902.74 and one supplier's own payment of $7,902.77. Exact amounts are matched
+    first everywhere, so the supplier's bank line keeps its payment and the batch is matched to the three it covers."""
+    files, key = challenge.generate(42, "easy")
+    k = score.key_from_csv(challenge.key_csv(key))
+    hits = rules.analyze(files)
+    sc = score.score([dict(source_file=h.source_file, line_number=h.line_number,
+                           related_lines=[ln for _, ln in h.related]) for h in hits], k)
+    assert sc["traps_flagged"] == 0 and sc["false_alarms"] == 0

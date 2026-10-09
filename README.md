@@ -123,7 +123,7 @@ run, a team dinner with the head count in the notes, a CPA society membership, a
 remit-to vendor record, a vendor closed after its last payment, and an invoice PDF that shows the net total before tax.
 
 Before these were fixed the built-in rules raised about 30 false alarms per month (precision 37-47%). Now: 0 traps
-flagged in 1,320 across 60 months, 100% precision, recall 100% easy / 100% medium / 96% hard.
+flagged in 4,680 across 180 months (60 per difficulty), 100% precision, recall 100% easy / 100% medium / 97% hard.
 
 What keeps it that way:
 
@@ -179,8 +179,8 @@ every page):
 
 `python scripts/benchmark.py` runs the engines on fresh challenge months (20 per difficulty by default) and writes
 `benchmark-results/benchmark.md` and `.csv`; add `--out docs` to update the published [docs/benchmark.md](docs/benchmark.md).
-Built-in rules, 20 months per difficulty with traps: easy 100%, medium 100%, hard 96% of planted problems found, 0 of
-1,320 traps flagged. The generator plants problems shaped like the rules' checks, so treat this as a regression
+Built-in rules, 20 months per difficulty with traps: easy 100%, medium 100%, hard 97% of planted problems found, 0 of
+1,560 traps flagged. The generator plants problems shaped like the rules' checks, so treat this as a regression
 baseline that the AI engines must beat. The AI engines are benchmarked on your own machine, with Ollama running:
 
 ```bash

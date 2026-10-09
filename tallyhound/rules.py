@@ -164,14 +164,28 @@ def missing_columns(name: str, lines: list[str]) -> list[str]:
     return [c for c in REQUIRED[name] if c not in head]
 
 
+MONTH_DATE = re.compile(r"^(\d{1,2})[ -]([A-Za-z]{3,9})\.?[ -](\d{4})\b|^([A-Za-z]{3,9})\.? (\d{1,2}),? (\d{4})\b")
+
+
 @lru_cache(maxsize=65536)
 def _d(s: str, dayfirst: bool = False) -> date | None:
-    """Dates as YYYY-MM-DD, YYYY/MM/DD, or slash/dot/dash dates in the file's day or month order."""
-    s = str(s).strip()[:10]
+    """Dates as YYYY-MM-DD, YYYY/MM/DD, slash/dot/dash dates in the file's day or month order, or with the month
+    as a word ('02 Sep 2026', '2-Sep-2026', 'Sep 2, 2026'). A time after the date is ignored."""
+    t = str(s).strip()
+    m = MONTH_DATE.match(t)
+    if m:
+        day, mon, year = (m.group(1), m.group(2), m.group(3)) if m.group(1) else (m.group(5), m.group(4), m.group(6))
+        for fmt in ("%d %b %Y", "%d %B %Y"):
+            try:
+                return datetime.strptime(f"{int(day)} {mon[:3] if fmt == '%d %b %Y' else mon} {year}", fmt).date()
+            except ValueError:
+                pass
+        return None
+    t = t[:10]
     fmts = ("%Y-%m-%d", "%Y/%m/%d") + (("%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y") if dayfirst else ("%m/%d/%Y", "%d.%m.%Y"))
     for fmt in fmts:
         try:
-            return datetime.strptime(s, fmt).date()
+            return datetime.strptime(t, fmt).date()
         except ValueError:
             pass
     return None
@@ -578,20 +592,17 @@ def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
         v.sort(key=lambda x: (x[0], x[1]))
     when = {k: [x[0] for x in v] for k, v in by_cents.items()}
     used: set[int] = set()
-    unmatched = []
-    for ln, r, amt in lines_:
-        if amt > 0 and NON_AP_BANK.search(r["description"] + " " + r["reference"]):
-            continue
+
+    def match(ln, r, amt, deltas) -> bool:
         d, ref = cast(date, r.d("date")), (r["reference"] + " " + r["description"]).lower()
         k = round(amt * 100)
-        best = None
-        for dk in sorted(range(-BANK_CENTS, BANK_CENTS + 1), key=abs):   # exact amount first, then a few cents off
+        for dk in deltas:
             bucket = by_cents.get(k + dk, [])
             if not bucket:
                 continue
             lo = bisect_left(when[k + dk], d - timedelta(days=L["bank_days"]))
             hi = bisect_right(when[k + dk], d + timedelta(days=L["bank_days"]))
-            best_key = None
+            best, best_key = None, None
             for pd_, pl, p in bucket[lo:hi]:     # one pass; a reference match wins, then the nearest date
                 if pl in used:
                     continue
@@ -602,11 +613,17 @@ def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
                     if key[:3] == (False, False, 0):
                         break
             if best is not None:
-                break
-        if best is not None:
-            used.add(best)
-        elif amt > 0:
-            unmatched.append((ln, r, amt))
+                used.add(best)
+                return True
+        return False
+    # every exact amount first, across the whole statement, then a few cents off: otherwise a batch transfer that
+    # happens to be within cents of one supplier's payment takes it, and that supplier's own bank line is left over
+    todo = [(ln, r, amt) for ln, r, amt in lines_ if not (amt > 0 and NON_AP_BANK.search(r["description"] + " " + r["reference"]))]
+    left = [x for x in todo if not match(*x, (0,))]
+    near = [dk for dk in sorted(range(-BANK_CENTS, BANK_CENTS + 1), key=abs) if dk]
+    unmatched = [(ln, r, amt) for ln, r, amt in left
+                 if not (not BATCH_WORDS.search(f"{r['description']} {r['reference']}") and match(ln, r, amt, near))
+                 and amt > 0]
     out = []
     by_day = sorted((p.d("pay_date"), pl, round(pa * 100), norm_name(p["supplier"])) for pl, p, pa in pays if pa > 0)
     days = [cast(date, x[0]) for x in by_day]       # pays only holds rows with a pay date
@@ -817,9 +834,13 @@ def _under_receipt_limit(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
     out = []
     for items in by.values():
         items.sort(key=lambda x: cast(date, x[1].d("date")))
-        for i in range(len(items) - 2):
-            win = [x for x in items[i:] if (cast(date, x[1].d("date")) - cast(date, items[i][1].d("date"))).days <= 30]
-            if len(win) >= 3:
+        days = [cast(date, r.d("date")) for _, r in items]
+        j = 0
+        for i in range(len(items)):                    # a window of 30 days sliding over the sorted claims
+            while (days[i] - days[j]).days > 30:
+                j += 1
+            if i - j + 1 >= 3:
+                win = items[j:i + 1]
                 last = max(win, key=lambda x: x[0])
                 out.append(Hit("Expenses", "6.6", "Low", round(sum(_f(r["amount"]) for _, r in win), 2),
                                f"{last[1]['employee'].strip()} made {len(win)} claims without a receipt just under "

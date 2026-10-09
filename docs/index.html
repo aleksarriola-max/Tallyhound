@@ -26,7 +26,7 @@
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
   .card b { display:block; margin-bottom:4px; }
   .num { font-size:2rem; font-weight:800; color:var(--teal-dark); }
-  img { max-width:100%; border:1px solid var(--line); border-radius:8px; display:block; }
+  img { max-width:100%; height:auto; border:1px solid var(--line); border-radius:8px; display:block; }
   .shot { margin: 12px 0 4px; }
   .cap { color:var(--muted); font-size:.9rem; margin-bottom:14px; }
   table { border-collapse:collapse; width:100%; font-size:.95rem; }
@@ -48,6 +48,8 @@
       <a class="btn primary" href="https://tallyhound-kfzkutbxmxdsrynlmppoll.streamlit.app/">Try the live demo</a>
       <a class="btn" href="https://github.com/aleksarriola-max/Tallyhound">Source on GitHub</a>
     </div>
+    <img class="shot" src="demo.gif" width="960" height="600" alt="A QuickBooks bill payment report and a Xero contacts workbook are uploaded, their columns matched, the run finishes and a case is approved in Review; then the Patterns tab shows the first-digit chart">
+    <p class="cap">From a QuickBooks report and a Xero workbook to a reviewed case in about 30 seconds (fictional data).</p>
   </header>
 
   <section>
@@ -64,8 +66,8 @@
     <h2>Measured, not claimed</h2>
     <p>The Scorecard grades every engine against an answer key of planted problems and planted traps, and the build fails if a rule flags a trap. The challenge generator makes fresh fictional months; hard mode rewords problems so they no longer look like the rules' checks (the rules still miss one in each month), so it shows whether the AI adds anything.</p>
     <div class="grid">
-      <div class="card"><div class="num">0 / 1,320</div>Traps flagged: legitimate look-alikes (batch transfers, rent without a PO, discounts, voids, day-first dates...) planted in 60 fresh months.</div>
-      <div class="card"><div class="num">100%</div>Built-in rules, medium challenges: planted problems found, at 100% precision. Hard: 96%, by design not all.</div>
+      <div class="card"><div class="num">0 / 4,680</div>Traps flagged: legitimate look-alikes (batch transfers, rent without a PO, discounts, voids, weekly bills in a series, day-first dates...) planted in 180 fresh months.</div>
+      <div class="card"><div class="num">100%</div>Built-in rules, medium challenges: planted problems found, at 100% precision. Hard: 97%, by design not all.</div>
       <div class="card"><div class="num">25 / 26</div>Sample company: problems the rules find. The one missed needs staff records that are not in the files.</div>
     </div>
     <p class="cap">AI engine results are measured on your own computer with <code>python scripts/benchmark.py --engines ollama,ollama-tools</code>; see docs/benchmark.md.</p>
@@ -75,19 +77,31 @@
   <section>
     <h2>What it checks</h2>
     <div class="grid">
-      <div class="card"><b>Payments</b>Paid twice, paid more than invoiced, paid before the invoice, weekend releases, and a bank statement that does not match the books.</div>
-      <div class="card"><b>Approvals</b>Self-approval, missing POs, POs raised after the invoice, manager approving above the director limit, split orders.</div>
-      <div class="card"><b>Vendors</b>Unverified bank changes, inactive vendors paid, duplicate tax IDs, missing tax forms.</div>
+      <div class="card"><b>Payments</b>Paid twice (also under a re-keyed invoice number), paid more than invoiced, paid before the invoice, weekend releases, and a bank statement that does not match the books.</div>
+      <div class="card"><b>Approvals</b>Self-approval, missing POs, POs raised after the invoice, manager approving above the director limit, split orders, approvals bunched just under the limit.</div>
+      <div class="card"><b>Vendors</b>Unverified bank changes, inactive vendors paid, duplicate tax IDs, missing tax forms, big payments to brand-new vendors.</div>
       <div class="card"><b>Invoices (PDF)</b>Invoices nobody approved, totals that differ, duplicates, and bank details that differ from the vendor master.</div>
       <div class="card"><b>Contracts</b>Surcharges the contract excludes, rates above the rate card, billing after the term, silent renewals.</div>
       <div class="card"><b>Payment gate</b>Eight checks per line of a proposed payment run decide HOLD or RELEASE before money leaves.</div>
+      <div class="card"><b>Patterns</b>A first-digit (Benford's law) test, round amounts and amounts bunched under limits - a guide to where to sample, never a finding.</div>
     </div>
+    <p class="cap">Checks for patterns rather than breaches (re-keyed numbers, new vendors, bunching under a limit) arrive marked doubted, so nobody approves them in bulk.</p>
+  </section>
+
+  <section>
+    <h2>Your exports, as they come</h2>
+    <div class="grid">
+      <div class="card"><b>Excel or CSV, any name</b>Pick the files straight from QuickBooks, Xero, Sage, NetSuite, Expensify or your bank. Files are recognised from their columns; semicolon files and month-name dates are read.</div>
+      <div class="card"><b>Reports tidied, openly</b>Title lines, totals and footers are dropped, vendor headings written onto their rows, line items folded into their bill - and every change is listed.</div>
+      <div class="card"><b>Refused, not guessed</b>A file that could be two things is left out with the reason, rather than read as the wrong one. Column matches are suggested once and remembered.</div>
+    </div>
+    <img class="shot" src="import.png" width="1280" height="800" alt="The Check new files dialog after picking four exports: the files read, and the suggested column matches for a payments report">
   </section>
 
   <section>
     <h2>How it flows</h2>
     <div class="flow">
-      <span class="step">Zip of CSVs and invoice PDFs</span><span class="arrow">&rarr;</span>
+      <span class="step">Exports, a zip, invoice PDFs</span><span class="arrow">&rarr;</span>
       <span class="step">Column matching</span><span class="arrow">&rarr;</span>
       <span class="step">Rules and local AI agents</span><span class="arrow">&rarr;</span>
       <span class="step">Quote check</span><span class="arrow">&rarr;</span>

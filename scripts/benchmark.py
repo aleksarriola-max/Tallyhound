@@ -81,7 +81,8 @@ def main() -> None:
     df.to_csv(out / "benchmark.csv", index=False)
     g = df.groupby(["engine", "model", "difficulty"], sort=False)
     md = ["# Benchmark", "", f"Generated {datetime.now():%Y-%m-%d %H:%M} on fresh challenge data "
-          f"({len(seeds(a.seeds))} seeds per difficulty). Planted problems per month: easy 8, medium 14, hard ~28.", "",
+          f"({len(seeds(a.seeds))} seeds per difficulty). Planted problems per month: "
+          + ", ".join(f"{d} {statistics.mean(df[df.difficulty == d].planted):.0f}" for d in df.difficulty.unique()) + ".", "",
           "| Engine | Model | Difficulty | Runs | Recall | Precision | False alarms per run | Traps flagged | Seconds per run |",
           "|---|---|---|---|---|---|---|---|---|"]
     for (engine, model, diff), part in g:
@@ -90,7 +91,8 @@ def main() -> None:
                   f"{statistics.mean(part.false_alarms):.1f} | {part.traps_flagged.sum()} of {part.traps.sum()} | "
                   f"{statistics.mean(part.seconds):.0f} |")
     md += ["", "Recall: share of planted problems found. Precision: share of findings that were real. Hard mode rewords "
-           "three problems; the rules catch two of them and miss the reworded surcharge, so their hard-mode recall is 96%.", ""]
+           "three problems; the rules catch two of them and miss the reworded surcharge, so their hard-mode recall is "
+           "below 100% by design.", ""]
     (out / "benchmark.md").write_text("\n".join(md), encoding="utf-8")
     print(f"Wrote {out / 'benchmark.md'}")
     if failed:

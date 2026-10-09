@@ -1,0 +1,16 @@
+Ashgrove Instruments Ltd (fictional)
+Bill Payment List
+September 2026
+
+,Date,Num,Invoice Date,Invoice No,Original Amount,Amount Paid,Memo
+Ashby Components,,,,,,,
+,09/02/2026,1001,09/01/2026,ASH-6100,"1,960.17","1,960.17",
+,09/16/2026,1009,09/14/2026,ASH-6140,800.00,800.00,
+Total for Ashby Components,,,,,,"$2,760.17",
+Bexley Plastics,,,,,,,
+,09/05/2026,1003,09/03/2026,BEX-221,"9,366.95","9,366.95","Paid, by cheque"
+Total for Bexley Plastics,,,,,,"$9,366.95",
+TOTAL,,,,,,"$12,127.12",
+
+
+"Thursday, October 08, 2026 09:12 AM GMT-04:00"
