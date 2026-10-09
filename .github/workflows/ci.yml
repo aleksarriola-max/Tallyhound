@@ -1,16 +1,31 @@
 name: tests
+
 on:
   push:
   pull_request:
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.12"
+            deps: latest
+          - python: "3.10"
+            deps: minimum            # the oldest Python and Streamlit the project says it supports
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           cache: pip
-      - run: pip install -r requirements.txt pytest
+      - run: pip install -r requirements-dev.txt
+      - if: matrix.deps == 'minimum'
+        run: pip install "streamlit==1.55.*"
+      - run: ruff check .
+      - if: matrix.deps == 'latest'
+        run: mypy
       - run: python scripts/make_data.py && git diff --exit-code data/
-      - run: pytest -q
+      - run: pytest -q --cov --cov-report=term
