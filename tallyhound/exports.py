@@ -85,11 +85,12 @@ def build_workbook(draft: bool = False) -> bytes:
         ["Audit trail", _trail_word()],
     ], columns=["Item", "Value"])
     trail = C.full_trail(C.findings())
+    f, trail = _printable(f), _printable(trail)
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
         summary.to_excel(xw, sheet_name="Summary", index=False)
         f.to_excel(xw, sheet_name="Monthly audit", index=False)
-        g = gate_frame()
+        g = _printable(gate_frame())
         if not g.empty and (not C.custom_label() or "payment_run.csv" in st.session_state.uploads.get(C.custom_label(), {})):
             g.to_excel(xw, sheet_name="Payment gate", index=False)
         if not C.custom_label():
@@ -100,6 +101,16 @@ def build_workbook(draft: bool = False) -> bytes:
             defuse_formulas(ws)
             _style(ws)
     return buf.getvalue()
+
+
+def _printable(df: pd.DataFrame) -> pd.DataFrame:
+    """Control characters from an uploaded file (a stray \x01) cannot be stored in a workbook; they are dropped."""
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+    out = df.copy()
+    for col in out.columns:
+        if out[col].dtype == object or pd.api.types.is_string_dtype(out[col]):
+            out[col] = [ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in out[col]]
+    return out
 
 
 def _trail_word() -> str:

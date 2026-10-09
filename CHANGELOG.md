@@ -41,6 +41,11 @@ are patterns, not breaches, so the rules engine marks them doubted and "Approve 
 **Reports > Patterns**: a first-digit (Benford's law) test with a verdict only on enough data, the share of round
 amounts, and amounts bunched just under each limit. Not findings; nothing here reaches Review or the downloads.
 
+**Found by fuzz testing** (thousands of random hostile files): a damaged zip or Excel file is skipped with a note
+instead of crashing the upload; a plain file whose first row is all text keeps its column names; control characters
+in a cell no longer break the workbook download; placeholder dates such as 0001-01-01 or 9999-12-31 are read as no
+date instead of crashing the bank check.
+
 **Bank reconciliation**: exact amounts are matched across the whole statement before amounts a few cents off, so a
 batch transfer within cents of one supplier's payment no longer takes it (the one trap the rules still flagged, in 1
 of 180 generated months). Rules now flag 0 of 4,680 traps.

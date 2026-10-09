@@ -169,6 +169,11 @@ MONTH_DATE = re.compile(r"^(\d{1,2})[ -]([A-Za-z]{3,9})\.?[ -](\d{4})\b|^([A-Za-
 
 @lru_cache(maxsize=65536)
 def _d(s: str, dayfirst: bool = False) -> date | None:
+    d = _parse_date(s, dayfirst)
+    return d if d and 1900 <= d.year <= 2200 else None     # 0001-01-01 or 9999-12-31 is a placeholder, not a date
+
+
+def _parse_date(s: str, dayfirst: bool = False) -> date | None:
     """Dates as YYYY-MM-DD, YYYY/MM/DD, slash/dot/dash dates in the file's day or month order, or with the month
     as a word ('02 Sep 2026', '2-Sep-2026', 'Sep 2, 2026'). A time after the date is ignored."""
     t = str(s).strip()

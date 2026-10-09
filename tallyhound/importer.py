@@ -22,6 +22,7 @@ import csv
 import io
 import re
 import zipfile
+import zlib
 from datetime import date, datetime, time
 
 from . import columns, rules
@@ -102,7 +103,7 @@ def xlsx_lines(raw: bytes, max_unpacked_mb: float = 100, max_cells: int = 3_000_
         if any(i.flag_bits & 0x1 for i in zf.infolist()):
             return None, ["it is password-protected"]
         blank_formulas = _formulas_without_value(zf)
-    except (zipfile.BadZipFile, OSError, ValueError, RuntimeError, NotImplementedError, EOFError):
+    except (zipfile.BadZipFile, OSError, ValueError, RuntimeError, NotImplementedError, EOFError, zlib.error):
         return None, ["it is not a readable .xlsx workbook (an old .xls, or protected with a password? Save it as "
                       ".xlsx without a password, or as CSV)"]
     import warnings
@@ -191,6 +192,8 @@ def _header_index(lines: list[str]) -> int:
     """Index of the column-names line: the widest line that looks like column names before the first line of data.
     Title lines (company, report name, "Report period:, From ..., To ...") come first and are narrower. Any other
     wide line before the data means an unfamiliar layout, and the file is taken as it is."""
+    if lines and _looks_like_header(_cells(lines[0])) and len(lines) > 1 and lines[1].strip():
+        return 0          # column names on the first line with rows straight under them: a plain table, whatever follows
     best, width = 0, 0
     top = lines[:25]
     for i, ln in enumerate(top):

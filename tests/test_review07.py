@@ -384,3 +384,53 @@ def test_the_trail_names_who_ran_it_with_the_run_time():
     trail = C.full_trail(C.findings())
     assert "Person (prep)" in set(trail.actor) and "14:2x" not in set(trail.time)
     st.session_state.clear()
+
+
+# ---- fuzz testing (hypothesis) found these
+def _damaged(name: str, member: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(member, "payment_id,pay_date\n" + "P-1,2026-09-01\n" * 300)
+    raw = bytearray(buf.getvalue())
+    raw[50] ^= 0xFF                                   # one flipped byte inside the compressed data
+    return bytes(raw)
+
+
+def test_damaged_zips_and_workbooks_are_skipped_not_crashed():
+    for name in ("month.zip", "payments.xlsx"):
+        files, notes = uploads.read_uploads([(name, _damaged(name, "xl/worksheets/sheet1.xml" if name.endswith("xlsx")
+                                                             else "payments.csv"))])
+        assert "payments.csv" not in files and notes
+    files, notes = uploads.read_uploads([("m.zip", _damaged("m.zip", "payments.csv")), ("approvals.csv", APPR.encode())])
+    assert "approvals.csv" in files and any("m.zip" in n for n in notes)
+
+
+def test_a_text_only_first_row_never_takes_the_column_names():
+    lines = ["date,description,amount", "Opening balance,brought forward,from August,see note",
+             "2026-09-02,ACME LTD,-100.00"]
+    assert importer.tidy(lines) == (lines, [])
+
+
+def test_placeholder_dates_are_not_dates():
+    assert rules._d("0001-01-01") is None and rules._d("9999-12-31") is None and rules._d("2026-09-01")
+    pay = [PAY, "P1,9999-12-31,2026-09-01,V1,Acme,INV-1,100.00,100.00"]
+    assert isinstance(rules.analyze({"payments.csv": pay, "bank_statement.csv": ["date,description,amount",
+                                                                                "0001-01-01,ACME,100.00"]}), list)
+
+
+def test_control_characters_do_not_break_the_workbook():
+    import streamlit as st
+
+    from tallyhound import common as C
+    from tallyhound import custom, exports
+    files, _ = uploads.read_uploads([("vendors.csv", (
+        "vendor_id,name,tax_id,status,bank_changed_on,bank_verified,w9_on_file,last_paid_on,last_paid_amount\n"
+        "V\x011,Acme,12,ACTIVE,2026-09-01,NO,YES,2026-09-03,10.00\n").encode())])
+    st.session_state.clear()
+    C.init_state()
+    st.session_state.uploads = {"m": files}
+    job = custom.Job("m", files, "rules", "", "", C.policy(), [])
+    job.thread.join(30)
+    custom.finalize("m", job)
+    assert exports.build_workbook(True) and exports.build_workbook(False)
+    st.session_state.clear()

@@ -7,6 +7,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+import zlib
 
 from . import importer, llm, rules
 
@@ -63,7 +64,7 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
             return None
         try:
             raw = zf.read(info)
-        except (zipfile.BadZipFile, RuntimeError, NotImplementedError, OSError, EOFError, ValueError) as e:
+        except (zipfile.BadZipFile, RuntimeError, NotImplementedError, OSError, EOFError, ValueError, zlib.error) as e:
             notes.append(f"Skipped {base}: it could not be unpacked ({type(e).__name__}).")
             return None
         unpacked += len(raw)
@@ -271,7 +272,7 @@ def bundle(uploads: list[tuple[str, bytes]]) -> tuple[bytes, list[str]]:
                     data = inner.read(info)
                     budget -= len(data)
                     z.writestr(info.filename, data)
-            except (zipfile.BadZipFile, RuntimeError, OSError, ValueError, NotImplementedError, EOFError):
+            except (zipfile.BadZipFile, RuntimeError, OSError, ValueError, NotImplementedError, EOFError, zlib.error):
                 notes.append(f"Skipped {short}: it is not a valid zip.")
     return buf.getvalue(), notes
 
