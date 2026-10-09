@@ -51,6 +51,43 @@ every limit and window - the PO and director limits, the $1 tolerance, the split
 near-duplicate windows, head counts, the import-date and header rules - are now pinned by tests
 (`tests/test_boundaries.py`), so a rule cannot drift by a cent or a day unnoticed.
 
+**Found by security testing** (`tests/test_security.py`):
+- Roles and "whoever ran it cannot approve it" were enforced by greying out buttons; on Streamlit 1.55-1.60 a
+  forged click on a disabled button still acted. Every decision, undo, hold, run, upload and policy action now checks
+  the role itself.
+- Sign-in tries sent at the same moment could get past the 5-try lockout. The check and the count are now one step.
+- A vendor name written as markdown could show a live image or link on Review, and escaped text still showed
+  clickable addresses. Both now show as plain text.
+- The payment run's "Export release file" CSV kept spreadsheet formulas (`=HYPERLINK(...)`); they are now text.
+  Numbers such as `-500.00` stay numbers.
+- Slack alerts could carry `<!channel>` or a disguised link from an uploaded file; they are now escaped.
+- A zip with hundreds of thousands of empty entries slowed the page; zips are cut at 1,000 entries, with a note.
+
+**Found by scale and locale testing** (`tests/test_scale_locale.py`):
+- The split-order check, its name matching, the payments-against-vendors check and the headless report were
+  quadratic: 20,000 small bills from one vendor took 158 s, now under 1 s. 200,000 payments run in about 11 s.
+- The headless runner checked nothing on a folder over about 50 MB; it now compresses the folder first.
+- `12,5` was read as 125 (one-decimal commas, as Excel writes them). Narrow and thin spaces, `1’234.50` and more
+  currency marks (¥, zł, ₹, SEK, US$...) were read as 0. `02/09/2026 14:30` in a day-first file was read as
+  9 February.
+- Names in non-Latin scripts all looked the same, so two Japanese or Arabic suppliers' INV-1 counted as one invoice
+  paid twice, and self-approval in those scripts was missed. Names now compare with accents folded, so Muller and
+  Müller match.
+- UTF-16 files without a byte-order mark and Japanese (Shift-JIS) CSVs are read instead of garbled.
+
+**Found by metamorphic testing** (changing the input in ways that must not change the result;
+`tests/test_metamorphic.py`):
+- Payments listed newest first (as many exports are) turned two instalments into a false "paid twice" and could
+  report an overpayment twice. Invoice amounts now come from the earliest payment.
+- Bank matching could pair a bank line with the wrong payment and report "money left with no record". Lines are
+  now matched in date order, so every line that can be paired is.
+- A second split order, or a second run of claims just under the receipt limit, by the same person later in the
+  file was not reported.
+- Optional columns spelt with other capitals or spaces (`Type`, ` Bank_Last4 `) were read as blank, which caused
+  false "no PO" findings and let the payment gate skip the bank-details check.
+- The source viewer now sets its text colour, and keyboard focus in the page has a clear outline. Axe (WCAG 2.1 AA)
+  finds no violations of the app's own on any page, at desktop or phone width.
+
 **Checked and fine**: work saved by 0.6.1 opens in 0.7.0 with decisions, uploads and a sealed trail intact; three
 reviewers clicking the same findings in the same second lose nothing and keep one valid trail (the first decision on
 a finding wins); the AI engines treat a misbehaving model server (wrong shapes, empty or huge replies, invented

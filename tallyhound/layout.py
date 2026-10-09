@@ -25,6 +25,8 @@ def _demo_selection() -> dict:
 def _start(choice: str) -> None:
     """Queue a run for the chosen data. The sample uses the simulated run; uploads use the chosen engine."""
     S = st.session_state
+    if not auth.can("run"):                   # checked here too: see common.decide
+        return
     if choice == SAMPLE:
         custom.activate(None)                  # the sample run's results are the sample's, so review the sample
         sel = _demo_selection()
@@ -45,7 +47,7 @@ def run_dialog() -> None:
                "bank statement or a payment run (QuickBooks, Xero and other report exports are tidied and recognised "
                "from their columns), contracts.txt and invoice PDFs. Read in memory, never written to disk.")
     before = set(S.get("uploads", {}))
-    label = run_analysis.add_zip(ups) if ups else None
+    label = run_analysis.add_zip(ups) if ups and auth.can("run") else None
     # adding or removing files one at a time makes a new dataset each time; keep only the latest pick that was
     # never run, so the intermediate selections do not pile up under Settings > Data
     draft = S.get("_draft")
@@ -288,7 +290,7 @@ def case_details(r, others, ids, d, blocked) -> None:
         st.text_input("Reason to reject (required)", key=f"rej_{r.id}",
                       placeholder="Why is this not a problem? e.g. approved by phone, credit note received")
         who = review._entity(r)
-        st.checkbox(f"Don't flag clause {r.clause} again for {who}", key=f"supp_{r.id}")
+        st.checkbox(f"Don't flag clause {r.clause} again for {C.esc(who)}", key=f"supp_{r.id}")   # labels are markdown
         if S.get(f"_rej_missing_{r.id}"):
             st.warning("Write a reason first: every rejection needs one for the audit trail.")
         st.button("Reject", key=f"rejbtn_{r.id}", disabled=bool(blocked),

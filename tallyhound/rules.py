@@ -18,6 +18,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from functools import lru_cache
+from itertools import accumulate
 from typing import cast
 
 FILES = {"Payments": "payments.csv", "Approvals": "approvals.csv", "Vendors": "vendors.csv",
@@ -31,6 +32,9 @@ REQUIRED = {
     "bank_statement.csv": ["date", "description", "amount"],
     "expenses.csv": ["claim_id", "date", "employee", "category", "amount", "receipt_ref", "notes", "people"],
 }
+# columns the checks read when a file has them
+OPTIONAL = ["type", "vendor_id", "created_on", "status_changed_on", "reference", "bank_acct", "bank_last4"]
+KNOWN = {c for cols in REQUIRED.values() for c in cols} | set(OPTIONAL)
 
 LIMITS = dict(po_limit=2500.0, director_limit=10000.0, meal_limit=75.0, receipt_limit=25.0, split_days=3, bank_days=5,
               tolerance=1.0, materiality=50.0, new_vendor_days=30)
@@ -98,7 +102,7 @@ class Hit:
     related: list[tuple[str, int]] = field(default_factory=list)   # (file, line) of supporting lines
 
 
-SLASH = re.compile(r"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$")
+SLASH = re.compile(r"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?:[ T]\d{1,2}:\d{2}.*)?$")     # a time after it is ignored
 
 
 def date_order(lines: list[str]) -> str:
@@ -120,11 +124,24 @@ def date_order(lines: list[str]) -> str:
     return "ambiguous"
 
 
+def header(line: str) -> list[str]:
+    """Column names of a header line as the checks read them. A known column written in another case or spacing
+    ("Type", " VENDOR_ID ", "Created On") reads as its own name: column matching only asks for the required columns,
+    and without this a check would quietly read an optional one such as type or created_on as blank. A name the
+    file has exactly is kept."""
+    head = next(csv.reader([line]))
+    out: list[str] = []
+    for h in head:
+        k = re.sub(r"[\s_-]+", "_", h.strip().lower())
+        out.append(k if k in KNOWN and k not in head and k not in out else h)
+    return out
+
+
 def rows(lines: list[str]) -> list[tuple[int, Row]]:
     """(1-based line number, row) for every data row of a CSV given as exact lines."""
     if not lines:
         return []
-    head = next(csv.reader([lines[0]]))
+    head = header(lines[0])
     if "tallyhound_dayfirst" in head:             # set by the person on the data check (see custom.view)
         dayfirst = True
     elif "tallyhound_monthfirst" in head:
@@ -186,7 +203,7 @@ def _parse_date(s: str, dayfirst: bool = False) -> date | None:
             except ValueError:
                 pass
         return None
-    t = t[:10]
+    t = re.split(r"[ T]", t, maxsplit=1)[0][:10]          # "2/9/2026 14:30": the date before the time
     fmts = ("%Y-%m-%d", "%Y/%m/%d") + (("%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y") if dayfirst else ("%m/%d/%Y", "%d.%m.%Y"))
     for fmt in fmts:
         try:
@@ -197,16 +214,24 @@ def _parse_date(s: str, dayfirst: bool = False) -> date | None:
 
 
 MAX_AMOUNT = 1e13
-EU_NUMBER = re.compile(r"^-?\(?[$€£]?\d{1,3}(\.\d{3})*,\d{2}\)?$")
+EU_NUMBER = re.compile(r"^-?\(?[$€£]?\d{1,3}(\.\d{3})*,\d{1,2}\)?$")    # 1.234,56 and 1.234,5 (Excel drops the 0)
 
 
-CURRENCY = re.compile(r"^(?:USD|EUR|GBP|CAD|AUD|CHF)|(?:USD|EUR|GBP|CAD|AUD|CHF)$", re.I)
+CODES = r"USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY|CNY|RMB|HKD|SGD|INR|SEK|NOK|DKK|PLN|CZK|HUF|ZAR|BRL|MXN|AED|SAR|kr|zł|Kč|Ft"
+CURRENCY = re.compile(rf"^(?:{CODES}|US|NZ|HK|A|C|S|R)|(?:{CODES})$", re.I)     # US$, A$, C$, R$ in front only
+SYMBOLS = re.compile(r"[$£€¥₹円元₩₪₺\s\u00a0\u2009\u202f'\u2019]")    # and the spaces / apostrophes used for thousands
+
+
+PLAIN = re.compile(r"-?\d{1,13}(?:\.\d+)?")      # under MAX_AMOUNT
 
 
 def _f(s: str | float) -> float:
-    t = str(s).strip().replace("\u2212", "-").replace("$", "").replace("£", "").replace("€", "").replace(" ", "").replace("\u00a0", "")
-    t = t.replace("'", "")                       # 1'234.50 (Swiss)
-    t = CURRENCY.sub("", t)                      # USD 1,200.00 / 1.200,00 EUR
+    t = str(s).strip()
+    if PLAIN.fullmatch(t):                       # most cells (1234.56): nothing to strip
+        return float(t)
+    t = SYMBOLS.sub("", t.replace("\u2212", "-"))     # 1'234.50 (Swiss), 1 234,56 (French)
+    if re.search(r"[^\d.,()+-]", t):
+        t = CURRENCY.sub("", t)                  # USD 1,200.00 / 1.200,00 EUR
     sign = 1
     if t.upper().endswith("CR"):                 # 120.00 CR: a credit
         t, sign = t[:-2], -1
@@ -214,7 +239,7 @@ def _f(s: str | float) -> float:
         t = t[:-2]
     if t.endswith("-") and not t.startswith("-"):   # 120.00- (trailing minus, common in ERP exports)
         t, sign = t[:-1], -sign
-    if EU_NUMBER.match(t) or re.fullmatch(r"-?\(?\d+,\d{2}\)?", t):   # 1.234,50 or 1234,50 -> 1234.50
+    if EU_NUMBER.match(t) or re.fullmatch(r"-?\(?\d+,\d{1,2}\)?", t):   # 1.234,50, 1234,50 or 12,5 -> 12.50
         t = t.replace(".", "").replace(",", ".")
     t = t.replace(",", "")
     neg = t.startswith("(") and t.endswith(")")
@@ -226,10 +251,18 @@ def _f(s: str | float) -> float:
     return v if math.isfinite(v) and abs(v) < MAX_AMOUNT else 0.0    # 'nan', 'inf' or a 40-digit typo is not money
 
 
+def _fold(s: str) -> str:
+    """Lower case without accents ('Müller' -> 'muller'); letters of every script are kept, so '株式会社山田' and
+    'شركة النور' stay two different names instead of both becoming empty."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(s).casefold())
+    return "".join(c for c in t if not unicodedata.combining(c))
+
+
 @lru_cache(maxsize=65536)
 def norm_name(s: str) -> str:
     """'CALDER LOGISTICS LTD.' and 'Calder Logistics' compare equal."""
-    words = re.sub(r"[^a-z0-9 ]+", " ", str(s).lower().replace("&", " and ")).split()
+    words = re.sub(r"[\W_]+", " ", _fold(str(s).replace("&", " and "))).split()
     while words and words[-1] in SUFFIXES:
         words.pop()
     return " ".join(w for w in words if w != "the")
@@ -239,13 +272,13 @@ NAME_SUFFIX = {"jr", "sr", "ii", "iii", "iv", "mr", "mrs", "ms", "dr"}
 
 
 def _person(s: str) -> list[str]:
-    """Name parts, lower case, accents removed: 'García, José Jr.' -> ['jose', 'garcia']."""
-    import unicodedata
-    t = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower().strip()
+    """Name parts, lower case, accents removed: 'García, José Jr.' -> ['jose', 'garcia']. Any script counts:
+    'محمد علي' is two parts, not none."""
+    t = _fold(s).strip()
     if "," in t:                                   # "Smith, John" -> "John Smith"
         last, _, first = t.partition(",")
         t = f"{first} {last}"
-    return [w for w in re.findall(r"[a-z]+", t) if w not in NAME_SUFFIX]
+    return [w for w in re.findall(r"[^\W\d_]+", t) if w not in NAME_SUFFIX]
 
 
 def same_person(a: str, b: str) -> bool:
@@ -265,17 +298,23 @@ def same_person(a: str, b: str) -> bool:
     return fa == fb or ((len(fa) == 1 or len(fb) == 1) and fa[0] == fb[0])     # an initial matches its full name
 
 
-def po_exempt(vendor: str, L: dict) -> bool:
-    n = norm_name(vendor)
-    if n in {norm_name(v) for v in L.get("po_exempt_vendors", [])}:
-        return True
-    words = L.get("po_exempt_words", PO_EXEMPT_WORDS)
-
+@lru_cache(maxsize=64)
+def _exempt_re(words: tuple[str, ...]) -> re.Pattern | None:
+    """One pattern for all the exempt phrases, built once per list rather than once per bill."""
     def phrase(w: str) -> str:        # "power and light" also matches "Power & Light" and "Power Light"
         parts = [re.escape(x) for x in re.findall(r"[a-z0-9]+", w.lower()) if x != "and"]
         return r"\b" + r"\s+(?:and\s+)?".join(parts) + r"\b"
+    alts = [f"(?:{phrase(w)})" for w in words if re.search(r"[a-z0-9]", w.lower())]
+    return re.compile("|".join(alts)) if alts else None
+
+
+def po_exempt(vendor: str, L: dict) -> bool:
+    n = norm_name(vendor)
+    if any(n == norm_name(v) for v in L.get("po_exempt_vendors", [])):
+        return True
+    rx = _exempt_re(tuple(str(w) for w in L.get("po_exempt_words", PO_EXEMPT_WORDS)))
     full = " ".join(re.findall(r"[a-z0-9]+", str(vendor).lower().replace("&", " and ")))   # keeps "company", "co"
-    return any(re.search(phrase(w), full) for w in words if re.search(r"[a-z0-9]", w.lower()))
+    return bool(rx and rx.search(full))
 
 
 def inv_key(s: str) -> str:
@@ -291,23 +330,31 @@ def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     R, out = rows(lines), []
     groups: dict[tuple, dict] = {}
     tol = L.get("tolerance", 1.0)
+
+    def group(r: Row) -> tuple:                  # one vendor id, however the supplier is spelt
+        return r["vendor_id"].strip().upper() or norm_name(r["supplier"]), inv_key(r["invoice_no"].strip())
+    first: dict[tuple, float] = {}
+    first_paid: dict[tuple, int] = {}
+    for ln, r in sorted(R, key=lambda x: (x[1].d("pay_date") or date.max, x[0])):
+        if r["invoice_no"].strip() and _f(r["invoice_amount"]) > 0:
+            # the invoice amount on its earliest payment, wherever the file sorts it (newest first is common): later
+            # payments may show an open balance (instalments), and a later line claiming a bigger invoice must not
+            # hide a duplicate
+            first.setdefault(group(r), _f(r["invoice_amount"]))
+        if r["invoice_no"].strip() and _f(r["paid_amount"]) > 0:
+            first_paid.setdefault(group(r), ln)
     for ln, r in R:
         pa, ia = _f(r["paid_amount"]), _f(r["invoice_amount"])
         inv = r["invoice_no"].strip()
         if inv:
-            who = r["vendor_id"].strip().upper() or norm_name(r["supplier"])     # one vendor id, however it is spelt
-            g = groups.setdefault((who, inv_key(inv)), dict(net=0.0, inv=0.0, lines=[], cand=[]))
+            g = groups.setdefault(group(r), dict(net=0.0, inv=first.get(group(r), 0.0), lines=[], cand=[]))
             g["net"] += pa
-            if ia > 0 and g["inv"] == 0:
-                # the invoice amount on its first line: later lines may show an open balance (instalments), and a
-                # later line claiming a bigger invoice must not hide a duplicate
-                g["inv"] = ia
             if pa > 0 and g["lines"] and g["net"] > g["inv"] + tol:
                 g["cand"].append(Hit("Payments", "5.2", "High", pa, f"{inv.upper()} was paid more than once", "payments.csv",
                                      ln, [("payments.csv", x) for x in g["lines"][-10:]]))   # the latest 10 is enough
             if pa > 0:
                 g["lines"].append(ln)
-            if pa > ia + tol and len(g["lines"]) == 1:
+            if pa > ia + tol and first_paid.get(group(r)) == ln:
                 out.append(Hit("Payments", "5.1", "Medium", round(pa - ia, 2),
                                f"{inv} paid ${pa:,.2f} against an invoice of ${ia:,.2f}", "payments.csv", ln))
         pd_, idt = r.d("pay_date"), r.d("invoice_date")
@@ -464,25 +511,36 @@ def _split_orders(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
     close together in time, adding up to more than the director limit. Bills that never carry a PO do not count."""
     out = []
     groups: dict[tuple, list] = {}
+    who_by_vendor: dict[str, list[str]] = {}         # requesters seen per vendor: no scan of every group per row
     for ln, r in R:
         if r["type"].strip().upper() in INVOICE_TYPES and not has_po(r) and r.d("date") \
                 and _f(r["amount"]) <= L["director_limit"] and not po_exempt(r["vendor"], L):
             v = norm_name(r["vendor"])
-            who = next((k[1] for k in groups if k[0] == v and same_person(k[1], r["requested_by"])),
+            known = who_by_vendor.setdefault(v, [])
+            who = next((k for k in known if same_person(k, r["requested_by"])),
                        r["requested_by"].strip())      # "K. Lowe" and "Kate Lowe" are one requester
+            if who not in known:
+                known.append(who)
             groups.setdefault((v, who), []).append((ln, r))
     for items in groups.values():
         items.sort(key=lambda x: x[1].d("date"))
-        for i in range(len(items)):
-            win = [x for x in items[i:] if (x[1].d("date") - items[i][1].d("date")).days <= L["split_days"]]
-            total = sum(_f(x[1]["amount"]) for x in win)
-            if len(win) >= 2 and total > L["director_limit"]:
-                last = max(win, key=lambda x: x[0])
-                out.append(Hit("Approvals", "1.4", "Medium", round(total, 2),
-                               f"{len(win)} {last[1]['vendor']} invoices without a PO within {L['split_days']} days, "
-                               f"total ${total:,.2f} - possible split to avoid director approval", "approvals.csv", last[0],
-                               [("approvals.csv", x[0]) for x in win if x[0] != last[0]]))
-                break
+        days = [x[1].d("date") for x in items]
+        upto = [0, *accumulate(round(_f(x[1]["amount"]) * 100) for x in items)]     # in cents: exact
+        i = 0
+        while i < len(items):
+            # sorted by date, so the window is a slice and its total a difference of running totals: a long run of
+            # small bills stays linear, not quadratic
+            end = bisect_right(days, days[i] + timedelta(days=L["split_days"]))
+            win, total = items[i:end], (upto[end] - upto[i]) / 100
+            if len(win) < 2 or total <= L["director_limit"]:
+                i += 1
+                continue
+            last = max(win, key=lambda x: x[0])
+            out.append(Hit("Approvals", "1.4", "Medium", round(total, 2),
+                           f"{len(win)} {last[1]['vendor']} invoices without a PO within {L['split_days']} days, "
+                           f"total ${total:,.2f} - possible split to avoid director approval", "approvals.csv", last[0],
+                           [("approvals.csv", x[0]) for x in win if x[0] != last[0]]))
+            i = end                                    # a later split by the same person is its own finding
     return out
 
 
@@ -512,6 +570,9 @@ def cross_file(files: dict[str, list[str]]) -> list[Hit]:
     by_name: dict[str, list] = {}
     for _ln, r in VR:
         by_name.setdefault(norm_name(r["name"]), []).append(r["vendor_id"].strip().upper())
+    # the shorter forms of every vendor name ("calder", "calder logistics"), so a longer or shorter spelling is found
+    # with lookups, not a scan of the whole master for each payment
+    shorter = {" ".join(w[:i]) for k in by_name for w in [k.split()] for i in range(1, len(w))}
     out = []
     for ln, r in rows(P):
         vid = r.get("vendor_id", "").strip().upper()
@@ -519,7 +580,8 @@ def cross_file(files: dict[str, list[str]]) -> list[Hit]:
             n = norm_name(r["supplier"])
             same = by_name.get(n, [])
             vid = same[0] if len(same) == 1 else ""
-            near = same or [k for k in by_name if k and n and (n.startswith(k + " ") or k.startswith(n + " "))]
+            w = n.split()
+            near = same or (n and (n in shorter or any(" ".join(w[:i]) in by_name for i in range(1, len(w)))))
             if not near and n and _f(r["paid_amount"]) > 0:
                 # not even a longer or shorter form of a known name: money went to someone the master does not know
                 out.append(Hit("Payments", "4.1", "Low", _f(r["paid_amount"]),
@@ -608,14 +670,17 @@ def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
             lo = bisect_left(when[k + dk], d - timedelta(days=L["bank_days"]))
             hi = bisect_right(when[k + dk], d + timedelta(days=L["bank_days"]))
             best, best_key = None, None
-            for pd_, pl, p in bucket[lo:hi]:     # one pass; a reference match wins, then the nearest date
+            # one pass; a reference match wins, then the earliest open payment in the window. With the statement
+            # taken in date order this matches as many lines as can be matched: the nearest payment instead could be
+            # one that only the next bank line can reach (paid 1st and 10th, bank lines on the 6th and 12th)
+            for pd_, pl, p in bucket[lo:hi]:
                 if pl in used:
                     continue
                 pid, inv = p["payment_id"].strip().lower(), p["invoice_no"].strip().lower()
-                key = (not (pid and pid in ref), not (inv and inv in ref), abs((d - pd_).days), pl)
+                key = (not (pid and pid in ref), not (inv and inv in ref), pd_, pl)
                 if best_key is None or key < best_key:
                     best, best_key = pl, key
-                    if key[:3] == (False, False, 0):
+                    if key[:2] == (False, False):
                         break
             if best is not None:
                 used.add(best)
@@ -623,7 +688,9 @@ def reconcile(files: dict[str, list[str]], L: dict = LIMITS) -> list[Hit]:
         return False
     # every exact amount first, across the whole statement, then a few cents off: otherwise a batch transfer that
     # happens to be within cents of one supplier's payment takes it, and that supplier's own bank line is left over
-    todo = [(ln, r, amt) for ln, r, amt in lines_ if not (amt > 0 and NON_AP_BANK.search(r["description"] + " " + r["reference"]))]
+    todo = sorted(((ln, r, amt) for ln, r, amt in lines_
+                   if not (amt > 0 and NON_AP_BANK.search(r["description"] + " " + r["reference"]))),
+                  key=lambda x: (x[1].d("date"), x[0]))
     left = [x for x in todo if not match(*x, (0,))]
     near = [dk for dk in sorted(range(-BANK_CENTS, BANK_CENTS + 1), key=abs) if dk]
     unmatched = [(ln, r, amt) for ln, r, amt in left
@@ -851,7 +918,7 @@ def _under_receipt_limit(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
                                f"{last[1]['employee'].strip()} made {len(win)} claims without a receipt just under "
                                f"the ${lim:,.2f} receipt limit within 30 days", "expenses.csv", last[0],
                                [("expenses.csv", ln) for ln, _ in win if ln != last[0]]))
-                break
+                j = i + 1                              # a later run of such claims is its own finding
     return out
 
 

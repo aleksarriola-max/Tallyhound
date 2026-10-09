@@ -377,6 +377,9 @@ def save_if_changed() -> None:
 
 def reset() -> None:
     """Forget everything for this browser and start over."""
+    from . import auth
+    if not auth.can("policy"):      # checked here too, not only by disabling the button (see common.decide)
+        return
     S = st.session_state
     sid = S.get("sid")
     if sid:

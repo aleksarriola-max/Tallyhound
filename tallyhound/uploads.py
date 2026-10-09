@@ -18,20 +18,37 @@ STEMS = {"payments": "payments.csv", "approvals": "approvals.csv", "vendors": "v
          "bank_statement": "bank_statement.csv", "bank": "bank_statement.csv",
          "invoices": "invoices.txt"}
 MAX_LINE_CHARS = 4000
+MAX_ENTRIES = 1000       # files in one zip: a month of exports is a handful; 600,000 empty entries fit in 50 MB
 # a public copy (the hosted demo, ~1 GB of memory shared by every visitor) gets tighter limits than your own server
 MAX_UNZIPPED_MB = 20 if llm.public() else 100          # everything in one zip, once unpacked (stops "zip bombs")
 MAX_CELLS = 500_000 if llm.public() else 3_000_000     # cells read from one Excel workbook
+JAPANESE = re.compile(r"[\u3000-\u30ff\u4e00-\u9fff\uff00-\uffef]+")    # kana, kanji, full-width forms
 
 
 def decode(raw: bytes) -> str:
-    """Text of an uploaded file. UTF-8 (with or without BOM), UTF-16 from Excel's "Unicode text", else Windows-1252,
-    which is what Excel on Windows writes for 'Save as CSV'. Never fails: unknown bytes become U+FFFD."""
+    """Text of an uploaded file. UTF-8 (with or without BOM), UTF-16 from Excel's "Unicode text" (with or without
+    BOM), Japanese Shift-JIS, else Windows-1252, which is what Excel on Windows writes for 'Save as CSV'. Never fails:
+    unknown bytes become U+FFFD."""
     if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
         return raw.decode("utf-16", errors="replace")
+    head = raw[:4000]
+    for zeros, other, codec in ((head[1::2], head[0::2], "utf-16-le"), (head[0::2], head[1::2], "utf-16-be")):
+        if len(head) >= 8 and zeros.count(0) > 0.4 * len(zeros) and not other.count(0):
+            return raw.decode(codec, errors="replace")       # UTF-16 with no BOM: every other byte of the text is 0
     try:
         return raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        return raw.decode("cp1252", errors="replace")
+        pass
+    try:
+        # Excel on a Japanese Windows saves CSV as Shift-JIS. Taken only when every non-ASCII run reads as two or
+        # more Japanese characters: a Western file's lone accented letters never do.
+        text = raw.decode("cp932")
+        runs = re.findall(r"[^\x00-\x7f]+", text)
+        if runs and all(len(r) >= 2 and JAPANESE.fullmatch(r) for r in runs):
+            return text
+    except UnicodeDecodeError:
+        pass
+    return raw.decode("cp1252", errors="replace")
 
 
 def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
@@ -75,6 +92,9 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         return next((v for k, v in STEMS.items() if stem == k or stem.startswith(k + "_") or stem.endswith("_" + k)), None)
     # files named the Tallyhound way first: a file recognised from its columns never takes a properly named one's place
     infos = sorted(infos, key=lambda i: kind(i) is None)
+    if len(infos) > MAX_ENTRIES:
+        notes.append(f"Stopped at {MAX_ENTRIES} files in one zip; the other {len(infos) - MAX_ENTRIES} were skipped.")
+        infos = infos[:MAX_ENTRIES]
     for info in infos:
         base = info.filename.replace("\\", "/").rsplit("/", 1)[-1]
         if info.is_dir() or base.startswith(".") or "__MACOSX" in info.filename:
@@ -259,7 +279,7 @@ def bundle(uploads: list[tuple[str, bytes]]) -> tuple[bytes, list[str]]:
                 continue
             try:
                 inner = zipfile.ZipFile(io.BytesIO(raw))
-                for info in inner.infolist():
+                for info in inner.infolist()[:MAX_ENTRIES + 1]:       # parse_zip reports the ones over the limit
                     if info.is_dir():
                         continue
                     if info.flag_bits & 0x1:

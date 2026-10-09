@@ -36,7 +36,8 @@ def load_folder(folder: Path) -> tuple[dict[str, list[str]], list[str]]:
     from . import uploads
     zips = sorted(folder.glob("*.zip"), key=lambda p: p.stat().st_mtime)
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:     # compressed, as an upload would be: the zip limit is
+                                                                    # for what a person uploads, not this folder
         for p in folder.rglob("*"):
             if p.is_file() and REPORT_DIR not in p.parts and p.suffix.lower() in (".csv", ".txt", ".pdf", ".xlsx", ".tsv"):
                 z.write(p, p.relative_to(folder).as_posix())
@@ -91,9 +92,15 @@ def run(folder: Path, limits: dict | None = None) -> dict:
 
 def safe_cell(text: str) -> str:
     """Text from uploaded files that a spreadsheet would run as a formula ("=HYPERLINK(...)", "+cmd|...") gets a
-    leading apostrophe, so opening the CSV in Excel shows it as text."""
+    leading apostrophe, so opening the CSV in Excel shows it as text. A plain number such as -500.00 stays a number."""
     t = str(text)
-    return "'" + t if t[:1] in ("=", "+", "-", "@", "\t", "\r") else t
+    if t[:1] not in ("=", "+", "-", "@", "\t", "\r"):
+        return t
+    try:
+        float(t)
+        return t
+    except ValueError:
+        return "'" + t
 
 
 def write_report(folder: Path, res: dict, remember: bool = True) -> tuple[Path, list]:
@@ -103,13 +110,14 @@ def write_report(folder: Path, res: dict, remember: bool = True) -> tuple[Path, 
     before = set(json.loads(state_file.read_text(encoding="utf-8"))["fingerprints"]) if state_file.exists() else set()
     hits = res["hits"]
     new = [h for h in hits if fingerprint(h) not in before]
+    fresh = {fingerprint(h) for h in new}         # a set: "h in new" on a list is slow with thousands of findings
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
     with open(out / f"findings_{stamp}.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["new", "severity", "area", "clause", "amount", "title", "file", "line", "evidence"])
         for h in hits:
             lines = res["files"].get(h.source_file, [])
-            w.writerow(["yes" if h in new else "", h.severity, h.area, h.clause, f"{h.amount:.2f}", safe_cell(h.title),
+            w.writerow(["yes" if fingerprint(h) in fresh else "", h.severity, h.area, h.clause, f"{h.amount:.2f}", safe_cell(h.title),
                         h.source_file, h.line_number,
                         safe_cell(lines[h.line_number - 1] if 0 < h.line_number <= len(lines) else "")])
     g = res["gate"]
@@ -124,7 +132,7 @@ def write_report(folder: Path, res: dict, remember: bool = True) -> tuple[Path, 
     for sev in ("High", "Medium", "Low"):
         part = [h for h in hits if h.severity == sev]
         if part:
-            md += [f"## {sev} ({len(part)})", ""] + [f"- {'NEW ' if h in new else ''}[{h.clause}] {h.title} "
+            md += [f"## {sev} ({len(part)})", ""] + [f"- {'NEW ' if fingerprint(h) in fresh else ''}[{h.clause}] {h.title} "
                                                     f"({h.source_file} line {h.line_number})" for h in part] + [""]
     if not g.empty and len(held):
         md += ["## Payment run lines on HOLD", ""] + [f"- Line {r.line}: {r.supplier} {r.invoice} ${r.amount:,.2f} - {r.reason}"
@@ -174,7 +182,9 @@ def send_alert(text: str, errors: list[str] | None = None) -> list[str]:
     hook = os.environ.get("TALLYHOUND_SLACK_WEBHOOK")
     if hook:
         try:
-            req = urllib.request.Request(hook, data=json.dumps({"text": text}).encode(),
+            # Slack reads <!channel>, <@someone> and <http://x|label> in the text; titles quote uploaded files
+            slack = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            req = urllib.request.Request(hook, data=json.dumps({"text": slack}).encode(),
                                          headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=15).read()  # noqa: S310  (the operator's own webhook)
             done.append("Slack")

@@ -93,6 +93,16 @@ def gate_runs() -> dict:
             "Payment run 2026-10-08": (C.gate("payment_run_2026-10-08.csv"), False)}
 
 
+def release_csv(rel: pd.DataFrame) -> str:
+    """The lines to release, as CSV. Supplier and invoice come from the uploaded run, so text that a spreadsheet
+    would run as a formula is kept as text."""
+    from .headless import safe_cell
+    out = rel[["line", "supplier", "invoice", "amount"]].copy()
+    for col in ("line", "supplier", "invoice"):
+        out[col] = [safe_cell(v) for v in out[col]]
+    return out.to_csv(index=False)
+
+
 def payment_gate() -> None:
     S = st.session_state
     runs = gate_runs()
@@ -116,7 +126,7 @@ def payment_gate() -> None:
     h1.markdown(f"<span style='font-size:1.4rem;font-weight:700'>"
                 f"<span style='color:{C.HOLD}'>{len(hold)} HOLD {C.money(hold.amount.sum())}</span> · "
                 f"<span style='color:{C.RELEASE}'>{len(rel)} RELEASE</span></span>", unsafe_allow_html=True)
-    h3.download_button("Export release file", data=rel[["line", "supplier", "invoice", "amount"]].to_csv(index=False),
+    h3.download_button("Export release file", data=release_csv(rel),
                        file_name=f"release_{run.split()[-1]}.csv", mime="text/csv", **C.bw())
 
     show = pd.DataFrame({"Line": gdf.line.astype(str), "Decision": gdf.final, "Supplier": gdf.supplier,
@@ -142,7 +152,7 @@ def payment_gate() -> None:
     clicked = c2.button("Clear hold", disabled=not holdable or not clearable or bool(auth.review_block_reason()))
     if clicked and not reason.strip():
         st.warning("Write a reason first: every cleared hold needs one for the audit trail.")
-    elif clicked:
+    elif clicked and not auth.review_block_reason():       # checked again: see common.decide
         for l in holdable:
             row = gdf[gdf.line == l].iloc[0]
             S.cleared[l] = reason.strip()

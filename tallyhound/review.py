@@ -63,7 +63,9 @@ def _entity(r) -> str:
 
 
 def _reject(fid: str, reason: str, clause: str, source_file: str, who: str, ids: list[str] | None = None) -> None:
-    from . import learn
+    from . import auth, learn
+    if auth.review_block_reason():
+        return
     _decide_all(ids or [fid], "Rejected", reason)
     if st.session_state.get(f"supp_{fid}"):
         learn.suppress(clause, source_file, who, reason)

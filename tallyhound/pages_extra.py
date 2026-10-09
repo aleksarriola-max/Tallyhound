@@ -132,6 +132,9 @@ def _add_challenge() -> None:
 
 
 def _save_limits() -> None:
+    from . import auth
+    if not auth.can("policy"):      # checked here too, not only by disabling the button (see common.decide)
+        return
     S = st.session_state
     new = {k: float(S[f"lim_{k}"]) if k not in rules.DAY_LIMITS else int(S[f"lim_{k}"]) for k in rules.LIMIT_LABELS}
     S["po_exempt_words"] = [w.strip() for w in S.get("lim_exempt_words", "").split(",") if w.strip()]
@@ -143,6 +146,9 @@ def _save_limits() -> None:
 
 
 def _reset_limits() -> None:
+    from . import auth
+    if not auth.can("policy"):
+        return
     S = st.session_state
     S["limits"] = {}
     for k, v in rules.LIMITS.items():
@@ -189,6 +195,9 @@ def policy_limits() -> None:
 
 
 def _set_override(clause: str, value: str | None) -> None:
+    from . import auth
+    if not auth.can("policy"):
+        return
     S = st.session_state
     o = S.setdefault("rule_override", {})
     if value:
@@ -199,6 +208,9 @@ def _set_override(clause: str, value: str | None) -> None:
 
 
 def _promote(clause: str) -> None:
+    from . import auth
+    if not auth.can("policy"):
+        return
     S = st.session_state
     S["shadow"] = [c for c in S.get("shadow", []) if c != clause]
     C.log_action("Reviewer", "Shadow rule promoted", "", f"clause {clause}")
@@ -229,7 +241,11 @@ def rule_health_section() -> None:
                f"marked at least {triage.PROMOTE_MIN_MARKS} of them and {triage.PROMOTE_PRECISION:.0%} were real problems. "
                "Use it when you add or change a rule.")
     all_clauses = sorted({k.split("|")[0] for k in C.policy()}, key=lambda c: [int(x) for x in c.split(".")])
-    st.multiselect("Clauses in shadow mode", all_clauses, key="shadow", disabled=not auth.can("policy"))
+    if auth.can("policy"):
+        st.multiselect("Clauses in shadow mode", all_clauses, key="shadow")
+    else:       # not bound to the setting: Streamlit before 1.61 lets a modified browser change a disabled widget
+        st.multiselect("Clauses in shadow mode", all_clauses, default=[c for c in S.get("shadow", []) if c in all_clauses],
+                       disabled=True)
     for c in S.get("shadow", []):
         n, p = triage.shadow_precision(c)
         c1, c2 = st.columns([5, 1], vertical_alignment="center")
@@ -259,6 +275,9 @@ def learning_section() -> None:
 
 
 def _apply_hint(key: str, value: float) -> None:
+    from . import auth
+    if not auth.can("policy"):
+        return
     S = st.session_state
     S["limits"] = {**C.limits(), key: value}
     S[f"lim_{key}"] = value

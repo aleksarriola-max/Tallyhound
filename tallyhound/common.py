@@ -42,7 +42,9 @@ def esc(text) -> str:
     """Make text from files or models safe inside st.markdown: HTML is escaped (no tags or scripts from an upload),
     and markdown characters are backslash-escaped so '****1234' stays literal and '[x](url)' is not a link."""
     out = html.escape(str(text), quote=False).translate(_MD)
-    return out.replace("://", ":\\/\\/").replace("www.", "www\\.")     # no clickable links from bare addresses
+    # no clickable links from bare addresses: the page links any "http://" or "www." left once escapes are read, so
+    # an invisible zero-width space goes in between
+    return out.replace("://", ":\u200b//").replace("www.", "www\u200b.")
 
 
 def money(x: float) -> str:
@@ -385,6 +387,9 @@ def decision_counts(fdf: pd.DataFrame) -> dict:
 
 
 def decide(fid: str, status: str, reason: str = "") -> None:
+    from . import auth
+    if auth.review_block_reason():      # checked here too, not only by disabling the button: older Streamlit
+        return                          # versions accept a click on a disabled button sent by a modified browser
     st.session_state.setdefault("_pending_ops", []).append(["decide", st.session_state.get("dataset"), fid, status, reason])
     st.session_state.decisions[fid] = dict(status=status, reason=reason)
     log_action("Reviewer", status, fid, reason or "Approved by reviewer")
@@ -398,6 +403,9 @@ def save_note(fid: str) -> None:
 
 
 def undo(fid: str) -> None:
+    from . import auth
+    if auth.review_block_reason():
+        return
     st.session_state.setdefault("_pending_ops", []).append(["undo", st.session_state.get("dataset"), fid, "", ""])
     st.session_state.decisions.pop(fid, None)
     log_action("Reviewer", "Reset to pending", fid)
@@ -442,7 +450,7 @@ CSS = f"""
 .th-chip {{ display:inline-block; padding:.05rem .5rem; border-radius:4px; font-size:.8rem; font-weight:700;
   border:1px solid; white-space:nowrap; }}
 .th-muted {{ color:{MUTED}; font-size:.82rem; }}
-.th-src {{ background:#fff; border:1px solid {SKY}; border-radius:6px; padding:.4rem 0; font-family:ui-monospace,Menlo,Consolas,monospace;
+.th-src {{ background:#fff; color:{INK}; border:1px solid {SKY}; border-radius:6px; padding:.4rem 0; font-family:ui-monospace,Menlo,Consolas,monospace;
   font-size:.78rem; line-height:1.5; overflow-x:auto; }}
 .th-row {{ white-space:pre; padding:0 .6rem 0 0; }}
 .th-ln {{ display:inline-block; width:3rem; text-align:right; padding-right:.8rem; color:{MUTED}; user-select:none; }}
@@ -461,6 +469,9 @@ div[data-testid="stMetricValue"] {{ color:{TEAL_DARK}; }}
 button[data-testid="stBaseButton-primary"] {{ background:{TEAL_DARK}; border-color:{TEAL_DARK}; color:#fff; }}
 button[data-testid="stBaseButton-primary"]:hover {{ background:#0f5a78; border-color:#0f5a78; color:#fff; }}
 section[data-testid="stSidebar"] :focus-visible {{ outline:2px solid {SKY} !important; outline-offset:2px; }}
+section[data-testid="stMain"]:focus-visible, section[data-testid="stMain"] button:focus-visible,
+section[data-testid="stMain"] [role="tab"]:focus-visible, section[data-testid="stMain"] summary:focus-visible {{
+  outline:2px solid {TEAL_DARK} !important; outline-offset:2px; }}
 section[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) p {{ color:{SKY}; font-weight:700;
   text-decoration:underline; text-underline-offset:3px; }}
 @media (max-width: 1150px) {{

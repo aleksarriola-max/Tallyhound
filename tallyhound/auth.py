@@ -76,25 +76,29 @@ def locked_for(name: str) -> int:
     return max(0, int(left + 0.999))
 
 
-def _record(name: str, ok: bool) -> None:
+def _take(name: str) -> bool:
+    """Count one try for this name, as wrong until it proves right; False when the name is locked. Checking the lock
+    and counting happen together, so many tries sent at once cannot all slip in before the lock."""
     with _lock:
-        if ok:
-            _fails.pop(name.lower(), None)
-        else:
-            n, last = _fails.get(name.lower(), [0, 0.0])
-            if n >= MAX_FAILS and time.time() - last >= LOCK_SECONDS:
-                n = 0                                 # the lock expired: start counting again
-            _fails[name.lower()] = [n + 1, time.time()]
-            if len(_fails) > 10_000:                  # made-up names must not grow this without limit
-                for k in sorted(_fails, key=lambda k: _fails[k][1])[:5_000]:
-                    _fails.pop(k, None)
+        n, last = _fails.get(name.lower(), [0, 0.0])
+        if n >= MAX_FAILS:
+            if time.time() - last < LOCK_SECONDS:
+                return False
+            n = 0                                     # the lock expired: start counting again
+        _fails[name.lower()] = [n + 1, time.time()]
+        if len(_fails) > 10_000:                      # made-up names must not grow this without limit
+            for k in sorted(_fails, key=lambda k: _fails[k][1])[:5_000]:
+                _fails.pop(k, None)
+    return True
 
 
 def check(name: str, password: str) -> str | None:
-    if locked_for(name):
+    if not _take(name):
         return None
     r = _check(name, password)
-    _record(name, r is not None)
+    if r is not None:
+        with _lock:
+            _fails.pop(name.lower(), None)
     return r
 
 

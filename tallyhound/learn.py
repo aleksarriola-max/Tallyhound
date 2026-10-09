@@ -40,7 +40,10 @@ def suppress(clause: str, source_file: str, who: str, reason: str) -> None:
 
 
 def unsuppress(i: int) -> None:
+    from . import auth
     from . import common as C
+    if not auth.can("policy"):      # checked here too, not only by disabling the button (see common.decide)
+        return
     S = st.session_state
     if 0 <= i < len(S.get("suppressions", [])):
         x = S.suppressions.pop(i)
