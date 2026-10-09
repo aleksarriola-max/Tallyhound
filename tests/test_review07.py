@@ -434,3 +434,35 @@ def test_control_characters_do_not_break_the_workbook():
     custom.finalize("m", job)
     assert exports.build_workbook(True) and exports.build_workbook(False)
     st.session_state.clear()
+
+
+# ---- AI engines against a model server that answers nonsense
+def test_odd_model_replies_become_plain_errors():
+    import json as _json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import pytest
+
+    from tallyhound import llm
+    replies = {"/a": b"[1, 2, 3]", "/b": _json.dumps({"message": {"content": None}}).encode(),
+               "/c": _json.dumps({"message": "text"}).encode()}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = replies[self.server.prefix]
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+    for prefix in replies:
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        srv.prefix = prefix
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        with pytest.raises(llm.LLMError) as e:
+            llm.chat_json("s", "u", {}, url=f"http://127.0.0.1:{srv.server_port}", timeout=5)
+        assert "Error" not in str(e.value) and "object" not in str(e.value)
+        srv.shutdown()

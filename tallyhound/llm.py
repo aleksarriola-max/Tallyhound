@@ -82,7 +82,10 @@ def _call(url: str, path: str, payload: dict | None, timeout: float) -> dict:
             raw = r.read(MAX_REPLY + 1)
         if len(raw) > MAX_REPLY:
             raise LLMError("The model server sent back far too much data.")
-        return json.loads(raw.decode("utf-8"))
+        out = json.loads(raw.decode("utf-8"))
+        if not isinstance(out, dict):
+            raise LLMError("The model server's reply was not in the expected shape. Is the address a model server?")
+        return out
     except urllib.error.HTTPError as e:
         if 300 <= e.code < 400:
             raise LLMError("The model server tried to redirect; use its final address.") from e
@@ -124,8 +127,11 @@ def chat_json(system: str, user: str, schema: dict, model: str = DEFAULT_MODEL, 
                "options": {"temperature": 0, "num_ctx": num_ctx},
                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     out = _call(url, "/api/chat", payload, timeout)
-    text = (out.get("message") or {}).get("content", "")
+    msg = out.get("message")
+    text = msg.get("content") if isinstance(msg, dict) else None
     try:
+        if not isinstance(text, str):
+            raise ValueError("no text")
         return json.loads(text)
     except ValueError as e:
         raise LLMError("The model's answer was not valid JSON. Try again or use a larger model.") from e

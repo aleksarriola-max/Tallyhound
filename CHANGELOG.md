@@ -46,6 +46,20 @@ instead of crashing the upload; a plain file whose first row is all text keeps i
 in a cell no longer break the workbook download; placeholder dates such as 0001-01-01 or 9999-12-31 are read as no
 date instead of crashing the bank check.
 
+**Found by mutation testing** (changing a limit or comparison in the code and checking a test fails): the edges of
+every limit and window - the PO and director limits, the $1 tolerance, the split-order, new-vendor, receipt and
+near-duplicate windows, head counts, the import-date and header rules - are now pinned by tests
+(`tests/test_boundaries.py`), so a rule cannot drift by a cent or a day unnoticed.
+
+**Checked and fine**: work saved by 0.6.1 opens in 0.7.0 with decisions, uploads and a sealed trail intact; three
+reviewers clicking the same findings in the same second lose nothing and keep one valid trail (the first decision on
+a finding wins); the AI engines treat a misbehaving model server (wrong shapes, empty or huge replies, invented
+quotes and line numbers, unknown tools) as a failed agent with a plain message, and never keep an invented quote.
+
+**Known limit**: on a 2-CPU test machine, 6 visitors using the public demo at once worked smoothly (pages 1-4 s,
+the demo run about 70 s); with 10 at once, the simulated demo run often froze on screen until the page was reloaded,
+although the server had moved on. Uploaded-data runs were not affected. A busy public copy needs more CPU.
+
 **Bank reconciliation**: exact amounts are matched across the whole statement before amounts a few cents off, so a
 batch transfer within cents of one supplier's payment no longer takes it (the one trap the rules still flagged, in 1
 of 180 generated months). Rules now flag 0 of 4,680 traps.
