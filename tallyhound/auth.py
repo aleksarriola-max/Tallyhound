@@ -181,3 +181,4 @@ def forget_work() -> None:
 
 def sign_out() -> None:
     forget_work()                    # the next person on this computer starts from the sign-in form, with nothing shown
+    st.session_state["nav"] = "Home"  # ... and on Home, not on the page the last person had open

@@ -181,7 +181,8 @@ def recent_runs() -> None:
     extra = pd.DataFrame(S.recent_extra, columns=base.columns) if S.recent_extra else base.iloc[0:0]
     df = pd.concat([extra, base], ignore_index=True).astype(str)
     ev = st.dataframe(df, hide_index=True, on_select="rerun", selection_mode="single-row", key="recent_tbl", **C.dfw())
-    rows = ev.selection.rows if ev and ev.selection else []
+    sel = getattr(ev, "selection", None)            # the DataframeState type gained .selection after 1.55
+    rows = sel.rows if sel else []
     pick = df.iloc[rows[0]] if rows else None
     target = "Review"
     if pick is not None:

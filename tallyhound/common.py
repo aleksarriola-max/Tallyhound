@@ -231,11 +231,14 @@ def subscriptions() -> pd.DataFrame:
 
 
 # ---- audit trail ----
-def base_trail(fdf: pd.DataFrame) -> pd.DataFrame:
+def base_trail(fdf: pd.DataFrame, run: dict | None = None) -> pd.DataFrame:
+    """The agents' part of the trail: each proposal and Skeptic verdict. For the
+    sample company these are the times of its recorded run (events.csv); for uploaded data, the run's own."""
     rows = []
+    when = (run or {}).get("time", "")           # who ran it is a sealed entry of its own, in the reviewers' part
     for r in fdf.itertuples():
-        rows.append(dict(time="14:2x", actor=f"{r.area} agent", action="Proposed", finding=r.id, detail=r.title))
-        rows.append(dict(time="14:32", actor="Skeptic", action=f"Verdict: {r.skeptic_verdict}", finding=r.id,
+        rows.append(dict(time=when or "14:2x", actor=f"{r.area} agent", action="Proposed", finding=r.id, detail=r.title))
+        rows.append(dict(time=when or "14:32", actor="Skeptic", action=f"Verdict: {r.skeptic_verdict}", finding=r.id,
                          detail=r.skeptic_reason))
     return pd.DataFrame(rows)
 
@@ -354,7 +357,10 @@ def decisions_mismatch(log: list[dict], decisions: dict) -> list[str]:
 
 def full_trail(fdf: pd.DataFrame) -> pd.DataFrame:
     human = pd.DataFrame(st.session_state.audit_log, columns=["time", "actor", "action", "finding", "detail", "prev", "hash"])
-    return pd.concat([base_trail(fdf), human], ignore_index=True)
+    label = custom_label()
+    run = next((h for h in reversed(st.session_state.get("run_history", [])) if h.get("label") == label), None) \
+        if label else None
+    return pd.concat([base_trail(fdf, run), human], ignore_index=True)
 
 
 # ---- decisions ----

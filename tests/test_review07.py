@@ -350,3 +350,37 @@ def test_a_batch_within_cents_of_one_payment_does_not_take_it():
     sc = score.score([dict(source_file=h.source_file, line_number=h.line_number,
                            related_lines=[ln for _, ln in h.related]) for h in hits], k)
     assert sc["traps_flagged"] == 0 and sc["false_alarms"] == 0
+
+
+# ---- end-to-end browser test findings
+def test_a_newer_run_started_here_is_not_replaced_by_a_finished_saved_one(monkeypatch):
+    import streamlit as st
+
+    from tallyhound import sim, store
+    st.session_state.clear()
+    st.session_state["_tab"], st.session_state["sid"] = "mine", "ab" * 16
+    st.session_state.sim = dict(queue=[], running=True, log=[], tab="mine", beat=time.time(), created=200.0)
+    old = dict(queue=[], running=False, log=[], tab="other", beat=1.0, created=100.0)
+    monkeypatch.setattr(store, "read_sim", lambda sid: old)
+    assert sim._follow() is None and st.session_state.sim["created"] == 200.0      # this tab drives its own run
+    st.session_state.sim = dict(queue=[], running=True, log=[], tab="mine", beat=time.time(), created=50.0)
+    assert sim._follow() is not None and st.session_state.sim["tab"] == "other"     # an older copy follows the saved
+    st.session_state.clear()
+
+
+def test_the_trail_names_who_ran_it_with_the_run_time():
+    import streamlit as st
+
+    from tallyhound import common as C
+    from tallyhound import custom
+    st.session_state.clear()
+    C.init_state()
+    st.session_state.user = "prep"
+    files, _ = challenge.generate(2, "easy")
+    st.session_state.uploads = {"m": files}
+    job = custom.Job("m", files, "rules", "", "", C.policy(), [], started_by="prep")
+    job.thread.join(30)
+    custom.finalize("m", job)
+    trail = C.full_trail(C.findings())
+    assert "Person (prep)" in set(trail.actor) and "14:2x" not in set(trail.time)
+    st.session_state.clear()

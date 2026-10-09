@@ -30,6 +30,7 @@ def _start(choice: str) -> None:
         sel = _demo_selection()
     else:
         sel = {"audit": [choice]}
+    S.pop("_draft", None)                      # what is run is kept
     skip = frozenset(a for a in run_analysis.AGENT_KEYS if not S.get(f"adv_{a}", True))
     sim.start(sim.build_queue(sel, skip))
 
@@ -43,7 +44,17 @@ def run_dialog() -> None:
     st.caption("A zip, or the files themselves: CSV or Excel exports of payments, approvals, vendors, expenses, a "
                "bank statement or a payment run (QuickBooks, Xero and other report exports are tidied and recognised "
                "from their columns), contracts.txt and invoice PDFs. Read in memory, never written to disk.")
+    before = set(S.get("uploads", {}))
     label = run_analysis.add_zip(ups) if ups else None
+    # adding or removing files one at a time makes a new dataset each time; keep only the latest pick that was
+    # never run, so the intermediate selections do not pile up under Settings > Data
+    draft = S.get("_draft")
+    if label and draft and draft != label and draft in S.get("uploads", {}) and draft not in S.get("custom", {}) \
+            and label not in before:
+        _remove_upload(draft)
+        S.pop("_draft", None)
+    if label and label not in before:
+        S["_draft"] = label
     options = [SAMPLE, *S.get("uploads", {})]
     ids = "|".join(str(u.file_id) for u in ups or [])
     if label and S.get("_last_upload") != ids:            # a new upload: select it
@@ -91,8 +102,8 @@ def _queue_counts() -> tuple[int, int]:
 
 def _holds() -> tuple[int, float]:
     name, (gdf, clearable) = next(iter(pages.gate_runs().items()))
-    if gdf.empty:
-        return 0, 0.0
+    if gdf.empty or (C.custom_label() and not name.startswith("Uploaded")):
+        return 0, 0.0                            # uploaded data without a payment run has nothing on hold
     t = C.gate_totals(gdf, st.session_state.cleared if clearable else None)    # the same numbers as everywhere else
     return t["hold_n"], t["hold_amt"]
 
@@ -107,9 +118,12 @@ def home() -> None:
     if btn.button("Check new files", type="primary", disabled=running, key="open_run", **C.bw()):
         run_dialog()
 
-    if run and (running or any(i["status"] == "Failed" for i in run["queue"])):
+    failed = bool(run and any(i["status"] == "Failed" for i in run["queue"]))
+    unseen = bool(run and run["queue"] and not running and not failed and S.get("_run_seen") != _run_key(run))
+    if run and (running or failed or unseen):
         with st.container(border=True):
-            st.markdown("**Run in progress**" if running else "**Run stopped - an agent failed**")
+            st.markdown("**Run in progress**" if running else "**Run stopped - an agent failed**" if failed
+                        else "**Run finished**")
             st.fragment(run_every=1 if running else None)(_run_status)()
 
     cases, n = _queue_counts()
@@ -122,7 +136,10 @@ def home() -> None:
     if not label and not run:
         st.caption("These are the sample company's results from its last run. Press Check new files to watch a run "
                    "happen, or to upload your own files.")
-    m[1].metric("Payments on hold", holds, help=f"{C.money(held_amt)} held in the payment run")
+    no_run = bool(label) and "payment_run.csv" not in S.get("uploads", {}).get(label, {})
+    m[1].metric("Payments on hold", "-" if no_run else holds,
+                help="This upload has no payment_run.csv to check." if no_run else
+                f"{C.money(held_amt)} held in the payment run")
     m[2].metric("Data to confirm", len(warns), help="Things the data check could not decide on its own")
     if cases:
         st.markdown("**Top of the queue**")
@@ -142,6 +159,17 @@ def home() -> None:
         run_analysis.recent_runs()
 
 
+def _run_key(run: dict) -> str:
+    return str(run["queue"][-1].get("run_id") or run.get("created") or "")
+
+
+def _review_results() -> None:
+    S = st.session_state
+    if S.get("sim"):
+        S["_run_seen"] = _run_key(S.sim)
+    C.goto("Review")
+
+
 def _run_status() -> None:
     S = st.session_state
     if sim.tick():
@@ -158,10 +186,14 @@ def _run_status() -> None:
         bad = next((a for a in it["agents"] if a["status"] == "Failed"), None)
         if bad:
             st.error(f"The {bad['name']} agent failed.")
-            st.button("Retry", key=f"home_retry_{it['label']}", on_click=sim.retry, type="primary")
+            if st.button("Retry", key=f"home_retry_{it['label']}", type="primary"):
+                sim.retry()
+                st.rerun(scope="app")            # this box only refreshes itself while a run is going: restart it
     if not sm["running"] and all(i["status"] == "Done" for i in sm["queue"]):
         st.success("Run finished.")
-        st.button("Review the results", on_click=C.goto, args=("Review",), key="home_done_review", type="primary")
+        if st.button("Review the results", key="home_done_review", type="primary"):
+            _review_results()
+            st.rerun(scope="app")                # this box redraws on its own; changing page needs the whole page
     with st.expander("Agents and log", expanded=False):
         run_analysis.agents_body()
 
@@ -337,6 +369,9 @@ def findings_tab() -> None:
 
 
 def review_page() -> None:
+    S = st.session_state
+    if S.get("sim") and not S.sim.get("running") and S.sim.get("queue"):
+        S["_run_seen"] = _run_key(S.sim)        # the finished run has been looked at: Home stops announcing it
     tabs = st.tabs(["Findings", "Payment run", "Download"])
     with tabs[0]:
         findings_tab()

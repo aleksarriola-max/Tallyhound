@@ -58,7 +58,7 @@ def test_a_reset_is_not_undone_by_another_open_tab(team):
     a.button(key="appr_F-11").click().run()
     admin.run()
     admin.button(key="reset_demo").click().run()
-    assert store._read(store.TEAM) is None
+    assert not json.loads(store._read(store.TEAM) or "{}").get("decisions")   # wiped (the admin stays signed in)
     a.button(key="appr_F-16").click().run()              # rita's tab still holds the old work
     a.run()
     saved = _saved()

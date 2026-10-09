@@ -52,8 +52,38 @@ def fingerprint(h) -> str:
     return hashlib.sha256(f"{h.clause}|{h.source_file}|{h.title}".encode()).hexdigest()[:16]
 
 
+def match_columns(files: dict[str, list[str]], notes: list[str]) -> dict[str, list[str]]:
+    """No person is there to match columns in a scheduled run. A file whose every missing column has a confident
+    suggestion is read with that matching, and the report says so; any other file missing columns is reported as
+    NOT checked. Only the header line is renamed, as in the app."""
+    import csv
+    import io
+
+    from . import columns
+    notes[:] = [n for n in notes if "press Save column matching" not in n and "Match its columns below" not in n]
+    out = dict(files)
+    for name, lines in files.items():
+        missing = rules.missing_columns(name, lines)
+        if not missing:
+            continue
+        head = next(csv.reader([lines[0]]))
+        guess = columns.suggest(missing, head)
+        if len(guess) < len(missing):
+            notes.append(f"{name} is missing columns: {', '.join(c for c in missing if c not in guess)} - it was not "
+                         "checked. Rename those columns, or match them once in the app.")
+            continue
+        back = {src: dst for dst, src in guess.items()}
+        buf = io.StringIO()
+        csv.writer(buf, lineterminator="").writerow([back.get(h, h) for h in head])
+        out[name] = [buf.getvalue()] + lines[1:]
+        notes.append(f"{name}: columns matched automatically - " + ", ".join(f"{src} as {dst}" for dst, src in guess.items())
+                     + ". Check this matching; if it is wrong, rename the columns.")
+    return out
+
+
 def run(folder: Path, limits: dict | None = None) -> dict:
     files, notes = load_folder(folder)
+    files = match_columns(files, notes)
     hits = rules.analyze(files, limits)
     g = gate.evaluate(files)
     return dict(files=files, notes=notes, hits=hits, gate=g)

@@ -34,6 +34,9 @@ ignore = ["B008", "B905"]
 python_version = "3.10"
 ignore_missing_imports = true
 files = ["tallyhound"]
+# Run it inside the project's environment (pip install -r requirements-dev.txt), so Streamlit's, Altair's and
+# pypdf's own types are checked. pandas is left untyped on purpose: pandas-stubs types every cell as a union of a
+# dozen scalar types, which would mean a cast on almost every line that reads a DataFrame.
 
 [tool.coverage.run]
 source = ["tallyhound"]

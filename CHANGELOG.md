@@ -49,7 +49,23 @@ of 180 generated months). Rules now flag 0 of 4,680 traps.
 
 **Accessibility**: the Patterns chart's bars and axis text meet WCAG AA contrast.
 
-**Code health**: type checking with mypy (no errors), a coverage report with an 85% floor in CI (about 90%), upload
+**Found by clicking through the whole app in a browser** (default, sign-in and public mode, and a phone-sized screen):
+- A run started after another tab's run had finished could be thrown away; in a team workspace nobody could start a
+  second run until a reset. The newest run now always goes ahead.
+- Retry on Home, and "Review the results", now work straight away (they waited for the page to be redrawn).
+- Home says when a run has finished until its results have been opened.
+- Adding and removing files one at a time no longer leaves a dataset for every intermediate pick.
+- With uploaded data in review, the sample's payment run is view-only and Home shows no holds for an upload without
+  a payment run - holds can no longer be cleared against the wrong data.
+- Every run is a sealed audit-trail entry naming the person who started it, with the run's real time; Trends shows
+  who ran each run.
+- Latest events are newest first; the challenge message counts problems and traps apart; signing out returns to
+  Home; Reset demo keeps the admin signed in.
+- The folder watcher matches columns the way the app suggests (and says so in its report) instead of skipping
+  files with other column names, and reports any file it could not check.
+
+**Code health**: type checking with mypy (no errors, run inside the project's environment so Streamlit's and
+Altair's own types are checked; pandas is left untyped), a coverage report with an 85% floor in CI (about 90%), upload
 reading moved into `uploads.py`, and `scripts/screenshots.py` to re-make the screenshots and the demo GIF.
 
 ## 0.6.1 - 2026-10-06

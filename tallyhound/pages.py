@@ -60,8 +60,8 @@ def overview() -> None:
         st.altair_chart(chart, **C.dfw())
     with right:
         st.subheader("Latest events")
-        ev = pd.concat([pd.DataFrame(st.session_state.sim["log"] if st.session_state.sim else []),
-                        C.read_csv("events.csv")], ignore_index=True)
+        ev = pd.concat([pd.DataFrame((st.session_state.sim["log"] if st.session_state.sim else [])[::-1]),
+                        C.read_csv("events.csv")], ignore_index=True)        # newest first, like events.csv
         st.dataframe(ev.head(8), hide_index=True, column_config=EVENT_CFG, **C.dfw())
 
 
@@ -87,7 +87,9 @@ def gate_runs() -> dict:
     label = C.custom_label()
     if label and "payment_run.csv" in st.session_state.uploads.get(label, {}):
         return {f"Uploaded run ({label})": (gate.evaluate(custom.view(label)), True)}
-    return {"Payment run 2026-10-01": (C.gate(GATE_FILE), True),
+    # with uploaded data in review, the sample's runs are shown to look at only: cleared holds belong to the data in
+    # review, and the sample's must not be cleared (again) against someone's upload
+    return {"Payment run 2026-10-01": (C.gate(GATE_FILE), not label),
             "Payment run 2026-10-08": (C.gate("payment_run_2026-10-08.csv"), False)}
 
 
@@ -128,7 +130,8 @@ def payment_gate() -> None:
                       key=f"gate_tbl_{run}", height=min(560, 36 * (len(show) + 1) + 4), column_config=cfg, **C.dfw())
     st.caption("Checks: " + " · ".join(f"{i + 1} {c}" for i, c in enumerate(gate.CHECKS)))
 
-    rows = ev.selection.rows if ev and ev.selection else []
+    sel = getattr(ev, "selection", None)            # the DataframeState type gained .selection after 1.55
+    rows = sel.rows if sel else []
     sel_lines = [str(show.iloc[r].Line) for r in rows]
     holdable = [l for l in sel_lines if gdf[gdf.line == l].final.iloc[0] == "HOLD"]
     c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
@@ -148,7 +151,8 @@ def payment_gate() -> None:
                          f"Reason: {reason.strip()}")
         st.rerun()
     st.caption("Select HOLD lines in the table, give a reason, then clear the hold. Agents never release a payment." +
-               ("" if clearable else " Clearing is only enabled for run 2026-10-01 in this demo."))
+               ("" if clearable else " Holds on the sample's runs are cleared with the sample company in review."
+                if C.custom_label() else " Clearing is only enabled for run 2026-10-01 in this demo."))
 
 
 # --------------------------------------------------------------------------

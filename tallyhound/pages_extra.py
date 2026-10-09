@@ -1,6 +1,8 @@
 """Scorecard (how good is each engine?), Settings > Policy and Rules, and Reports > Trends and vendor risk."""
 from __future__ import annotations
 
+from typing import Any
+
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -45,7 +47,7 @@ def scorecard_page() -> None:
     cur = S.get("dataset")
     if S.get("sc_pick") not in with_key:
         S["sc_pick"] = cur if cur in with_key else SAMPLE
-    pick = st.selectbox("Data with an answer key", with_key, key="sc_pick")
+    pick = st.selectbox("Data with an answer key", with_key, key="sc_pick") or SAMPLE
     if cur and cur not in with_key:
         st.info(f"\"{C.esc(cur)}\" (the data in review) has no answer key, so it cannot be graded here. Grading needs "
                 "planted problems: make a challenge below, or add an answer_key.csv to your zip.")
@@ -111,9 +113,10 @@ def scorecard_page() -> None:
         S["challenge"] = dict(label=f"challenge-{diff}-{seed}", files=files_c, key=key_c, pdfs=pdfs_c)
     ch = S.get("challenge")
     if ch:
-        n = len(ch["key"])
+        n = sum(k.get("expect") != "trap" for k in ch["key"])
+        traps = len(ch["key"]) - n
         st.success(f"{ch['label']}: {sum(len(v) - 1 for k, v in ch['files'].items() if k.endswith('.csv'))} rows "
-                   f"with {n} planted problems.")
+                   f"with {n} planted problems and {traps} traps (legitimate look-alikes that must not be flagged).")
         d1, d2, _ = st.columns([2, 2, 3])
         d1.download_button("Download zip (with answer key)", challenge.to_zip(ch["files"], ch["key"], ch.get("pdfs")),
                            file_name=f"{ch['label']}.zip", mime="application/zip", **C.bw())
@@ -294,8 +297,8 @@ def trends_page() -> None:
         st.info("No finished runs on uploaded data yet. Each run on your own files (or a challenge) adds a point here, "
                 "so month-on-month changes show up.")
     else:
-        rows = [dict(Run=f"{h['label']} · {h['time']}", Area=p.get("area", "?"), Severity=p.get("severity", "?"))
-                for h in hist for p in h["proposed"]]
+        rows = [dict(Run=f"{n}. {h['label']} · {h['time']}", Area=p.get("area", "?"), Severity=p.get("severity", "?"))
+                for n, h in enumerate(hist, start=1) for p in h["proposed"]]      # numbered: two runs never merge
         if rows:
             d = pd.DataFrame(rows)
             chart = (alt.Chart(d).mark_bar().encode(
@@ -304,7 +307,8 @@ def trends_page() -> None:
                 color=alt.Color("Area:N", legend=alt.Legend(orient="top", title=None)),
                 tooltip=["Run", "Area", "count()"]).properties(height=280))
             st.altair_chart(chart, **C.dfw())
-        st.dataframe(pd.DataFrame([dict(Run=h["label"], When=h["time"], Engine=ENGINE_NAMES.get(h["engine"], h["engine"]),
+        st.dataframe(pd.DataFrame([dict(Run=h["label"], When=h["time"], By=h.get("user") or "-",
+                                        Engine=ENGINE_NAMES.get(h["engine"], h["engine"]),
                                         Findings=len(h["proposed"]),
                                         High=sum(p.get("severity") == "High" for p in h["proposed"]),
                                         Flagged=C.money(sum(p.get("amount", 0) for p in h["proposed"])))
@@ -318,7 +322,7 @@ def trends_page() -> None:
 
 
 BAR = "#00899c"           # 3.9:1 on the page and 4.4:1 under the dark ticks (WCAG 1.4.11 needs 3:1)
-AXIS = dict(labelColor=C.MUTED, titleColor=C.MUTED, labelFontSize=12)    # 5.4:1, not Streamlit's paler default
+AXIS: dict[str, Any] = dict(labelColor=C.MUTED, titleColor=C.MUTED, labelFontSize=12)    # 5.4:1, not Streamlit's paler default
 
 
 def _pattern_files() -> tuple[str, dict[str, list[str]]]:

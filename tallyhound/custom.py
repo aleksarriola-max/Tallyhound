@@ -310,9 +310,14 @@ def finalize(label: str, job: Job) -> None:
     old_log = S.audit_log if S.get("dataset") == label else store.get(label, {}).get("audit_log", [])
     store[label] = dict(decisions={}, audit_log=old_log, cleared={}, notes={})
     activate(label, force_load=True)
-    if S.audit_log:
-        C.log_action("Orchestrator", C.NEW_RUN, "-", f"{len(recs)} findings from {job.engine}; earlier decisions on "
-                     "this data no longer apply")
+    starter = getattr(job, "started_by", "") or ""
+    who = f"Person ({starter})" if starter else "Person"
+    engine = job.engine + (f" {job.model}" if job.engine != "rules" and job.model else "")
+    if S.audit_log:                              # a re-run: sealed in the trail where it happened
+        C.log_action(who, C.NEW_RUN, "-", f"Ran the checks again: {len(recs)} findings from {engine}; earlier "
+                     "decisions on this data no longer apply")
+    else:
+        C.log_action(who, "Ran the checks", "-", f"{len(recs)} findings from {engine}")
 
 
 # ---------------------------------------------------------------- which data is in review

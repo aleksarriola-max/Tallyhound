@@ -157,7 +157,8 @@ def test_rerunning_a_dataset_keeps_its_trail():
         custom.finalize("m", job)
         C.decide(st.session_state.custom["m"][0]["id"], "Approved")
     log = st.session_state.audit_log
-    assert [e["action"] for e in log] == ["Approved", C.NEW_RUN, "Approved"]
+    assert [e["action"] for e in log] == ["Ran the checks", "Approved", C.NEW_RUN, "Approved"]
+    assert log[0]["actor"].startswith("Person") and "findings from rules" in log[0]["detail"]
     assert C.verify_trail(log) == (True, None) and not C.decisions_mismatch(log, st.session_state.decisions)
 
 

@@ -7,3 +7,8 @@ __pycache__
 .tallyhound_state
 tests
 docs/*.png
+.mypy_cache
+.ruff_cache
+.coverage
+docs/*.gif
+benchmark-results

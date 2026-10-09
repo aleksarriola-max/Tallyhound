@@ -42,7 +42,8 @@ def pdf_lines(data: bytes, max_pages: int = 5) -> list[str] | None:
     from pypdf import PdfReader
     try:
         reader = PdfReader(io.BytesIO(data))
-        count = reader.trailer["/Root"]["/Pages"].get("/Count", 0)   # read the claim before walking the page tree
+        trailer: Any = reader.trailer
+        count = trailer["/Root"]["/Pages"].get("/Count", 0)   # read the claim before walking the page tree
         if not isinstance(count, int) or count < 1 or count > MAX_PDF_PAGES:
             return None                                       # refused: not an invoice-sized PDF
         text = "\n".join((reader.pages[i].extract_text() or "")[:20000] for i in range(min(max_pages, count)))

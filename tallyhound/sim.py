@@ -27,7 +27,7 @@ def new_item(label: str, workflow: str, option: str, skip: frozenset = frozenset
     extra = {}
     if workflow == "audit" and custom.uploaded(option):
         extra = dict(custom=option, engine={"Ollama agents": "ollama", "Built-in rules + Ollama Skeptic": "rules+skeptic",
-                            "Ollama agents with tools": "ollama-tools"}.get(S.get("adv_engine"), "rules"),
+                            "Ollama agents with tools": "ollama-tools"}.get(str(S.get("adv_engine")), "rules"),
                      model=S.get("adv_model") or llm.DEFAULT_MODEL, url=S.get("adv_url") or llm.DEFAULT_URL)
     import secrets
     from . import auth
@@ -59,7 +59,7 @@ def tab_id() -> str:
 
 def start(queue: list[dict]) -> None:
     S = st.session_state
-    S.sim = dict(queue=queue, running=True, log=[], tab=tab_id(), beat=time.time())
+    S.sim = dict(queue=queue, running=True, log=[], tab=tab_id(), beat=time.time(), created=time.time())
     log("Orchestrator", f"Queue created with {len(queue)} item(s)")
 
 
@@ -106,6 +106,8 @@ def _follow() -> bool | None:
     owner = latest.get("tab")
     if owner in (None, mine):
         return None
+    if S.sim.get("tab") == mine and float(S.sim.get("created") or 0) > float(latest.get("created") or 0):
+        return None                             # this tab started a newer run than the one saved: it drives
     if latest.get("running") and time.time() - float(latest.get("beat") or 0) > BEAT_SECONDS:
         latest["tab"] = mine                    # the driver went quiet: take over
         S.sim = latest

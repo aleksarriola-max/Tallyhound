@@ -384,7 +384,8 @@ def reset() -> None:
             _delete(sid)
         except (OSError, sqlite3.Error):
             pass
+    keep = ("nav", "user", "role", "_tab")      # resetting the work does not sign the admin out
     for k in list(S.keys()):
-        if k not in ("nav",):
+        if k not in keep:
             del S[k]
     S["nav"] = "Home"
