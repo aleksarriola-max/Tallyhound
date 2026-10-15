@@ -147,8 +147,10 @@ def build_memo() -> bytes:
         Paragraph("Tallyhound audit memo", ss["Title"]),
         Paragraph(("Uploaded data - " if C.custom_label() else "Bramblecourt Instruments Ltd (fictional) - ") + datetime.now().strftime("%Y-%m-%d"), ss["Normal"]),
         Spacer(1, 8),
-        Paragraph((f"Findings: {len(f)}, all decided by a person. " if dc["pending"] == 0 else
-                   f"Findings: {len(f)}. NOT FINISHED: {dc['pending']} are still pending review. ") + f"Approved: {dc['approved']} ({C.money(dc['value'])}). "
+        # shadow-mode findings are not in review: they are counted apart, never as decided
+        Paragraph((f"Findings: {len(f) - dc['shadow']}, all decided by a person. " if dc["pending"] == 0 else
+                   f"Findings: {len(f) - dc['shadow']}. NOT FINISHED: {dc['pending']} are still pending review. ")
+                  + (f"{dc['shadow']} more in shadow mode, not in review. " if dc["shadow"] else "") + f"Approved: {dc['approved']} ({C.money(dc['value'])}). "
                   f"Rejected: {dc['rejected']}. Pending: {dc['pending']}. "
                   "Agents only proposed these findings; every decision recorded here was made by a person.", ss["Normal"]),
         Spacer(1, 8),

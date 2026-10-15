@@ -115,12 +115,14 @@ a person. [CONTRIBUTING.md](CONTRIBUTING.md) follows one finding through the cod
 ## Guardrails against false alarms
 
 A tool that flags everything is as useless as one that flags nothing. Tallyhound is tested against *traps*: things that
-look suspicious but are normal in real books. Every challenge month plants 22 of them next to the real problems: a
+look suspicious but are normal in real books. Every challenge month plants 26 of them next to the real problems: a
 batch bank transfer paying three invoices, bank fees, payroll, tax and card settlements on the statement, rent and
 utilities paid without a PO, a 2% early-payment discount, a 40-cent rounding difference, an invoice paid in two
 instalments, a voided and re-issued payment, a day-first expenses export, a supplier spelt differently on the payment
 run, a team dinner with the head count in the notes, a CPA society membership, a weekend taxi on a business trip, a
-remit-to vendor record, a vendor closed after its last payment, and an invoice PDF that shows the net total before tax.
+remit-to vendor record, a vendor closed after its last payment, a weekly bill paid in a numbered series, two site
+licences for the same amount on the same day, a new vendor's small first payment, two parking claims just under the
+receipt limit, and an invoice PDF that shows the net total before tax.
 
 Before these were fixed the built-in rules raised about 30 false alarms per month (precision 37-47%). Now: 0 traps
 flagged in 4,680 across 180 months (60 per difficulty), 100% precision, recall 100% easy / 100% medium / 97% hard.
@@ -136,7 +138,7 @@ What keeps it that way:
   rejected 60% or more of the time (after 5 decisions) is demoted to *Minor items* automatically - never deleted - and
   can be restored.
 - **Shadow mode**: put a new or changed rule in shadow under *Settings > Rules*; it runs without touching the review
-  queue until reviewers have marked enough of its findings as real.
+  queue until reviewers have marked enough of its findings as real and an admin presses *Promote*.
 - **Data check before a run**: after upload, Tallyhound shows what it believes about each file - date order, decimal
   commas, currencies, reversals, non-supplier bank lines, unreadable or three-decimal amounts, missing companion
   files - and asks when dates are ambiguous.
@@ -297,7 +299,7 @@ Ollama is the default. For LM Studio, vLLM or llama.cpp, upload your files, then
   pattern is worth a look but is not a breach on its own: the same invoice paid twice under a re-keyed number with
   the same invoice date (5.6: `ASH-6100` and `ASH-6100A`, two digits swapped, a letter O for a zero - but not the
   next numbers in a series, nor instalments), a new vendor paid more than the director limit within 30 days of being
-  set up (4.5; a set-up date shared by most of the vendor list is taken as the date it was imported, and ignored),
+  set up (4.5; a set-up date shared by at least five vendors and 30% of the list is taken as the date it was imported, and ignored),
   one person's approvals bunched just under the director limit and not approved by a director (1.6), and three or more
   receipt-free claims by one person just under the receipt limit within 30 days (6.6; mileage and allowances aside).
 - **Patterns worth a look** (*Reports > Patterns*) - a first-digit (Benford's law) test with a verdict only when there

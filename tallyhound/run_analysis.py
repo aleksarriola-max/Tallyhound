@@ -31,12 +31,15 @@ def engine_settings(running: bool) -> None:
                       help="Ollama: http://localhost:11434. LM Studio, vLLM or llama.cpp: their address ending in /v1, "
                            "for example http://localhost:1234/v1")
         refused = llm.check_url(S.get("adv_url") or llm.DEFAULT_URL)
-        have = [] if refused else llm.models(S.get("adv_url") or llm.DEFAULT_URL)
+        have = None if refused else llm.installed(S.get("adv_url") or llm.DEFAULT_URL)
         if refused:
             st.warning(refused)
-        elif not have:
+        elif have is None:
             st.warning("Ollama is not reachable from here. The hosted demo cannot see your computer; run the app "
                        "locally (streamlit run app.py) with Ollama running.")
+        elif not have:
+            st.warning("The model server is running but has no models installed. Install one first, for example "
+                       f"ollama pull {llm.DEFAULT_MODEL}")
         elif (S.get("adv_model") or llm.DEFAULT_MODEL) not in have:
             st.warning("That model is not installed. Installed: " + ", ".join(have))
         else:

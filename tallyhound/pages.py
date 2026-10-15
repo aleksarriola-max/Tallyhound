@@ -120,12 +120,12 @@ def payment_gate() -> None:
     gdf = gdf.copy()
     cleared = S.cleared if clearable else {}
     gdf["final"] = [("RELEASE (cleared)" if str(l) in cleared else d) for l, d in zip(gdf.line, gdf.decision)]
-    hold = gdf[gdf.final == "HOLD"]
     rel = gdf[gdf.final != "HOLD"]
+    t = C.gate_totals(gdf, cleared)                # the same numbers as Home, Reports and the memo
     h1, h2, h3 = st.columns([5, 2, 2], vertical_alignment="center")
     h1.markdown(f"<span style='font-size:1.4rem;font-weight:700'>"
-                f"<span style='color:{C.HOLD}'>{len(hold)} HOLD {C.money(hold.amount.sum())}</span> · "
-                f"<span style='color:{C.RELEASE}'>{len(rel)} RELEASE</span></span>", unsafe_allow_html=True)
+                f"<span style='color:{C.HOLD}'>{t['hold_n']} HOLD {C.money(t['hold_amt'])}</span> · "
+                f"<span style='color:{C.RELEASE}'>{t['rel_n']} RELEASE</span></span>", unsafe_allow_html=True)
     h3.download_button("Export release file", data=release_csv(rel),
                        file_name=f"release_{run.split()[-1]}.csv", mime="text/csv", **C.bw())
 

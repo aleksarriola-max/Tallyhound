@@ -109,7 +109,7 @@ def _download_sig() -> str:
     import json
     S = st.session_state
     parts = [S.get("dataset"), S.get("_fver", 0), S.get("decisions"), len(S.get("audit_log", [])), S.get("cleared"),
-             S.get("notes"), S.get("suppressions"), S.get("shadow")]
+             S.get("notes"), S.get("suppressions"), bool(S.get("show_suppressed")), S.get("shadow")]
     return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
 
 

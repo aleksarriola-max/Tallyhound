@@ -33,12 +33,14 @@ BANK = re.compile(r"\b(?:account|acct)\b\.?[\s:#*xX-]*(?:(?:no|number)\b\.?[\s:#
 IBAN = re.compile(r"\bIBAN\b\s*:?\s*([A-Z]{2}\d{2}(?:\s?[A-Z0-9]){10,30})", re.I)
 NOT_BANK = re.compile(r"\b(your|customer|client|cust\.?)\s+(account|acct)|account\s+(ref|reference|manager)", re.I)
 BANK_CONTEXT = re.compile(r"\b(bank|iban|sort code|routing|swift|bic|pay(?:ment)?s? to|remit|beneficiary)\b", re.I)
+# a net total, or one before tax: "Subtotal", "Net total", "Total (excl. VAT)"
+NOT_TOTAL = re.compile(r"\b(net|sub)\s*-?\s*total|\bexcl(?:\.|uding)?\b|\b(?:before|pre)[ -]?(?:vat|tax|gst)\b", re.I)
 VENDOR = re.compile(r"^\s*(?:from|supplier|vendor)\s*[:]\s*(.+)$", re.I)
 
 
 def pdf_lines(data: bytes, max_pages: int = 5) -> list[str] | None:
     """Text lines of a PDF (first pages only). Empty when the PDF has no text layer (a scan); None when it is refused
-    (it claims more than MAX_PDF_PAGES pages)."""
+    (it claims more than MAX_PDF_PAGES pages) or cannot be read (damaged, not a PDF, too large to unpack)."""
     from pypdf import PdfReader
     try:
         reader = PdfReader(io.BytesIO(data))
@@ -48,7 +50,7 @@ def pdf_lines(data: bytes, max_pages: int = 5) -> list[str] | None:
             return None                                       # refused: not an invoice-sized PDF
         text = "\n".join((reader.pages[i].extract_text() or "")[:20000] for i in range(min(max_pages, count)))
     except Exception:          # noqa: BLE001  a broken PDF must not stop the upload
-        return []
+        return None            # refused too (MemoryError included): a damaged PDF is not a scan without text
     return [ln.rstrip() for ln in text.splitlines() if ln.strip()]
 
 
@@ -96,8 +98,9 @@ def _read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
         got: queue.Queue = queue.Queue()
 
         def drain(p=proc, q=got):
-            for x in p.stdout:
-                q.put(x)
+            with p.stdout:                             # closed here, so no pipe is left open
+                for x in p.stdout:
+                    q.put(x)
             q.put(None)                                # the worker ended
 
         def feed(p=proc, batch=tuple(todo)):
@@ -105,6 +108,9 @@ def _read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
                 for n, b in batch:
                     p.stdin.write(json.dumps({"name": n, "data": base64.b64encode(b).decode()}) + "\n")
                     p.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+            try:
                 p.stdin.close()
             except (BrokenPipeError, OSError, ValueError):
                 pass
@@ -190,7 +196,7 @@ def blocks(lines: list[str]) -> list[dict]:
         for field, rx in (("total_due", TOTAL_DUE), ("total", TOTAL)):
             if field not in cur:
                 hit = rx.search(ln)
-                if hit and not (field == "total" and re.search(r"\b(net|sub)\s*-?\s*total", ln, re.I)):
+                if hit and not (field == "total" and NOT_TOTAL.search(ln)):
                     cur[field] = (n, hit.group(1).strip())
         acct = _bank(ln)
         if acct and len(acct) >= 4 and ("bank" not in cur or (BANK_CONTEXT.search(ln) and not cur.get("_bank_ctx"))):

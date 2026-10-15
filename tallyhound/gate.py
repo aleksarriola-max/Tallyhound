@@ -23,14 +23,26 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
     run = files.get("payment_run.csv")
     if not run or rules.missing_columns("payment_run.csv", run):
         return pd.DataFrame()
-    V = {r["vendor_id"].strip(): r for _, r in rules.rows(files.get("vendors.csv", []))} if files.get("vendors.csv") else None
+    V = {r["vendor_id"].strip().upper(): r for _, r in rules.rows(files.get("vendors.csv", []))} \
+        if files.get("vendors.csv") else None
     names: dict[str, list] = {}
     for r in (V or {}).values():
         names.setdefault(rules.norm_name(r["name"]), []).append(r)
-    A = {r["doc_no"].strip().lower(): r for _, r in rules.rows(files.get("approvals.csv", []))
-         if r["type"].strip().upper() in rules.INVOICE_TYPES} if files.get("approvals.csv") else None
-    P = {r["invoice_no"].strip().lower() for _, r in rules.rows(files.get("payments.csv", []))
-         if r["invoice_no"].strip()} if files.get("payments.csv") else None
+    # invoice numbers compared as the rules compare them ("INV-0042" = "INV42"), and per vendor: two suppliers can
+    # both send an invoice 1001
+    A: dict[str, list] | None = None
+    if files.get("approvals.csv"):
+        A = {}
+        for _, r in rules.rows(files["approvals.csv"]):
+            if r["type"].strip().upper() in rules.INVOICE_TYPES and r["doc_no"].strip():
+                A.setdefault(rules.inv_key(r["doc_no"]), []).append(r)
+    P: dict[str, list] | None = None
+    if files.get("payments.csv"):
+        P = {}
+        for _, r in rules.rows(files["payments.csv"]):
+            if r["invoice_no"].strip():
+                P.setdefault(rules.inv_key(r["invoice_no"]), []).append(
+                    (r["vendor_id"].strip().upper(), rules.norm_name(r["supplier"])))
     skipped = sorted({n for n, ok in (("vendors.csv", V is not None), ("approvals.csv", A is not None),
                                       ("payments.csv", P is not None)) if not ok})
     out, seen, used_lines = [], set(), set()
@@ -38,7 +50,7 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
         inv, amt = r["invoice"].strip(), rules._f(r["amount"])
         sup = rules.norm_name(r["supplier"])
         extra: dict[int, str] = {}
-        v = (V or {}).get(r["vendor_id"].strip()) if r["vendor_id"].strip() else None
+        v = (V or {}).get(r["vendor_id"].strip().upper()) if r["vendor_id"].strip() else None
         if v is not None and rules.norm_name(v["name"]) != sup:
             extra[3] = f"Vendor {v['vendor_id']} is {v['name'].strip()}, not {r['supplier'].strip()}"
         if v is None and V is not None and not r["vendor_id"].strip():
@@ -48,32 +60,43 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
             elif len(same) > 1:
                 extra[1] = (f"{r['supplier'].strip()} matches {len(same)} vendors "
                             f"({', '.join(x['vendor_id'] for x in same)}); add the vendor id to the run")
-        a = (A or {}).get(inv.lower())
+        key = rules.inv_key(inv)
+        vid = v["vendor_id"].strip().upper() if v is not None else r["vendor_id"].strip().upper()
+        known = {sup} | ({rules.norm_name(v["name"])} if v is not None else set())
+        cands = (A or {}).get(key, []) if inv else []
+        a = next((x for x in cands if rules.norm_name(x["vendor"]) in known), cands[0] if cands else None)
         fail = []
-        if V is not None and (v is None or v["status"].strip().upper() != "ACTIVE"):
+        if V is not None and (v is None or not v["status"].strip().upper().startswith("ACTIVE")):
             fail.append(1)
         if A is not None and (a is None or not a["approved_by"].strip()):
             fail.append(2)
         if (a is not None and rules.norm_name(a["vendor"]) != sup) or 3 in extra:
             fail.append(3)
-        if P is not None and inv.lower() in P:
+        # paid to the same vendor: by vendor id when both have one, else by name
+        if P is not None and inv and any(pid == vid if pid and vid else pname in known for pid, pname in P.get(key, [])):
             fail.append(4)
-        if inv.lower() in seen:
+        if (key, vid or sup) in seen:
             fail.append(5)
-        seen.add(inv.lower())
+        seen.add((key, vid or sup))
         if amt <= 0:                                  # unreadable, zero or negative: nothing a payment run should send
             fail.append(6)
             extra[6] = f"Amount \"{r['amount'].strip()}\" is missing, zero or negative"
         elif a is not None and amt > rules._f(a["amount"]) + 0.005:
             fail.append(6)
-        if v is not None and v["bank_changed_on"].strip() and v["bank_verified"].strip().upper() != "YES":
+        # verified as the vendor check reads it ("Y", "TRUE", "VERIFIED"), and a new vendor's first account is no change
+        changed = v["bank_changed_on"].strip() if v is not None else ""
+        if v is not None and changed and v["bank_verified"].strip().upper() not in rules.YES \
+                and changed != v["created_on"].strip():
             fail.append(7)
-        last4 = r["bank_last4"].strip()
-        if v is not None and last4 and v["bank_acct"].strip()[-4:] != last4[-4:]:
+        last4, on_file = r["bank_last4"].strip(), (v["bank_acct"].strip() if v is not None else "")
+        if v is not None and last4 and on_file and on_file[-4:] != last4[-4:]:
             fail.append(8)
         reason = "; ".join(extra.get(c, REASONS[c]) for c in fail) if fail else (
-            "All 8 checks passed" if last4 or v is None else
-            "7 of 8 checks passed; the run gives no bank account, so it is paid to the account on file")
+            "All 8 checks passed" if (last4 and on_file) or v is None else
+            "7 of 8 checks passed; the run gives no bank account, so it is paid to the account on file" if not last4
+            else "7 of 8 checks passed; the vendor master has no bank account to compare with")
+        if fail and v is not None and last4 and not on_file:
+            reason += "; bank account not compared: the vendor master has none"
         if skipped:
             reason += f" (not checked: no {', '.join(skipped)})"
         line = str(r["line"]).strip() or str(ln - 1)

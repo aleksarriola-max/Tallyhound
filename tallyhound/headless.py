@@ -41,7 +41,7 @@ def load_folder(folder: Path) -> tuple[dict[str, list[str]], list[str]]:
         for p in folder.rglob("*"):
             if p.is_file() and REPORT_DIR not in p.parts and p.suffix.lower() in (".csv", ".txt", ".pdf", ".xlsx", ".tsv"):
                 z.write(p, p.relative_to(folder).as_posix())
-    files, notes = uploads.parse_zip(buf.getvalue())
+    files, notes = uploads.parse_zip(buf.getvalue(), max_zip_mb=float("inf"))   # the unpacked limit still applies
     if not any(n in files for n in rules.FILES.values()) and zips:
         files, notes = uploads.parse_zip(zips[-1].read_bytes())
         notes.insert(0, f"Read {zips[-1].name}")
@@ -111,7 +111,7 @@ def write_report(folder: Path, res: dict, remember: bool = True) -> tuple[Path, 
     hits = res["hits"]
     new = [h for h in hits if fingerprint(h) not in before]
     fresh = {fingerprint(h) for h in new}         # a set: "h in new" on a list is slow with thousands of findings
-    stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")      # seconds: a second run must not overwrite the first
     with open(out / f"findings_{stamp}.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["new", "severity", "area", "clause", "amount", "title", "file", "line", "evidence"])
@@ -122,7 +122,7 @@ def write_report(folder: Path, res: dict, remember: bool = True) -> tuple[Path, 
                         safe_cell(lines[h.line_number - 1] if 0 < h.line_number <= len(lines) else "")])
     g = res["gate"]
     held = g[g.decision == "HOLD"] if not g.empty else g
-    md = [f"# Tallyhound report {stamp.replace('_', ' ')}", "",
+    md = [f"# Tallyhound report {stamp[:10]} {stamp[11:13]}:{stamp[13:15]}:{stamp[15:]}", "",
           f"{len(hits)} findings ({len(new)} new). " + (f"Payment run: {len(held)} of {len(g)} lines on HOLD." if not g.empty else ""),
           "", "Nothing here has been approved or released. A person reviews every item.", ""]
     problems = data_problems(res)

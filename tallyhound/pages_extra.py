@@ -136,13 +136,17 @@ def _save_limits() -> None:
     if not auth.can("policy"):      # checked here too, not only by disabling the button (see common.decide)
         return
     S = st.session_state
-    new = {k: float(S[f"lim_{k}"]) if k not in rules.DAY_LIMITS else int(S[f"lim_{k}"]) for k in rules.LIMIT_LABELS}
-    S["po_exempt_words"] = [w.strip() for w in S.get("lim_exempt_words", "").split(",") if w.strip()]
-    S["po_exempt_vendors"] = [w.strip() for w in S.get("lim_exempt_vendors", "").splitlines() if w.strip()]
-    changed = {k: v for k, v in new.items() if v != C.limits()[k]}
+    new: dict[str, Any] = {k: float(S[f"lim_{k}"]) if k not in rules.DAY_LIMITS else int(S[f"lim_{k}"])
+                           for k in rules.LIMIT_LABELS}
+    new_words = [w.strip() for w in S.get("lim_exempt_words", "").split(",") if w.strip()]
+    new_vendors = [w.strip() for w in S.get("lim_exempt_vendors", "").splitlines() if w.strip()]
+    old = C.limits()
+    changed = {k: v for k, v in {**new, "po_exempt_words": new_words, "po_exempt_vendors": new_vendors}.items()
+               if v != old[k]}        # an exemption sets findings aside just as a limit does: it goes in the trail too
+    S["po_exempt_words"], S["po_exempt_vendors"] = new_words, new_vendors
     S["limits"] = new
     if changed:
-        C.log_action("Reviewer", "Policy limits changed", "", ", ".join(f"{k}={v}" for k, v in changed.items()))
+        C.log_action("Reviewer", "Policy limits changed", "", ", ".join(f"{k}={'; '.join(v) if isinstance(v, list) else v}" for k, v in changed.items()))
 
 
 def _reset_limits() -> None:
@@ -216,6 +220,17 @@ def _promote(clause: str) -> None:
     C.log_action("Reviewer", "Shadow rule promoted", "", f"clause {clause}")
 
 
+def _set_shadow() -> None:
+    from . import auth
+    if not auth.can("policy"):
+        return
+    S = st.session_state
+    old, new = S.get("shadow", []), list(S.get("shadow_pick", []))
+    S["shadow"] = new
+    if set(old) != set(new):
+        C.log_action("Reviewer", "Shadow mode changed", "", f"clauses in shadow: {', '.join(new) or 'none'}")
+
+
 def rule_health_section() -> None:
     from . import auth, triage
     S = st.session_state
@@ -237,12 +252,15 @@ def rule_health_section() -> None:
             c2.button("Restore", key=f"restore_{r.Clause}", on_click=_set_override, args=(r.Clause, "normal"),
                       disabled=not auth.can("policy"))
     st.subheader("Shadow rules")
-    st.caption("A rule in shadow mode still runs, but its findings stay out of the review queue until reviewers have "
-               f"marked at least {triage.PROMOTE_MIN_MARKS} of them and {triage.PROMOTE_PRECISION:.0%} were real problems. "
-               "Use it when you add or change a rule.")
+    st.caption("A rule in shadow mode still runs, but its findings stay out of the review queue until an admin "
+               f"promotes it, which needs reviewers to have marked at least {triage.PROMOTE_MIN_MARKS} of them with "
+               f"{triage.PROMOTE_PRECISION:.0%} or more real problems. Use it when you add or change a rule.")
     all_clauses = sorted({k.split("|")[0] for k in C.policy()}, key=lambda c: [int(x) for x in c.split(".")])
     if auth.can("policy"):
-        st.multiselect("Clauses in shadow mode", all_clauses, key="shadow")
+        # bound to its own key, not to "shadow": Streamlit drops a widget's key once its page is left, which would
+        # switch shadow mode off as soon as you went to Review
+        S["shadow_pick"] = [c for c in S.get("shadow", []) if c in all_clauses]
+        st.multiselect("Clauses in shadow mode", all_clauses, key="shadow_pick", on_change=_set_shadow)
     else:       # not bound to the setting: Streamlit before 1.61 lets a modified browser change a disabled widget
         st.multiselect("Clauses in shadow mode", all_clauses, default=[c for c in S.get("shadow", []) if c in all_clauses],
                        disabled=True)

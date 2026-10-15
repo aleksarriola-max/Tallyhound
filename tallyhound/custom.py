@@ -174,7 +174,7 @@ class Job:
                     **(dict(verdict="Doubtful" if h.clause in rules.PATTERN_CLAUSES else "Confirmed",
                             reason=("Fixed rule check, no AI. A pattern worth a look, not a breach on its own"
                                     if h.clause in rules.PATTERN_CLAUSES else "Fixed rule check, no AI")
-                            + f". Clause {h.clause}: {self.policy.get(h.clause + '|' + h.area, '')}")
+                            + f". Clause {h.clause}: {rules.clause_text(self.policy, h.clause, h.area)}")
                        if self.engine == "rules" else {})))
                 r = recs[-1]
                 src = self.files.get(r["source_file"], [])          # cross-file checks quote other files
@@ -199,8 +199,8 @@ class Job:
             header = lines[0] if r["source_file"].endswith(".csv") else ""
             r["evidence"] = lines[r["line_number"] - 1]
             related = [lines[n - 1] for n in r.get("related_lines", []) if 1 <= n <= len(lines)]
-            r["verdict"], r["reason"] = agents.skeptic(r, self.policy.get(f"{r['clause']}|{r['area']}", ""), self.model,
-                                                       self.url, header, related)
+            clause = rules.clause_text(self.policy, r["clause"], r["area"])
+            r["verdict"], r["reason"] = agents.skeptic(r, clause, self.model, self.url, header, related)
             self._set("Skeptic", pct=5 + int(90 * i / max(len(todo), 1)), secs=int(time.time() - t))
 
 

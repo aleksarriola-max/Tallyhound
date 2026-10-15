@@ -305,11 +305,13 @@ def _replay(S) -> None:
         return
     from . import common as C
     from . import custom
-    done, skipped = 0, 0
-    for kind, dataset, fid, status, reason in ops:
+    done, skipped, stale = 0, 0, 0
+    for kind, dataset, fid, status, reason, run in ops:
         if (S.get("dataset") or None) != (dataset or None):
             custom.activate(dataset)
-        if kind == "decide" and fid not in S.get("decisions", {}):
+        if C.run_of(dataset) != run:         # the checks ran again since the click: F-01 is now another finding
+            stale += 1
+        elif kind == "decide" and fid not in S.get("decisions", {}):
             C.decide(fid, status, reason)
             done += 1
         elif kind == "undo" and fid in S.get("decisions", {}):
@@ -320,7 +322,10 @@ def _replay(S) -> None:
     S["_restore_note"] = ("A teammate saved at the same moment. Their changes are loaded"
                           + (f" and your {done} change(s) re-applied on top" if done else "")
                           + (f"; {skipped} of yours were already decided by them and were left as they decided"
-                             if skipped else "") + ". Other edits (notes, cleared holds) may need redoing.")
+                             if skipped else "")
+                          + (f"; {stale} were made on findings of an earlier run - a teammate ran the checks again "
+                             "since, so they were not applied" if stale else "")
+                          + ". Other edits (notes, cleared holds) may need redoing.")
 
 
 def save_uploads(removed: tuple[str, ...] = ()) -> None:

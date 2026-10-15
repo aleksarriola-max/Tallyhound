@@ -71,6 +71,8 @@ def limit_hints(findings, decisions: dict, limits: dict) -> list[dict]:
     pool = findings[findings.id.isin(rejected)]           # only rejected findings matter: look at those once
     for clause, key in LIMIT_OF.items():
         rej = pool[pool.clause.astype(str) == clause]
+        if clause == "1.1" and "title" in rej:     # a PO raised after its invoice has nothing to do with the PO limit
+            rej = rej[~rej.title.astype(str).str.contains(" days after invoice ", regex=False)]
         if len(rej) < 2:
             continue
         lim = float(limits[key])

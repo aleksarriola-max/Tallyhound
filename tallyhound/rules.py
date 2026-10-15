@@ -204,7 +204,7 @@ def _parse_date(s: str, dayfirst: bool = False) -> date | None:
                 pass
         return None
     t = re.split(r"[ T]", t, maxsplit=1)[0][:10]          # "2/9/2026 14:30": the date before the time
-    fmts = ("%Y-%m-%d", "%Y/%m/%d") + (("%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y") if dayfirst else ("%m/%d/%Y", "%d.%m.%Y"))
+    fmts = ("%Y-%m-%d", "%Y/%m/%d") + (("%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y") if dayfirst else ("%m/%d/%Y", "%d.%m.%Y", "%m-%d-%Y"))
     for fmt in fmts:
         try:
             return datetime.strptime(t, fmt).date()
@@ -377,6 +377,12 @@ CONFUSABLE = str.maketrans({"O": "0", "I": "1", "L": "1", "S": "5", "B": "8", "Z
 PATTERN_CLAUSES = {"1.6", "4.5", "5.6", "6.6"}   # worth a look, not a breach on their own: never "Confirmed" by rules
 
 
+def clause_text(policy: dict[str, str], clause: str, area: str) -> str:
+    """The policy text of a clause. A finding's area can differ from its clause's: the payments-to-vendor check
+    reports Vendors clause 4.1 under Payments."""
+    return policy.get(f"{clause}|{area}") or next((t for k, t in policy.items() if k.split("|")[0] == clause), "")
+
+
 def _inv_text(s: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", str(s).upper())
 
@@ -492,7 +498,7 @@ def _just_under(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
     by: dict[str, list[tuple[int, Row]]] = {}
     for ln, r in R:
         amt = _f(r["amount"])
-        if r["type"].strip().upper() in INVOICE_TYPES and lim * 0.96 <= amt < lim and person_key(r["requested_by"]) \
+        if r["type"].strip().upper() in INVOICE_TYPES and lim * 0.96 <= amt <= lim and person_key(r["requested_by"]) \
                 and not DIRECTOR.search(r["approver_role"]):
             by.setdefault(person_key(r["requested_by"]), []).append((ln, r))
     out = []
@@ -549,7 +555,7 @@ def _po_after_invoice(R: list[tuple[int, Row]]) -> list[Hit]:
     out = []
     pos = {r["doc_no"].strip().lower(): (ln, r) for ln, r in R if r["type"].strip().upper() == "PO"}
     for ln, r in R:
-        if r["type"].strip().upper() != "INVOICE":
+        if r["type"].strip().upper() not in INVOICE_TYPES:     # "Bill" (QuickBooks) is an invoice too
             continue
         hit = pos.get(r["po_no"].strip().lower())
         if hit and (po_d := hit[1].d("date")) and (inv_d := r.d("date")) and po_d > inv_d:
@@ -767,7 +773,7 @@ def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
                            + "with no tax form on file", "vendors.csv", ln))
         made, paid_on = r.d("created_on"), r.d("last_paid_on")
         if made and paid_on and 0 <= (paid_on - made).days <= L.get("new_vendor_days", 30) \
-                and paid > L["director_limit"] and status.startswith("ACTIVE") and made not in migrated:
+                and paid > L["director_limit"] and (not status or status.startswith("ACTIVE")) and made not in migrated:
             out.append(Hit("Vendors", "4.5", "Medium", paid,
                            f"{r['vendor_id']} was paid ${paid:,.2f} {(paid_on - made).days} days after it was set up",
                            "vendors.csv", ln))
@@ -845,12 +851,12 @@ def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     out = []
     seen: dict[str, int] = {}
     R = rows(lines)
-    trips: dict[str, list[date]] = {}
-    for _, r in R:
+    trips: dict[str, list[tuple[date, int]]] = {}
+    for tl, r in R:
         if (trip_d := r.d("date")) \
                 and (re.search(r"\b(travel|airfare|hotel)\b", r["category"], re.I) or TRAVEL.search(r["notes"])) \
                 and r["notes"].strip().lower() != "business purpose recorded":
-            trips.setdefault(r["employee"].strip().lower(), []).append(trip_d)
+            trips.setdefault(r["employee"].strip().lower(), []).append((trip_d, tl))
     for ln, r in R:
         amt = _f(r["amount"])
         if r["category"].strip().upper() in MEAL_CATEGORIES:
@@ -882,7 +888,7 @@ def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
         if d and d.weekday() >= 5 and not r["notes"].strip():
             # a taxi, meal or hotel on the weekend of a business trip is normal; a weekend purchase of supplies is not
             near_trip = TRAVEL_SPEND.search(r["category"]) and any(
-                0 < abs((d - t).days) <= 1 for t in trips.get(r["employee"].strip().lower(), []))
+                abs((d - t).days) <= 1 and tl != ln for t, tl in trips.get(r["employee"].strip().lower(), []))
             if not near_trip:
                 out.append(Hit("Expenses", "6.4", "Low", amt, f"Weekend expense {r['claim_id']} with no reason given", "expenses.csv", ln))
     out += _under_receipt_limit(R, L)

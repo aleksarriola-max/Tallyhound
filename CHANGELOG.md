@@ -2,6 +2,45 @@
 
 All notable changes. Dates are release dates; the project follows [Semantic Versioning](https://semver.org/) from 1.0.
 
+## 0.7.1 - unreleased - fixes from a full code audit
+
+**Payment gate**
+- An invoice already paid under another spelling of its number (`INV42` / `INV-0042`) was released; it is now held,
+  as the rules already flagged it.
+- Two suppliers with the same invoice number (e.g. `1001`) were mixed up; invoices are now kept per vendor.
+- Lines the vendor rules accept were held: bank verified written `Y` or `TRUE`, a status such as "Active -
+  preferred", a lower-case vendor id, or a vendor master with no bank account at all.
+
+**Rules**
+- "PO raised after invoice" never ran when invoices were typed `BILL` or `INV` (QuickBooks writes "Bill").
+- Month-first dates with dashes (`09-19-2026`) were not read.
+- Payments to a vendor missing from the master showed no policy clause in Details or to the Skeptic.
+- Approvals of exactly $10,000.00 and amounts exactly at a limit now count as just under it; a weekend taxi on the
+  day of a trip is no longer flagged; a new vendor with a blank status is checked like an active one.
+- Rejected "PO raised after invoice" findings no longer suggest raising the PO limit.
+
+**Files and AI engines**
+- One stray quote in a tab or semicolon file swallowed every row after it; it is now read as plain text.
+- A Word or OpenDocument file with an audit name (`contracts.docx`) was read as text; it is now skipped with a note.
+- A damaged or fake PDF was called "a scan"; the note now says it could not be read. An invoice's total before tax
+  is no longer taken for its total, which caused false "totals differ" findings.
+- The folder check skipped a whole folder over 50 MB of scans; its CSVs are now read.
+- `OLLAMA_HOST=127.0.0.1` or `0.0.0.0` (as Ollama's own docs suggest) now works. A model server with no models
+  says so, instead of "not reachable". Odd tool-call replies give a plain error.
+- The PDF memo no longer counts shadow-mode findings as decided by a person. PDF reader pipes are closed.
+- Two folder checks in the same minute no longer overwrite each other's report. `make_example_exports.py --help`
+  and `make_export_pack.py --help` no longer rewrite files.
+
+**Screens and saved work**
+- Shadow mode switched itself off when you left Settings; it now stays on and is logged in the audit trail.
+- After a save conflict, a click made before a teammate re-ran the checks could be replayed onto a different finding
+  of the new run; such clicks are now dropped with a note.
+- The Payment run tab showed a held total lowered by credit notes, unlike Home and Reports.
+- Changes to PO exemptions are now in the audit trail; prepared downloads are redone after "Show suppressed
+  findings" is switched.
+- README and Settings no longer suggest that a rule leaves shadow mode by itself: an admin promotes it. The README
+  trap count is corrected (26 per month).
+
 ## 0.7.0 - 2026-10-08
 
 **Real exports**

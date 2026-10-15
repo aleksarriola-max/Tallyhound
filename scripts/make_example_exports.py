@@ -30,6 +30,8 @@ def us(d: str) -> str:
 
 
 def main() -> None:
+    import argparse
+    argparse.ArgumentParser(description=__doc__.splitlines()[0]).parse_args()     # --help, before writing
     files, _ = challenge.generate(7, "medium")
     OUT.mkdir(parents=True, exist_ok=True)
     pay = list(csv.DictReader(files["payments.csv"]))

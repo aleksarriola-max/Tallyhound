@@ -11,7 +11,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from . import auth, custom, guide, pages, pages_extra, review, run_analysis, sim, triage
+from . import auth, custom, guide, pages, pages_extra, review, rules, run_analysis, sim, triage
 from . import common as C
 
 SAMPLE = "Sample company (demo)"
@@ -242,7 +242,7 @@ def case_details(r, others, ids, d, blocked) -> None:
     S = st.session_state
     st.caption(f"{r.id} · {r.area} · {r.source_file} line {r.line_number} · priority {triage.priority(r)} "
                "(severity, amount and the Skeptic's confidence)")
-    clause = C.policy().get(f"{r.clause}|{r.area}")
+    clause = rules.clause_text(C.policy(), str(r.clause), str(r.area))
     if clause:
         st.markdown(f"**Policy clause {C.esc(r.clause)}:** {C.esc(clause)}")
     lines = C.source_lines(r.source_file)

@@ -386,11 +386,25 @@ def decision_counts(fdf: pd.DataFrame) -> dict:
                 shadow=int(shadow.sum()) if len(fdf) else 0)
 
 
+def run_of(dataset: str | None) -> str:
+    """The id of the run whose findings are in review for this data ("" for the sample company): a finding id such
+    as F-01 names a different finding after the checks run again."""
+    if not dataset:
+        return ""
+    return next((str(h.get("run_id") or "") for h in reversed(st.session_state.get("run_history", []))
+                 if h.get("label") == dataset), "")
+
+
+def _pending(kind: str, fid: str, status: str = "", reason: str = "") -> None:
+    ds = st.session_state.get("dataset")
+    st.session_state.setdefault("_pending_ops", []).append([kind, ds, fid, status, reason, run_of(ds)])
+
+
 def decide(fid: str, status: str, reason: str = "") -> None:
     from . import auth
     if auth.review_block_reason():      # checked here too, not only by disabling the button: older Streamlit
         return                          # versions accept a click on a disabled button sent by a modified browser
-    st.session_state.setdefault("_pending_ops", []).append(["decide", st.session_state.get("dataset"), fid, status, reason])
+    _pending("decide", fid, status, reason)
     st.session_state.decisions[fid] = dict(status=status, reason=reason)
     log_action("Reviewer", status, fid, reason or "Approved by reviewer")
 
@@ -406,7 +420,7 @@ def undo(fid: str) -> None:
     from . import auth
     if auth.review_block_reason():
         return
-    st.session_state.setdefault("_pending_ops", []).append(["undo", st.session_state.get("dataset"), fid, "", ""])
+    _pending("undo", fid)
     st.session_state.decisions.pop(fid, None)
     log_action("Reviewer", "Reset to pending", fid)
 

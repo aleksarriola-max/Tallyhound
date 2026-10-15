@@ -51,10 +51,10 @@ def decode(raw: bytes) -> str:
     return raw.decode("cp1252", errors="replace")
 
 
-def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
+def parse_zip(data: bytes, max_zip_mb: float = MAX_ZIP_MB) -> tuple[dict[str, list[str]], list[str]]:
     """Returns (files, notes). Reads in memory only; nothing is written to disk and no path is ever used."""
     notes: list[str] = []
-    if len(data) > MAX_ZIP_MB * 1024 * 1024:
+    if len(data) > max_zip_mb * 1024 * 1024:
         return {}, [f"That zip is larger than {MAX_ZIP_MB} MB."]
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
@@ -126,6 +126,9 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
         if match is None and ext not in ("csv", "xlsx", "txt", "tsv"):
             notes.append(f"Ignored {base} (not one of the audit files).")
             continue
+        if ext not in ("csv", "xlsx", "txt", "tsv", ""):          # contracts.docx, payments.ods: not text
+            notes.append(f"Skipped {base}: .{ext} files are not read. Save it as CSV, .xlsx or plain text.")
+            continue
         if match is not None and match in files:
             notes.append(f"Two files are read as {match}: kept {origin[match]}, skipped {info.filename}. "
                          "Upload one month per zip, or rename the extra file.")
@@ -196,8 +199,8 @@ def parse_zip(data: bytes) -> tuple[dict[str, list[str]], list[str]]:
             if pdf_text:
                 pdfs.append((base, pdf_text))
             elif pdf_text is None:
-                notes.append(f"Skipped {base}: it could not be read safely (too slow, too large, or more than "
-                             f"{invoices.MAX_PDF_PAGES} pages).")
+                notes.append(f"Skipped {base}: it could not be read safely (damaged or not a PDF, too slow, too large, "
+                             f"or more than {invoices.MAX_PDF_PAGES} pages).")
             else:
                 notes.append(f"{base} has no readable text (a scan?). It was skipped; scanned PDFs need OCR first.")
     if pdfs:
@@ -217,11 +220,23 @@ def _cut(lines: list[str], base: str, notes: list[str]) -> list[str]:
     return [ln[:MAX_LINE_CHARS] for ln in lines]
 
 
-def _tsv_to_csv(lines: list[str], sep: str = "\t") -> list[str]:
+def _tsv_to_csv(lines: list[str], sep: str = "\t", most: int = 5) -> list[str]:
     import csv
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    for row in csv.reader(lines, delimiter=sep):
+    rd = csv.reader(lines, delimiter=sep)
+    width, done = None, 0
+    for row in rd:
+        span, done = lines[done:rd.line_num], rd.line_num
+        if len(span) > 1:
+            row = next(csv.reader([" ".join(span)], delimiter=sep), [])    # a value over several lines: joined
+            if len(span) > most + 1 or len(row) != width:
+                # a stray opening quote ran on over the rows after it: read each line alone, the quote as text
+                for ln in span:
+                    w.writerow(next(csv.reader([ln], delimiter=sep, quoting=csv.QUOTE_NONE), []))
+                continue
+        if width is None:
+            width = len(row)
         w.writerow(row)
     return buf.getvalue().splitlines()
 

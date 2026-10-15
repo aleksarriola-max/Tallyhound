@@ -6,9 +6,19 @@ import os
 import urllib.error
 import urllib.request
 
-DEFAULT_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-if not DEFAULT_URL.startswith("http"):
-    DEFAULT_URL = "http://" + DEFAULT_URL
+
+
+def _from_ollama_host(host: str) -> str:
+    """The address OLLAMA_HOST means, read as Ollama reads it: no scheme means http on port 11434 unless one is given,
+    and 0.0.0.0 (listen everywhere, as Ollama's FAQ suggests) is reached on this computer."""
+    import re
+    host = host.strip() or "http://localhost:11434"
+    if "://" not in host:
+        host = "http://" + host + ("" if re.search(r":\d+$", host) else ":11434")
+    return re.sub(r"^(https?://)(?:0\.0\.0\.0|\[::\])(?=[:/]|$)", r"\1localhost", host)
+
+
+DEFAULT_URL = _from_ollama_host(os.environ.get("OLLAMA_HOST", ""))
 DEFAULT_MODEL = "qwen3.5:9b"
 
 
@@ -104,12 +114,17 @@ def openai_style(url: str) -> bool:
 
 def models(url: str = DEFAULT_URL, timeout: float = 2.0) -> list[str]:
     """Names of installed models. Empty list when the server cannot be reached."""
+    return installed(url, timeout) or []
+
+
+def installed(url: str = DEFAULT_URL, timeout: float = 2.0) -> list[str] | None:
+    """Names of installed models; None when the server cannot be reached (an empty list: it runs with no models)."""
     try:
         if openai_style(url):
             return sorted(m["id"] for m in _call(url, "/models", None, timeout).get("data", []))
         return sorted(m["name"] for m in _call(url, "/api/tags", None, timeout).get("models", []))
     except (LLMError, KeyError, TypeError):
-        return []
+        return None
 
 
 def chat_json(system: str, user: str, schema: dict, model: str = DEFAULT_MODEL, url: str = DEFAULT_URL,
@@ -144,8 +159,10 @@ def chat_tools(messages: list[dict], tools: list[dict], model: str = DEFAULT_MOD
         out = _call(url, "/chat/completions", {"model": model, "temperature": 0, "messages": messages, "tools": tools}, timeout)
         try:
             msg = dict(out["choices"][0]["message"])
-        except (KeyError, IndexError, TypeError) as e:
+        except (KeyError, IndexError, TypeError, ValueError) as e:
             raise LLMError("The model server sent back no message.") from e
+        if "tool_calls" in msg:
+            msg["tool_calls"] = _calls(msg)
         for c in msg.get("tool_calls") or []:
             fn = c.get("function", {})
             if isinstance(fn.get("arguments"), str):
@@ -166,4 +183,13 @@ def chat_tools(messages: list[dict], tools: list[dict], model: str = DEFAULT_MOD
     reply = out.get("message")
     if not isinstance(reply, dict):
         raise LLMError("Ollama sent back no message.")
+    if "tool_calls" in reply:
+        reply["tool_calls"] = _calls(reply)
     return reply
+
+
+def _calls(msg: dict) -> list[dict]:
+    """The well-formed tool calls of a reply; a call that is not an object with a function object is dropped."""
+    calls = msg.get("tool_calls")
+    return [c for c in calls if isinstance(c, dict) and isinstance(c.get("function", {}), dict)] \
+        if isinstance(calls, list) else []

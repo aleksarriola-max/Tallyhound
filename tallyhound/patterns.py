@@ -62,8 +62,8 @@ def just_under(values: list[float], limit: float, band: float = 0.04) -> dict:
     """How many amounts sit in the band just under a limit, against the same-width band just above it. Many more
     below than above suggests amounts being steered under the limit."""
     lo, hi = limit * (1 - band), limit * (1 + band)
-    below = sum(lo <= v < limit for v in values)
-    above = sum(limit <= v < hi for v in values)
+    below = sum(lo <= v <= limit for v in values)     # an amount at the limit is still within it (the checks use >)
+    above = sum(limit < v <= hi for v in values)
     return dict(limit=limit, below=below, above=above, flag=below >= 3 and below >= 3 * max(above, 1))
 
 

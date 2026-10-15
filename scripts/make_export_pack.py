@@ -36,6 +36,8 @@ def book(name: str, sheets: list[tuple[str, list[list], str]]) -> None:
 
 
 def main() -> None:
+    import argparse
+    argparse.ArgumentParser(description=__doc__.splitlines()[0]).parse_args()     # --help, before writing
     OUT.mkdir(parents=True, exist_ok=True)
     # 1 QuickBooks Online: Bill Payment List, vendor group headings, totals, footer
     w("qbo_bill_payment_list.csv", "\n".join([
