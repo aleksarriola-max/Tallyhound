@@ -45,7 +45,8 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
                     (r["vendor_id"].strip().upper(), rules.norm_name(r["supplier"])))
     skipped = sorted({n for n, ok in (("vendors.csv", V is not None), ("approvals.csv", A is not None),
                                       ("payments.csv", P is not None)) if not ok})
-    out, seen, used_lines = [], set(), set()
+    out, used_lines = [], set()
+    seen: dict[str, list] = {}           # invoice key -> (vendor id, names) of the lines already in this run
     for ln, r in rules.rows(run):
         inv, amt = r["invoice"].strip(), rules._f(r["amount"])
         sup = rules.norm_name(r["supplier"])
@@ -66,7 +67,9 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
         cands = (A or {}).get(key, []) if inv else []
         a = next((x for x in cands if rules.norm_name(x["vendor"]) in known), cands[0] if cands else None)
         fail = []
-        if V is not None and (v is None or not v["status"].strip().upper().startswith("ACTIVE")):
+        # a blank status reads as active, as in the vendor rules (4.1)
+        status = v["status"].strip().upper() if v is not None else ""
+        if V is not None and (v is None or (status and not status.startswith("ACTIVE"))):
             fail.append(1)
         if A is not None and (a is None or not a["approved_by"].strip()):
             fail.append(2)
@@ -75,9 +78,10 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
         # paid to the same vendor: by vendor id when both have one, else by name
         if P is not None and inv and any(pid == vid if pid and vid else pname in known for pid, pname in P.get(key, [])):
             fail.append(4)
-        if (key, vid or sup) in seen:
+        # earlier in this run for the same vendor, compared the same way (one line may give the vendor id, one not)
+        if any(oid == vid if oid and vid else bool(onames & known) for oid, onames in seen.get(key, [])):
             fail.append(5)
-        seen.add((key, vid or sup))
+        seen.setdefault(key, []).append((vid, known))
         if amt <= 0:                                  # unreadable, zero or negative: nothing a payment run should send
             fail.append(6)
             extra[6] = f"Amount \"{r['amount'].strip()}\" is missing, zero or negative"

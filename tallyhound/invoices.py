@@ -57,7 +57,9 @@ def pdf_lines(data: bytes, max_pages: int = 5) -> list[str] | None:
 PDF_SECONDS = 8.0        # one PDF may take this long to read (includes starting the worker)
 PDF_TOTAL_SECONDS = 90.0  # all PDFs of one upload together
 PDF_MEMORY_MB = 256 if llm.public() else 512
-_PDF_SLOTS = None          # one batch of PDFs is read at a time per server (each worker may use PDF_MEMORY_MB)
+# one batch of PDFs is read at a time per server (each worker may use PDF_MEMORY_MB). Made at import, not on first
+# use: two uploads at the same moment could otherwise each make their own and read side by side
+_PDF_SLOTS = threading.BoundedSemaphore(1)
 
 
 def read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
@@ -65,9 +67,6 @@ def read_pdfs(items: list[tuple[str, bytes]]) -> dict[str, list[str] | None]:
     limit, so a hostile PDF (a page-tree or decompression bomb) can never freeze the app for everyone else. A PDF that
     takes longer than PDF_SECONDS gives None and the worker is restarted for the rest. Falls back to reading in this
     process, with the page-count guard only, if a worker cannot be started."""
-    global _PDF_SLOTS
-    if _PDF_SLOTS is None:
-        _PDF_SLOTS = threading.BoundedSemaphore(1)
     with _PDF_SLOTS:
         return _read_pdfs(items)
 

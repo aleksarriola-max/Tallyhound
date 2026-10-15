@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from . import common as C
-from . import gate, sim
+from . import gate, sim, triage
 
 GATE_FILE = "payment_run_2026-10-01.csv"
 EVENT_CFG = {"time": st.column_config.Column(width=70), "agent": st.column_config.Column(width=110),
@@ -35,6 +35,7 @@ def overview() -> None:
     m[3].metric("Open findings", dc["pending"], help=f"Findings nobody has decided yet, out of {len(f) - dc['shadow']} "
                 "in review" + (f" ({dc['shadow']} more from rules in shadow mode)" if dc["shadow"] else ""))
 
+    f = f[~f.clause.astype(str).isin(triage.shadow_clauses())]     # as Review: shadow-mode findings are not in review
     st.subheader("Findings by area")
     areas = ["Payments", "Approvals", "Vendors", "Contracts", "Expenses"] + (["Invoices"] if (f.area == "Invoices").any() else [])
     cols = st.columns(len(areas))
@@ -103,6 +104,14 @@ def release_csv(rel: pd.DataFrame) -> str:
     return out.to_csv(index=False)
 
 
+def release_name(run: str) -> str:
+    """release_2026-10-01.csv, or release_<dataset>.csv for an uploaded run: its whole name, without brackets."""
+    import re
+    tag = run[len("Uploaded run ("):-1] if run.startswith("Uploaded run (") else run.split()[-1]
+    tag = re.sub(r"[^\w.-]+", "_", tag).strip("_.")
+    return f"release_{tag or 'run'}.csv"
+
+
 def payment_gate() -> None:
     S = st.session_state
     runs = gate_runs()
@@ -126,8 +135,7 @@ def payment_gate() -> None:
     h1.markdown(f"<span style='font-size:1.4rem;font-weight:700'>"
                 f"<span style='color:{C.HOLD}'>{t['hold_n']} HOLD {C.money(t['hold_amt'])}</span> · "
                 f"<span style='color:{C.RELEASE}'>{t['rel_n']} RELEASE</span></span>", unsafe_allow_html=True)
-    h3.download_button("Export release file", data=release_csv(rel),
-                       file_name=f"release_{run.split()[-1]}.csv", mime="text/csv", **C.bw())
+    h3.download_button("Export release file", data=release_csv(rel), file_name=release_name(run), mime="text/csv", **C.bw())
 
     show = pd.DataFrame({"Line": gdf.line.astype(str), "Decision": gdf.final, "Supplier": gdf.supplier,
                          "Invoice": gdf.invoice, "Amount": gdf.amount.map(C.money), "Reason": gdf.reason})
@@ -152,7 +160,7 @@ def payment_gate() -> None:
     clicked = c2.button("Clear hold", disabled=not holdable or not clearable or bool(auth.review_block_reason()))
     if clicked and not reason.strip():
         st.warning("Write a reason first: every cleared hold needs one for the audit trail.")
-    elif clicked and not auth.review_block_reason():       # checked again: see common.decide
+    elif clicked and clearable and not auth.review_block_reason():       # checked again: see common.decide
         for l in holdable:
             row = gdf[gdf.line == l].iloc[0]
             S.cleared[l] = reason.strip()

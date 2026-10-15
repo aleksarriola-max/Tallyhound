@@ -7,12 +7,14 @@ server. SQLite handles several people saving at once safely, which loose files d
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import secrets
 import sqlite3
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import streamlit as st
@@ -20,7 +22,8 @@ import streamlit as st
 KEYS = ["decisions", "audit_log", "cleared", "fail_pending", "recent_extra", "tour_downloaded", "tour_off",
         "uploads", "custom", "by_dataset", "dataset", "extra_opts",
         "mappings", "answer_keys", "run_history", "limits", "notes", "suppressions", "presets",
-        "po_exempt_words", "po_exempt_vendors", "rule_override", "shadow", "shadow_marks", "date_order", "trail_seals"]
+        "po_exempt_words", "po_exempt_vendors", "rule_override", "shadow", "shadow_marks", "date_order", "trail_seals",
+        "_run_seen"]                    # the finished run was looked at: Home stops announcing it, after a reload too
 MAX_AGE_DAYS = 14
 TEAM = "team"            # the shared workspace when sign-in is on
 _SID = re.compile(r"^(?:[0-9a-f]{12}|[0-9a-f]{32})$")   # 12 = links made before the audit; new ones are 128-bit
@@ -68,13 +71,18 @@ def write_private(path: Path, text: str) -> None:
         raise
 
 
-def _db() -> sqlite3.Connection:
+@contextlib.contextmanager
+def _db() -> Iterator[sqlite3.Connection]:
     path = state_dir() / "tallyhound.db"
     if not path.exists():
         os.close(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600))      # every session's uploads live here
     con = sqlite3.connect(path, timeout=10)
-    con.execute("CREATE TABLE IF NOT EXISTS state (sid TEXT PRIMARY KEY, data TEXT NOT NULL, updated REAL NOT NULL)")
-    return con
+    try:
+        with con:                       # commits, or rolls back on an error
+            con.execute("CREATE TABLE IF NOT EXISTS state (sid TEXT PRIMARY KEY, data TEXT NOT NULL, updated REAL NOT NULL)")
+            yield con
+    finally:
+        con.close()                     # "with con" alone leaves the connection open until garbage collection
 
 
 def _read(sid: str) -> str | None:
@@ -210,7 +218,7 @@ SHAPES = {
     "po_exempt_vendors": _list_of(str), "rule_override": _dict_of(str), "shadow": _list_of(str),
     "shadow_marks": _dict_of(int), "date_order": _dict_of(dict),
     "sim": lambda v: isinstance(v, dict) and isinstance(v.get("queue"), list) and isinstance(v.get("log", []), list),
-    "tour_off": lambda v: isinstance(v, bool),
+    "tour_off": lambda v: isinstance(v, bool), "_run_seen": lambda v: isinstance(v, str),
     "tour_downloaded": lambda v: isinstance(v, bool), "fail_pending": lambda v: isinstance(v, bool),
 }
 
@@ -259,6 +267,9 @@ def load_into_session() -> None:
         S["_sim_saved"] = json.dumps(sim, sort_keys=True, default=str)
     if not data:
         S["_saved"] = ""
+        if S.pop("_replay", None):       # the conflict was a teammate's reset: say so instead of dropping the click
+            S["_restore_note"] = ("A teammate reset the saved work since this page loaded, so your last change(s) "
+                                  "were not kept. Make them again if they are still needed.")
         return
     data, bad = clean(data)
     data.pop("sim", None)                # older saves kept the run in the main row
@@ -306,9 +317,17 @@ def _replay(S) -> None:
     from . import common as C
     from . import custom
     done, skipped, stale = 0, 0, 0
+    from . import learn
     for kind, dataset, fid, status, reason, run in ops:
         if (S.get("dataset") or None) != (dataset or None):
             custom.activate(dataset)
+        if kind == "suppress":               # "don't flag again" goes with its rejection, if that rejection stands
+            d = S.get("decisions", {}).get(fid)
+            if C.run_of(dataset) == run and d and d.get("status") == "Rejected":
+                clause, source_file, who = json.loads(status)
+                learn.suppress(clause, source_file, who, reason)
+                d["suppression"] = [clause, source_file, who]
+            continue
         if C.run_of(dataset) != run:         # the checks ran again since the click: F-01 is now another finding
             stale += 1
         elif kind == "decide" and fid not in S.get("decisions", {}):

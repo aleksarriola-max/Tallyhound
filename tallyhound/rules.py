@@ -54,6 +54,14 @@ PO_EXEMPT_WORDS = ["rent", "lease", "landlord", "property management", "properti
 NO_PO = {"", "N/A", "NA", "-", "--", "NONE", "TBC", "TBA", "0", "NIL", "PENDING"}
 INVOICE_TYPES = {"", "INVOICE", "INV", "BILL"}
 DIRECTOR = re.compile(r"\b(director|cfo|ceo|chief (financial|executive|operating) officer|managing partner)\b", re.I)
+# names a director without being one: "Assistant to the CFO", "PA to Director", and the grades below a director
+# ("Assistant Director", "Associate Director"). A deputy acts for the director and counts as one.
+NOT_DIRECTOR = re.compile(r"\b(?:to\s+(?:the\s+)?(?:\w+\s+)?(?:director|cfo|ceo|chief|managing)|"
+                          r"(?:assistant|associate)\s+(?:\w+\s+)?director)\b", re.I)
+
+
+def is_director(role: str) -> bool:
+    return bool(DIRECTOR.search(role)) and not NOT_DIRECTOR.search(role)
 
 
 def has_po(r) -> bool:
@@ -331,11 +339,14 @@ def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     groups: dict[tuple, dict] = {}
     tol = L.get("tolerance", 1.0)
 
+    who = _payee(R)
+
     def group(r: Row) -> tuple:                  # one vendor id, however the supplier is spelt
-        return r["vendor_id"].strip().upper() or norm_name(r["supplier"]), inv_key(r["invoice_no"].strip())
+        return who(r), inv_key(r["invoice_no"].strip())
     first: dict[tuple, float] = {}
     first_paid: dict[tuple, int] = {}
-    for ln, r in sorted(R, key=lambda x: (x[1].d("pay_date") or date.max, x[0])):
+    by_date = sorted(R, key=lambda x: (x[1].d("pay_date") or date.max, x[0]))
+    for ln, r in by_date:
         if r["invoice_no"].strip() and _f(r["invoice_amount"]) > 0:
             # the invoice amount on its earliest payment, wherever the file sorts it (newest first is common): later
             # payments may show an open balance (instalments), and a later line claiming a bigger invoice must not
@@ -343,9 +354,8 @@ def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
             first.setdefault(group(r), _f(r["invoice_amount"]))
         if r["invoice_no"].strip() and _f(r["paid_amount"]) > 0:
             first_paid.setdefault(group(r), ln)
-    for ln, r in R:
-        pa, ia = _f(r["paid_amount"]), _f(r["invoice_amount"])
-        inv = r["invoice_no"].strip()
+    for ln, r in by_date:              # in payment order too: the later payment is the repeat, however the file sorts
+        pa, inv = _f(r["paid_amount"]), r["invoice_no"].strip()
         if inv:
             g = groups.setdefault(group(r), dict(net=0.0, inv=first.get(group(r), 0.0), lines=[], cand=[]))
             g["net"] += pa
@@ -354,6 +364,12 @@ def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
                                      ln, [("payments.csv", x) for x in g["lines"][-10:]]))   # the latest 10 is enough
             if pa > 0:
                 g["lines"].append(ln)
+    for ln, r in R:
+        pa, ia = _f(r["paid_amount"]), _f(r["invoice_amount"])
+        inv = r["invoice_no"].strip()
+        if inv:
+            if not r["invoice_amount"].strip():       # blank: the amount on another line of the invoice, if any
+                ia = first.get(group(r), math.inf)
             if pa > ia + tol and first_paid.get(group(r)) == ln:
                 out.append(Hit("Payments", "5.1", "Medium", round(pa - ia, 2),
                                f"{inv} paid ${pa:,.2f} against an invoice of ${ia:,.2f}", "payments.csv", ln))
@@ -369,8 +385,24 @@ def payments(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     for g in groups.values():          # judged on the whole file: a reversal further down undoes an earlier re-issue
         if g["cand"] and g["net"] > g["inv"] + tol:
             out += g["cand"]
-    out += _near_duplicates(R, groups, L)
+    out += _near_duplicates(R, groups, L, who)
     return out
+
+
+def _payee(R: list[tuple[int, Row]]):
+    """Who a payment went to: its vendor id; with none, the id that other lines of the file give the same supplier
+    name (only when that is one id), else the name. A file where some lines carry ids would otherwise split one
+    supplier in two and miss a payment made twice."""
+    ids: dict[str, set[str]] = {}
+    for _, r in R:
+        if vid := r["vendor_id"].strip().upper():
+            ids.setdefault(norm_name(r["supplier"]), set()).add(vid)
+
+    def who(r: Row) -> str:
+        n = norm_name(r["supplier"])
+        one = ids.get(n, set())
+        return r["vendor_id"].strip().upper() or (next(iter(one)) if len(one) == 1 else n)
+    return who
 
 
 CONFUSABLE = str.maketrans({"O": "0", "I": "1", "L": "1", "S": "5", "B": "8", "Z": "2"})
@@ -419,7 +451,7 @@ NEAR_WINDOW = 7          # days between two payments of a near-duplicate pair (w
 NEAR_NEIGHBOURS = 50     # payments compared on each side: keeps a file of thousands of equal amounts fast
 
 
-def _near_duplicates(R, groups: dict, L: dict) -> list[Hit]:
+def _near_duplicates(R, groups: dict, L: dict, payee=None) -> list[Hit]:
     """The same supplier paid the same amount twice under invoice numbers that differ only the way a re-keyed number
     does, with the same invoice date (or, without one, paid within a week). Exact repeats are caught above. Left
     alone: a series of equal bills (numbers run on), instalments under suffixed numbers (together they do not exceed
@@ -430,7 +462,7 @@ def _near_duplicates(R, groups: dict, L: dict) -> list[Hit]:
         pa, inv = _f(r["paid_amount"]), r["invoice_no"].strip()
         if pa < L.get("materiality", 50.0) or not inv:
             continue
-        who = r["vendor_id"].strip().upper() or norm_name(r["supplier"])
+        who = (payee or _payee(R))(r)
         key = inv_key(inv)
         g = groups.get((who, key))
         if g and g["net"] <= tol:
@@ -468,6 +500,9 @@ def _near_duplicates(R, groups: dict, L: dict) -> list[Hit]:
 def approvals(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     out = []
     R = rows(lines)
+    pos = _pos(R)
+    director_hits: dict[int, Hit] = {}
+    covered: list[tuple[int, int]] = []             # (PO line, invoice line) of invoices billed within their PO
     for ln, r in R:
         amt = _f(r["amount"])
         label = r["doc_no"] or r["record_id"]
@@ -476,12 +511,38 @@ def approvals(lines: list[str], L: dict = LIMITS) -> list[Hit]:
         if amt > L["po_limit"] and not has_po(r) and r["type"].strip().upper() in INVOICE_TYPES \
                 and not po_exempt(r["vendor"], L):
             out.append(Hit("Approvals", "1.1", "Medium", amt, f"{label} for ${amt:,.2f} has no purchase order", "approvals.csv", ln))
-        if amt > L["director_limit"] and not DIRECTOR.search(r["approver_role"]):
-            out.append(Hit("Approvals", "1.3", "Medium", amt,
-                           f"{label} for ${amt:,.2f} approved by a {r['approver_role'] or 'non-director'}, not a director",
-                           "approvals.csv", ln))
-    out += _split_orders(R, L) + _po_after_invoice(R) + _just_under(R, L)
+        if amt > L["director_limit"] and not is_director(r["approver_role"]):
+            # an invoice within a PO that is itself over the limit is the same purchase: the director approval
+            # belongs on the PO, which is checked (and flagged) on its own line
+            po = _po_of(pos, r) if r["type"].strip().upper() in INVOICE_TYPES else None
+            if po and L["director_limit"] < _f(po[1]["amount"]) and amt <= _f(po[1]["amount"]) + L.get("tolerance", 1.0):
+                covered.append((po[0], ln))
+                continue
+            director_hits[ln] = Hit("Approvals", "1.3", "Medium", amt,
+                                    f"{label} for ${amt:,.2f} approved by a {r['approver_role'] or 'non-director'}, "
+                                    "not a director", "approvals.csv", ln)
+            out.append(director_hits[ln])
+    for po_ln, ln in covered:
+        if po_ln in director_hits:
+            director_hits[po_ln].related.append(("approvals.csv", ln))
+    out += _split_orders(R, L) + _po_after_invoice(R, pos) + _just_under(R, L)
     return out
+
+
+def _pos(R: list[tuple[int, Row]]) -> dict[str, list[tuple[int, Row]]]:
+    """Purchase orders by number. Two suppliers can share a PO number, so each number keeps every PO."""
+    pos: dict[str, list[tuple[int, Row]]] = {}
+    for ln, r in R:
+        if r["type"].strip().upper() == "PO":
+            pos.setdefault(r["doc_no"].strip().lower(), []).append((ln, r))
+    return pos
+
+
+def _po_of(pos: dict[str, list[tuple[int, Row]]], r: Row) -> tuple[int, Row] | None:
+    """The PO an invoice is billed against: the one with its number and vendor, else the only one with its number."""
+    cands = pos.get(r["po_no"].strip().lower(), []) if has_po(r) else []
+    same = [p for p in cands if norm_name(p[1]["vendor"]) == norm_name(r["vendor"])]
+    return same[0] if same else cands[0] if len(cands) == 1 else None
 
 
 def person_key(s: str) -> str:
@@ -499,7 +560,7 @@ def _just_under(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
     for ln, r in R:
         amt = _f(r["amount"])
         if r["type"].strip().upper() in INVOICE_TYPES and lim * 0.96 <= amt <= lim and person_key(r["requested_by"]) \
-                and not DIRECTOR.search(r["approver_role"]):
+                and not is_director(r["approver_role"]):
             by.setdefault(person_key(r["requested_by"]), []).append((ln, r))
     out = []
     for items in by.values():
@@ -517,17 +578,22 @@ def _split_orders(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
     close together in time, adding up to more than the director limit. Bills that never carry a PO do not count."""
     out = []
     groups: dict[tuple, list] = {}
-    who_by_vendor: dict[str, list[str]] = {}         # requesters seen per vendor: no scan of every group per row
-    for ln, r in R:
-        if r["type"].strip().upper() in INVOICE_TYPES and not has_po(r) and r.d("date") \
-                and _f(r["amount"]) <= L["director_limit"] and not po_exempt(r["vendor"], L):
-            v = norm_name(r["vendor"])
-            known = who_by_vendor.setdefault(v, [])
-            who = next((k for k in known if same_person(k, r["requested_by"])),
-                       r["requested_by"].strip())      # "K. Lowe" and "Kate Lowe" are one requester
-            if who not in known:
-                known.append(who)
-            groups.setdefault((v, who), []).append((ln, r))
+    todo = [(ln, r) for ln, r in R if r["type"].strip().upper() in INVOICE_TYPES and not has_po(r) and r.d("date")
+            and _f(r["amount"]) <= L["director_limit"] and not po_exempt(r["vendor"], L)]
+    # requesters per vendor. "K. Lowe" and "klowe" join the one full name they fit ("Kate Lowe"); when they fit two
+    # ("Kate Lowe", "Kim Lowe") they stay apart, so two people are never merged through an initial
+    full: dict[str, dict[str, str]] = {}            # vendor -> {person key: one spelling of that full name}
+    for _, r in todo:
+        p = _person(r["requested_by"])
+        if len(p) >= 2 and len(p[0]) > 1:
+            full.setdefault(norm_name(r["vendor"]), {}).setdefault(person_key(r["requested_by"]), r["requested_by"])
+    for ln, r in todo:
+        v, name = norm_name(r["vendor"]), r["requested_by"]
+        who, names = person_key(name), full.get(norm_name(r["vendor"]), {})
+        if who not in names:
+            fits = {k for k, spelt in names.items() if same_person(spelt, name)}
+            who = fits.pop() if len(fits) == 1 else who
+        groups.setdefault((v, who), []).append((ln, r))
     for items in groups.values():
         items.sort(key=lambda x: x[1].d("date"))
         days = [x[1].d("date") for x in items]
@@ -550,14 +616,14 @@ def _split_orders(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
     return out
 
 
-def _po_after_invoice(R: list[tuple[int, Row]]) -> list[Hit]:
+def _po_after_invoice(R: list[tuple[int, Row]], pos: dict | None = None) -> list[Hit]:
     """A purchase order dated after the invoice it covers."""
     out = []
-    pos = {r["doc_no"].strip().lower(): (ln, r) for ln, r in R if r["type"].strip().upper() == "PO"}
+    pos = _pos(R) if pos is None else pos
     for ln, r in R:
         if r["type"].strip().upper() not in INVOICE_TYPES:     # "Bill" (QuickBooks) is an invoice too
             continue
-        hit = pos.get(r["po_no"].strip().lower())
+        hit = _po_of(pos, r)
         if hit and (po_d := hit[1].d("date")) and (inv_d := r.d("date")) and po_d > inv_d:
             days = (po_d - inv_d).days
             out.append(Hit("Approvals", "1.1", "Medium", _f(r["amount"]),
@@ -613,7 +679,7 @@ BATCH_POOL, BATCH_MAX = 40, 25     # a batch transfer may pay up to 25 of the 40
 
 
 def _subset(pool: list[tuple[int, int]], target: int, kmin: int = 2, kmax: int = BATCH_MAX, budget: int = 300_000) -> list[int] | None:
-    """Line numbers of 2-6 payments (cents) that add up to target, or None. Depth-first over amounts sorted
+    """Line numbers of kmin to kmax payments (cents) that add up to target, or None. Depth-first over amounts sorted
     small to large, so a branch stops as soon as it overshoots; a step budget keeps odd files from taking minutes."""
     items = sorted(pool, key=lambda x: x[1])
     steps = 0
@@ -747,6 +813,8 @@ def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     # a set-up date shared by many vendors is when the vendor list was imported into this system, not when they
     # became suppliers: a "new vendor" check against it would flag every big payment of the following month
     migrated = {d for d, n in made_on.items() if n >= 5 and n >= 0.3 * len(R)}
+    # a blank tax form is missing when the file records tax forms; a column left blank throughout is not tracked
+    w9_used = any(r["w9_on_file"].strip() for _, r in R)
     for ln, r in R:
         paid = _f(r["last_paid_amount"])
         # anything but a clear yes is unverified: blank, "N", "PENDING", "FALSE" are as risky as "NO"
@@ -768,7 +836,8 @@ def vendors(lines: list[str], L: dict = LIMITS) -> list[Hit]:
                                f"{r['status'].title()} vendor {r['vendor_id']} was paid "
                                + (f"${paid:,.2f} " if paid else "") + f"on {r['last_paid_on']}",
                                "vendors.csv", ln))
-        if r["w9_on_file"].strip().upper() in NO and r["last_paid_on"].strip():
+        w9 = r["w9_on_file"].strip().upper()
+        if (w9 in NO or (not w9 and w9_used)) and r["last_paid_on"].strip():
             out.append(Hit("Vendors", "4.4", "Low", paid, f"{r['vendor_id']} paid " + (f"${paid:,.2f} " if paid else "")
                            + "with no tax form on file", "vendors.csv", ln))
         made, paid_on = r.d("created_on"), r.d("last_paid_on")
@@ -856,7 +925,7 @@ def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
         if (trip_d := r.d("date")) \
                 and (re.search(r"\b(travel|airfare|hotel)\b", r["category"], re.I) or TRAVEL.search(r["notes"])) \
                 and r["notes"].strip().lower() != "business purpose recorded":
-            trips.setdefault(r["employee"].strip().lower(), []).append((trip_d, tl))
+            trips.setdefault(person_key(r["employee"]), []).append((trip_d, tl))     # "Lowe, Kate" = "Kate Lowe"
     for ln, r in R:
         amt = _f(r["amount"])
         if r["category"].strip().upper() in MEAL_CATEGORIES:
@@ -873,7 +942,9 @@ def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
                                f"Meal of ${amt:,.2f} with no head count recorded (limit ${L['meal_limit']:,.2f} per "
                                "person)", "expenses.csv", ln))
         ref = "" if r["receipt_ref"].strip().upper() in NO_RECEIPT else r["receipt_ref"].strip()
-        if amt > L["receipt_limit"] and not ref:
+        # mileage and allowances never carry a receipt (see 6.6); only the category counts here, so a note such as
+        # "over the hotel allowance" does not excuse a missing receipt
+        if amt > L["receipt_limit"] and not ref and not NO_RECEIPT_KINDS.search(r["category"]):
             out.append(Hit("Expenses", "6.2", "Medium", amt, f"Claim {r['claim_id']} of ${amt:,.2f} has no receipt", "expenses.csv", ln))
         if PERSONAL.search(r["notes"]) and not PROFESSIONAL.search(r["notes"]):
             out.append(Hit("Expenses", "6.3", "Low", amt, f"Personal item claimed: {r['notes'].strip().lower()}", "expenses.csv", ln))
@@ -888,7 +959,7 @@ def expenses(lines: list[str], L: dict = LIMITS) -> list[Hit]:
         if d and d.weekday() >= 5 and not r["notes"].strip():
             # a taxi, meal or hotel on the weekend of a business trip is normal; a weekend purchase of supplies is not
             near_trip = TRAVEL_SPEND.search(r["category"]) and any(
-                abs((d - t).days) <= 1 and tl != ln for t, tl in trips.get(r["employee"].strip().lower(), []))
+                abs((d - t).days) <= 1 and tl != ln for t, tl in trips.get(person_key(r["employee"]), []))
             if not near_trip:
                 out.append(Hit("Expenses", "6.4", "Low", amt, f"Weekend expense {r['claim_id']} with no reason given", "expenses.csv", ln))
     out += _under_receipt_limit(R, L)

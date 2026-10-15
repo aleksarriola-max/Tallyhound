@@ -33,22 +33,28 @@ def decode(raw: bytes) -> str:
         return raw.decode("utf-16", errors="replace")
     head = raw[:4000]
     for zeros, other, codec in ((head[1::2], head[0::2], "utf-16-le"), (head[0::2], head[1::2], "utf-16-be")):
-        if len(head) >= 8 and zeros.count(0) > 0.4 * len(zeros) and not other.count(0):
-            return raw.decode(codec, errors="replace")       # UTF-16 with no BOM: every other byte of the text is 0
+        # UTF-16 with no BOM: every other byte of the text is 0. The other half has a 0 only for the odd character
+        # such as the ideographic space (U+3000) or 一 (U+4E00), so a few there are allowed
+        if len(head) >= 8 and zeros.count(0) > 0.4 * len(zeros) and other.count(0) * 10 < zeros.count(0):
+            return raw.decode(codec, errors="replace")
     try:
         return raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         pass
-    try:
-        # Excel on a Japanese Windows saves CSV as Shift-JIS. Taken only when every non-ASCII run reads as two or
-        # more Japanese characters: a Western file's lone accented letters never do.
-        text = raw.decode("cp932")
-        runs = re.findall(r"[^\x00-\x7f]+", text)
-        if runs and all(len(r) >= 2 and JAPANESE.fullmatch(r) for r in runs):
-            return text
-    except UnicodeDecodeError:
-        pass
-    return raw.decode("cp1252", errors="replace")
+    western = raw.decode("cp1252", errors="replace")
+    # Excel on a Japanese Windows saves CSV as Shift-JIS. Taken only when every non-ASCII run reads as two or more
+    # Japanese characters, and not when the text reads as Western words in Windows-1252 (every non-ASCII run one or
+    # two accented letters): "Hélène" (H E9 6C E8 6E e) is two kanji in a row as Shift-JIS
+    if not all(len(w) <= 2 and all("\u00c0" <= c <= "\u00ff" and c.isalpha() for c in w)
+               for w in re.findall(r"[^\x00-\x7f]+", western)):
+        try:
+            text = raw.decode("cp932")
+            runs = re.findall(r"[^\x00-\x7f]+", text)
+            if runs and all(len(r) >= 2 and JAPANESE.fullmatch(r) for r in runs):
+                return text
+        except UnicodeDecodeError:
+            pass
+    return western
 
 
 def parse_zip(data: bytes, max_zip_mb: float = MAX_ZIP_MB) -> tuple[dict[str, list[str]], list[str]]:
@@ -90,8 +96,9 @@ def parse_zip(data: bytes, max_zip_mb: float = MAX_ZIP_MB) -> tuple[dict[str, li
     def kind(info) -> str | None:
         stem = info.filename.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
         return next((v for k, v in STEMS.items() if stem == k or stem.startswith(k + "_") or stem.endswith("_" + k)), None)
-    # files named the Tallyhound way first: a file recognised from its columns never takes a properly named one's place
-    infos = sorted(infos, key=lambda i: kind(i) is None)
+    # files named the Tallyhound way first: a file recognised from its columns never takes a properly named one's place;
+    # PDFs last, so a folder of scans cannot use up the unpacked-data limit before its exports are read
+    infos = sorted(infos, key=lambda i: (i.filename.lower().endswith(".pdf"), kind(i) is None))
     if len(infos) > MAX_ENTRIES:
         notes.append(f"Stopped at {MAX_ENTRIES} files in one zip; the other {len(infos) - MAX_ENTRIES} were skipped.")
         infos = infos[:MAX_ENTRIES]
@@ -235,6 +242,10 @@ def _tsv_to_csv(lines: list[str], sep: str = "\t", most: int = 5) -> list[str]:
                 for ln in span:
                     w.writerow(next(csv.reader([ln], delimiter=sep, quoting=csv.QUOTE_NONE), []))
                 continue
+        elif width is not None and len(row) != width:
+            # a stray quote on the last line has no later rows to run on to, but still swallows the rest of its row
+            alt = next(csv.reader(span, delimiter=sep, quoting=csv.QUOTE_NONE), [])
+            row = alt if len(alt) == width else row
         if width is None:
             width = len(row)
         w.writerow(row)

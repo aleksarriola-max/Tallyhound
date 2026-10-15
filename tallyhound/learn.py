@@ -19,8 +19,17 @@ ENTITY_COL = {"payments.csv": "supplier", "approvals.csv": "vendor", "vendors.cs
 LIMIT_OF = {"1.1": "po_limit", "1.3": "director_limit", "6.1": "meal_limit", "6.2": "receipt_limit"}
 
 
-def entity(source_file: str, evidence: str, header: str = "") -> str:
-    """Who a finding is about: supplier, employee or vendor id - read from the evidence line."""
+def entity(source_file: str, evidence: str, header: str = "", lines: list[str] | None = None, line: int = 0) -> str:
+    """Who a finding is about: supplier, employee or vendor id - read from the evidence line. For invoices.txt, given
+    the file and the finding's line, the supplier of the invoice that line belongs to: its "Total due" or bank line
+    alone would make a suppression match another supplier's invoice with the same total or account."""
+    if source_file == "invoices.txt" and lines and line:
+        from . import invoices
+        mine = [b for b in invoices.blocks(lines) if b["start"] <= line]
+        b = mine[-1] if mine else {}
+        name = (b.get("vendor") or b.get("vendor_guess") or (0, ""))[1].strip()
+        if name:
+            return name
     col = ENTITY_COL.get(source_file)
     if col and header:
         head, vals = next(csv.reader([header])), next(csv.reader([evidence]))

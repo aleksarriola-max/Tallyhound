@@ -2,7 +2,8 @@
 
     python scripts/watch.py FOLDER [--alert]
 
-Exit codes: 0 everything was checked, 1 an alert could not be sent (it is retried next run), 3 some data was not
+Exit codes: 0 everything was checked, 1 an alert could not be sent or --alert has no channel set up (it is retried
+next run), 3 some data was not
 checked (see "Data that was NOT checked" in the report), 2 the folder does not exist.
 """
 import argparse
@@ -34,8 +35,10 @@ for n in problems:
 failed: list[str] = []
 if a.alert and (new or held or problems):
     sent = headless.send_alert(headless.alert_text(new, held, report, problems), failed)
-    print("Alert sent via " + ", ".join(sent) if sent else
-          ("" if failed else "No alert channel configured (see tallyhound/headless.py)."))
+    if not sent and not failed:      # --alert without a channel: a failure, so these are alerted once one is set up
+        failed.append("No alert channel configured (see tallyhound/headless.py).")
+    if sent:
+        print("Alert sent via " + ", ".join(sent))
     for e in failed:
         print(f"ALERT FAILED: {e}")
 if not failed:

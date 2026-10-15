@@ -160,6 +160,20 @@ def anonymise(files: dict[str, list[str]]) -> dict[str, list[str]]:
     return out
 
 
+def without_title(desc: str) -> str:
+    """A saved case's description without the finding title at its end, "... (title)". Only that last bracket
+    goes: the reviewer's reason before it may have brackets of its own."""
+    desc = desc.strip()
+    if not desc.endswith(")"):
+        return desc
+    depth = 0
+    for i in range(len(desc) - 1, -1, -1):
+        depth += {")": 1, "(": -1}.get(desc[i], 0)
+        if depth == 0:
+            return desc[:i].strip()
+    return desc
+
+
 def files_of(path: Path) -> dict[str, list[str]]:
     from tallyhound import custom
     if path.suffix == ".json":
@@ -190,7 +204,7 @@ def main() -> None:
         case = json.loads(src.read_text(encoding="utf-8"))
         case["files"] = files
         mapping = build_names(files_of(src))
-        desc = re.sub(r"\(.*\)$", "", case.get("description", "")).strip()
+        desc = without_title(case.get("description", ""))
         case["description"] = scrub(replace_names(desc, mapping), free=True)
         (out / src.name).write_text(json.dumps(case, indent=1), encoding="utf-8")
     else:

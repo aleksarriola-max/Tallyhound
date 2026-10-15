@@ -389,8 +389,10 @@ def apply_suppressions(ok: pd.DataFrame, label: str | None) -> pd.DataFrame:
         lines = vf.get(name) if label else C.read_source(name)
         return lines[0] if lines else ""
     heads = {n: head(n) for n in set(ok.source_file)}
-    keep = [r.id in decided or not learn.is_suppressed(str(r.clause), r.source_file,
-                                                         learn.entity(r.source_file, r.evidence, heads[r.source_file]))
+    inv = (vf.get("invoices.txt") if label else C.read_source("invoices.txt")) or []   # for the supplier of a line
+    keep = [r.id in decided or not learn.is_suppressed(
+                str(r.clause), r.source_file,
+                learn.entity(r.source_file, r.evidence, heads[r.source_file], inv, int(r.line_number)))
             for r in ok.itertuples()]
     S["_n_suppressed"] = len(ok) - sum(keep)
     return ok.loc[pd.Series(keep, index=ok.index, dtype=bool)].reset_index(drop=True)

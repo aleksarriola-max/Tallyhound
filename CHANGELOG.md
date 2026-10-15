@@ -18,6 +18,20 @@ All notable changes. Dates are release dates; the project follows [Semantic Vers
 - Approvals of exactly $10,000.00 and amounts exactly at a limit now count as just under it; a weekend taxi on the
   day of a trip is no longer flagged; a new vendor with a blank status is checked like an active one.
 - Rejected "PO raised after invoice" findings no longer suggest raising the PO limit.
+- The payment gate held a vendor with a blank status as "not active"; it now reads it as active, as the rules do.
+- 4.4: a blank tax form is now missing when other vendors in the file record theirs.
+- 6.2 no longer asks for a receipt on mileage, per diem or allowance claims (6.6 already left them out).
+- 1.3: "Assistant to the CFO", "PA to Director", "Assistant Director" and "Associate Director" are no longer taken
+  for directors; an invoice within a PO over the limit is one finding, on the PO, not two.
+- 5.1 against a blank invoice amount reported the whole payment as overpaid; it now uses the amount on another
+  line of the invoice, or skips the line.
+- 5.2/5.6: a payment with no vendor id is grouped under the id other lines give the same supplier, so a payment made
+  twice is found when only one line carries the id.
+- Two suppliers sharing a PO number: "PO raised after invoice" now uses the PO of the invoice's own vendor.
+- 1.4 no longer merges two people through an initial ("K. Lowe" with both "Kate Lowe" and "Kim Lowe").
+- A weekend taxi on a trip is matched however the name is written ("Lowe, Kate" / "Kate Lowe").
+- "Don't flag again" on an invoice finding now means that invoice's supplier, not the text of one line such as
+  "Total due: $1,000.00", which also hid other suppliers' invoices with the same total.
 
 **Files and AI engines**
 - One stray quote in a tab or semicolon file swallowed every row after it; it is now read as plain text.
@@ -31,6 +45,17 @@ All notable changes. Dates are release dates; the project follows [Semantic Vers
 - Two folder checks in the same minute no longer overwrite each other's report. `make_example_exports.py --help`
   and `make_export_pack.py --help` no longer rewrite files.
 
+**Second look at these fixes** (`tests/test_audit2_regressions.py`)
+- The same invoice twice in one payment run was released when only one line gave the vendor id and no vendor master
+  was uploaded; lines are now compared the way "already paid" compares them.
+- In a newest-first payments file, "paid more than once" pointed at the original payment (and an instalment) instead
+  of the repeat; payments are now taken in payment-date order.
+- A Windows CSV whose only accents were in names such as "Hélène" or "Thérèse" was read as Japanese; a UTF-16 file
+  with no byte-order mark that held an ideographic space or 一 was garbled.
+- A stray quote on the last line of a tab or semicolon file still swallowed the rest of that row.
+- Scans no longer use up the unpacked-data limit before the CSVs in the same zip or folder are read.
+- `OLLAMA_HOST=localhost:11434/` and `OLLAMA_HOST=::1` now give a working address.
+
 **Screens and saved work**
 - Shadow mode switched itself off when you left Settings; it now stays on and is logged in the audit trail.
 - After a save conflict, a click made before a teammate re-ran the checks could be replayed onto a different finding
@@ -40,6 +65,15 @@ All notable changes. Dates are release dates; the project follows [Semantic Vers
   findings" is switched.
 - README and Settings no longer suggest that a rule leaves shadow mode by itself: an admin promotes it. The README
   trap count is corrected (26 per month).
+- After a save conflict, a replayed rejection kept its "don't flag again"; a click after a teammate's reset is no
+  longer dropped without a message; the "Run finished" box stays dismissed after a reload.
+- A forged "Clear hold" on a view-only payment run is refused (Streamlit before 1.61 acts on disabled buttons).
+- Reports area tiles and the severity chart leave out shadow-mode findings, as Review does.
+- The release file of an uploaded run has a plain name (`release_sept_export.csv`), so two months no longer share one.
+- `watch.py --alert` with no Slack or email set up now fails (exit 1) and keeps the findings new, instead of marking
+  them reported. `anonymise.py` keeps brackets in a reviewer's reason.
+- The saved-work database is closed after each use (Python 3.13 reported hundreds of unclosed connections), and the
+  PDF reading limit can no longer be doubled by two first uploads at the same moment.
 
 ## 0.7.0 - 2026-10-08
 

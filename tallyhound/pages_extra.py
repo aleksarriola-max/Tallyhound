@@ -312,7 +312,8 @@ def vendor_risk(f: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for r in f.itertuples():
         lines = C.source_lines(r.source_file)
-        who = learn.entity(r.source_file, r.evidence, lines[0] if r.source_file.endswith(".csv") and lines else "")
+        who = learn.entity(r.source_file, r.evidence, lines[0] if r.source_file.endswith(".csv") and lines else "",
+                           lines, int(r.line_number))
         rows.append(dict(who=who, sev=r.severity, amount=float(r.amount), clause=str(r.clause)))
     if not rows:
         return pd.DataFrame(columns=["Who", "Findings", "High", "Amount flagged", "Clauses", "Risk score"])

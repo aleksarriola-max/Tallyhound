@@ -59,7 +59,8 @@ def rules_files() -> list[str]:
 def _entity(r) -> str:
     from . import learn
     lines = C.source_lines(r.source_file)
-    return learn.entity(r.source_file, r.evidence, lines[0] if r.source_file.endswith(".csv") and lines else "")
+    return learn.entity(r.source_file, r.evidence, lines[0] if r.source_file.endswith(".csv") and lines else "",
+                        lines, int(r.line_number))
 
 
 def _reject(fid: str, reason: str, clause: str, source_file: str, who: str, ids: list[str] | None = None) -> None:
@@ -70,6 +71,8 @@ def _reject(fid: str, reason: str, clause: str, source_file: str, who: str, ids:
     if st.session_state.get(f"supp_{fid}"):
         learn.suppress(clause, source_file, who, reason)
         st.session_state.decisions.get(fid, {})["suppression"] = [clause, source_file, who]
+        import json
+        C._pending("suppress", fid, json.dumps([clause, source_file, who]), reason)    # redone after a save conflict
         C.log_action("Reviewer", "Suppression added", fid, f"clause {clause} for {who}: {reason}")
 
 

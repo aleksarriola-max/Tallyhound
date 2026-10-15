@@ -14,7 +14,11 @@ def _from_ollama_host(host: str) -> str:
     import re
     host = host.strip() or "http://localhost:11434"
     if "://" not in host:
-        host = "http://" + host + ("" if re.search(r":\d+$", host) else ":11434")
+        hostport, _, path = host.partition("/")          # "localhost:11434/": the port is before the slash
+        if hostport.count(":") > 1 and not hostport.startswith("["):
+            hostport = f"[{hostport}]"                   # a bare IPv6 address such as ::1
+        host = "http://" + hostport + ("" if re.search(r"(?:^|[^:]):\d+$", hostport) else ":11434") \
+            + (f"/{path}" if path else "")
     return re.sub(r"^(https?://)(?:0\.0\.0\.0|\[::\])(?=[:/]|$)", r"\1localhost", host)
 
 
