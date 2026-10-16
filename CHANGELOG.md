@@ -75,6 +75,37 @@ All notable changes. Dates are release dates; the project follows [Semantic Vers
 - The saved-work database is closed after each use (Python 3.13 reported hundreds of unclosed connections), and the
   PDF reading limit can no longer be doubled by two first uploads at the same moment.
 
+**Third look: old and new compared** on 804 cases (`tests/test_audit3_diff.py`): every difference from 0.7.0 was
+an intended change, plus six edge cases put right:
+- 1.4 again joins "K. Lowe" with "klowe" and "Kate Lowe" with "Kate A. Lowe" (still not Kate with Kim).
+- 1.3: invoices adding up past a director-approved PO, or quoting another supplier's PO, are flagged again;
+  "Finance Director (reports to CEO)" is a director.
+- The payment gate uses an invoice's latest approved row, not the first one entered.
+- A real two-line value or a quoted `;` in a short row of a tab or semicolon file is read as one value again.
+
+**AI engines** (`tests/test_audit3_ai.py`):
+- The Skeptic could mark a pattern finding (1.6, 4.5, 5.6, 6.6) Confirmed, letting it into "Approve all confirmed";
+  it is now Doubtful, as with the rules.
+- A Confirmed verdict whose reason quoted the rule ("must not exceed") was read as a contradiction and became
+  Unclear.
+- An agent that ran out of time or steps looked like a clean full check; the run log and audit trail now say which
+  lines were not read.
+- A model repeating one finding no longer costs one Skeptic call per copy; the benchmark scores the same de-duplicated
+  list the app shows; a lower-case severity is kept.
+- LM Studio and vLLM errors no longer say "Ollama", and a slow model is called slow, not missing.
+
+**Found by using it in a browser** (`tests/test_audit3_e2e.py`):
+- A change that is not a decision (shadow mode, a policy limit, a cleared hold, a note) made in a tab a teammate had
+  saved over since was dropped in the save conflict without a word; the note now names what to do again.
+- An admin's reset was announced to the other open tabs as "a teammate saved at the same moment"; it now says the
+  work was reset.
+- After a one-off note (such as a save conflict), the next click jumped back to the first tab, so Review > Download >
+  "Prepare the downloads" showed Findings instead of the download buttons.
+- With sign-in off, the browser's Back button left the address without its `?s=` id, so the next reload opened an
+  empty session; the id is put back (Streamlit 1.65; 1.55 does not tell the app that the address changed).
+- The sample company's audit trail (on screen and in the workbook) gave "14:2x" as the time of every proposal; it
+  now gives the times of the recorded run.
+
 ## 0.7.0 - 2026-10-08
 
 **Real exports**

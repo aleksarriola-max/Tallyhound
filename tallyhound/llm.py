@@ -104,11 +104,20 @@ def _call(url: str, path: str, payload: dict | None, timeout: float) -> dict:
         if 300 <= e.code < 400:
             raise LLMError("The model server tried to redirect; use its final address.") from e
         body = e.read(300).decode("utf-8", "replace")
-        raise LLMError(f"Ollama said: {body or e.reason}") from e
-    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
-        raise LLMError(f"Could not reach Ollama at {url}. Is it running? (start it with: ollama serve)") from e
+        raise LLMError(f"{_who(url)} said: {body or e.reason}") from e
+    except TimeoutError as e:                     # running but slow: a bigger model on a CPU, or a long file
+        raise LLMError(f"{_who(url)} at {url} did not answer within {timeout:.0f} seconds. Try a smaller model, "
+                       "or retry when the computer is less busy.") from e
+    except (urllib.error.URLError, ConnectionError, OSError) as e:
+        hint = "start it with: ollama serve" if not openai_style(url) else "start its server, e.g. in LM Studio"
+        raise LLMError(f"Could not reach {_who(url)} at {url}. Is it running? ({hint})") from e
     except ValueError as e:
-        raise LLMError("Ollama sent back something that was not JSON.") from e
+        raise LLMError(f"{_who(url)} sent back something that was not JSON.") from e
+
+
+def _who(url: str) -> str:
+    """Ollama, or the model server for an address ending in /v1 (LM Studio, vLLM, llama.cpp)."""
+    return "The model server" if openai_style(url) else "Ollama"
 
 
 def openai_style(url: str) -> bool:

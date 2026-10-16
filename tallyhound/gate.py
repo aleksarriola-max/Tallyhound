@@ -65,7 +65,9 @@ def evaluate(files: dict[str, list[str]]) -> pd.DataFrame:
         vid = v["vendor_id"].strip().upper() if v is not None else r["vendor_id"].strip().upper()
         known = {sup} | ({rules.norm_name(v["name"])} if v is not None else set())
         cands = (A or {}).get(key, []) if inv else []
-        a = next((x for x in cands if rules.norm_name(x["vendor"]) in known), cands[0] if cands else None)
+        # the vendor's own record; listed twice (entered, then approved), the latest approved one
+        mine = [x for x in cands if rules.norm_name(x["vendor"]) in known]
+        a = next((x for x in reversed(mine) if x["approved_by"].strip()), mine[-1] if mine else cands[0] if cands else None)
         fail = []
         # a blank status reads as active, as in the vendor rules (4.1)
         status = v["status"].strip().upper() if v is not None else ""

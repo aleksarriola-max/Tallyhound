@@ -109,6 +109,7 @@ class Job:
             n: dict(status="Skipped" if n in self.skip else "Waiting", pct=0, secs=0, msg="") for n in
             ["Orchestrator", *rules.FILES, "Skeptic"]}
         self.records: list[dict] = []
+        self.notes: dict[str, str] = {}     # agent -> why it stopped before reading everything
         self.run_id = ""                    # set by the caller after construction; read back with getattr
         self.thread: threading.Thread | None = None
         self.t0 = self.touched = time.time()
@@ -183,14 +184,23 @@ class Job:
             return
         if any(r["area"] == area for r in self.records):
             return                           # already done before a retry
+        def note(msg: str) -> None:
+            if msg.startswith("stopped"):
+                self.notes[area] = msg
         if self.engine == "ollama-tools":
             from . import agents_tools
-            raw = agents_tools.investigate(area, lines, self.policy, self.model, self.url)
+            raw = agents_tools.investigate(area, lines, self.policy, self.model, self.url, log=note)
         else:
-            raw = agents.propose(area, lines, self.policy, self.model, self.url)
+            raw = agents.propose(area, lines, self.policy, self.model, self.url, log=note)
         clauses = agents.clauses_for(area, self.policy)
-        keep = [v for v in (agents.verified(f, lines, area, clauses) for f in raw) if v]
-        self.records.extend(keep)            # all at once, so a failed or retried agent never leaves half a list
+        keep: dict[tuple, dict] = {}         # a model repeating itself: one finding, one Skeptic call, most severe kept
+        for v in (agents.verified(f, lines, area, clauses) for f in raw):
+            if v is None:
+                continue
+            k = (v["line_number"], v["clause"])
+            if k not in keep or SEV_ORDER[v["severity"]] < SEV_ORDER[keep[k]["severity"]]:
+                keep[k] = v
+        self.records.extend(keep.values())            # all at once, so a failed or retried agent never leaves half a list
 
     def _skeptic(self, t: float) -> None:
         todo = [r for r in self.records if "verdict" not in r]
@@ -267,6 +277,8 @@ def tick_item(sim: dict, item: dict) -> bool:
             from . import sim as simmod
             return simmod._finish_item(sim, item)
         item["elapsed"] = int(time.time() - job.t0)
+        for name, msg in job.notes.items():
+            sim_log(sim, name, f"Incomplete: {msg}")
         finalize(item["custom"], job)
         item["result"] = len(S.custom[item["custom"]])
         JOBS.pop(key, None)
@@ -285,15 +297,22 @@ def retry_job(item: dict) -> None:
         job.start()
 
 
-def finalize(label: str, job: Job) -> None:
-    """Number the findings, store them, and make this dataset the one being reviewed."""
-    S = st.session_state
-    seen, recs = set(), []
-    for r in sorted(job.records, key=lambda r: (list(rules.FILES).index(r["area"]), SEV_ORDER[r["severity"]], r["line_number"])):
+def unique(records: list[dict]) -> list[dict]:
+    """The findings a reviewer sees: one per file, line and clause (the most severe), in area order. The benchmark
+    scores this same list."""
+    seen, out = set(), []
+    for r in sorted(records, key=lambda r: (list(rules.FILES).index(r["area"]), SEV_ORDER[r["severity"]], r["line_number"])):
         k = (r["source_file"], r["line_number"], r["clause"])
         if k not in seen:
             seen.add(k)
-            recs.append(r)
+            out.append(r)
+    return out
+
+
+def finalize(label: str, job: Job) -> None:
+    """Number the findings, store them, and make this dataset the one being reviewed."""
+    S = st.session_state
+    recs = unique(job.records)
     for i, r in enumerate(recs, start=1):
         r["id"] = f"F-{i:02d}"
     S.setdefault("custom", {})[label] = recs
@@ -313,6 +332,9 @@ def finalize(label: str, job: Job) -> None:
     starter = getattr(job, "started_by", "") or ""
     who = f"Person ({starter})" if starter else "Person"
     engine = job.engine + (f" {job.model}" if job.engine != "rules" and job.model else "")
+    notes = getattr(job, "notes", {})
+    if notes:                                    # an agent that stopped early: the result is not a full check
+        engine += "; incomplete: " + "; ".join(f"{n} {m}" for n, m in notes.items())
     if S.audit_log:                              # a re-run: sealed in the trail where it happened
         C.log_action(who, C.NEW_RUN, "-", f"Ran the checks again: {len(recs)} findings from {engine}; earlier "
                      "decisions on this data no longer apply")

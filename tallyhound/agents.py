@@ -41,7 +41,8 @@ def numbered(lines: list[str], start: int) -> str:
     return "\n".join(f"{start + i}\t{ln}" for i, ln in enumerate(lines))
 
 
-def propose(area: str, lines: list[str], policy: dict[str, str], model: str, url: str) -> list[dict]:
+def propose(area: str, lines: list[str], policy: dict[str, str], model: str, url: str,
+            log=lambda msg: None) -> list[dict]:
     """Ask the model for findings, chunk by chunk. Returns raw dicts, already checked against the file."""
     system = (
         f"You are the {area} agent in a finance audit. Find breaches of the policy clauses below in the file. "
@@ -53,6 +54,7 @@ def propose(area: str, lines: list[str], policy: dict[str, str], model: str, url
     stop_at = time.time() + AREA_SECONDS
     for start in range(0, len(lines), CHUNK):
         if time.time() > stop_at:
+            log(f"stopped: over {AREA_SECONDS // 60} minutes; lines {start + 1}-{len(lines)} were not read")
             break
         chunk = lines[start:start + CHUNK]
         body = numbered(chunk, start + 1)
@@ -98,7 +100,8 @@ def verified(f, lines: list[str], area: str, clauses: set[str] | None = None) ->
     rel = [m for m in map(_line_no, rel_in[:50]) if m is not None and 1 <= m <= len(lines) and m != n]
     amount = f.get("amount")
     amount = rules._f(amount if isinstance(amount, (int, float, str)) and not isinstance(amount, bool) else 0)
-    return dict(area=area, clause=clause, severity=f.get("severity") if f.get("severity") in SEV else "Medium",
+    sev = str(f.get("severity") or "").strip().capitalize()      # tool arguments are not held to the enum: "high"
+    return dict(area=area, clause=clause, severity=sev if sev in SEV else "Medium",
                 amount=round(amount, 2), title=str(f.get("title") or "").strip()[:300] or "Untitled finding",
                 source_file=rules.FILES[area], line_number=n, evidence=lines[n - 1],
                 related_lines=sorted(set(rel)), innocent=str(f.get("innocent_explanation") or "")[:1000],
@@ -125,7 +128,8 @@ import re
 AFFIRM = re.compile(r"\b(clearly|directly|plainly|explicitly|does)\s+(breach|violat|exceed)|\bis a (clear )?breach\b", re.I)
 # a negation that governs the breach word itself ("does not breach", "is not a violation", "no clear breach") - not
 # any "not" nearby, because finance reasons are full of "not approved", "not on file" that support a breach
-DENY = re.compile(r"\b(?:does not|doesn't|did not|didn't|do not|don't|cannot|can't|isn't|is not|was not|wasn't|not|no|"
+# "must not exceed", "should never exceed" state the rule and are not a denial
+DENY = re.compile(r"(?<!\bmust )(?<!\bmay )(?<!\bshould )(?<!\bshall )\b(?:does not|doesn't|did not|didn't|do not|don't|cannot|can't|isn't|is not|was not|wasn't|not|no|"
                   r"never)\s+(?:clearly\s+|really\s+|actually\s+|necessarily\s+|seem\s+to\s+|appear\s+to\s+)?"
                   r"(?:an?\s+|any\s+)?(?:clear\s+|real\s+|actual\s+)?(?:breach|violat|exceed)", re.I)
 
@@ -163,4 +167,7 @@ def skeptic(f: dict, clause_text: str, model: str, url: str, header: str = "", r
         reason = str(again.get("reason", "")).strip() or reason
         if contradicts(verdict, reason):
             return "Doubtful", "Unclear: the Skeptic's reason and verdict disagreed twice, so a person should judge it. " + reason
+    if verdict == "Confirmed" and str(f.get("clause")) in rules.PATTERN_CLAUSES:
+        # a pattern is worth a look, not a breach on its own: never Confirmed, as with the rules alone
+        return "Doubtful", "A pattern worth a look, not a breach on its own. The Skeptic found: " + reason
     return verdict, reason

@@ -64,8 +64,9 @@ with st.sidebar:
 C.banner_and_header()
 if st.session_state.pop("_restored", False):
     st.toast("Restored your earlier work.")
+note = st.empty()            # always drawn, so a one-off note does not shift the page: tabs below stay on the open tab
 if st.session_state.get("_restore_note"):
-    st.warning(st.session_state.pop("_restore_note"))
+    note.warning(st.session_state.pop("_restore_note"))
 
 PAGES = {
     "Home": layout.home,

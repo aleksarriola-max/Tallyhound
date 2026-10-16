@@ -238,10 +238,13 @@ def base_trail(fdf: pd.DataFrame, run: dict | None = None) -> pd.DataFrame:
     sample company these are the times of its recorded run (events.csv); for uploaded data, the run's own."""
     rows = []
     when = (run or {}).get("time", "")           # who ran it is a sealed entry of its own, in the reviewers' part
+    ev = read_csv("events.csv")
+    at = {} if when else dict(zip(ev.agent[::-1], ev.time[::-1]))   # the sample's last run (newest rows come first)
     for r in fdf.itertuples():
-        rows.append(dict(time=when or "14:2x", actor=f"{r.area} agent", action="Proposed", finding=r.id, detail=r.title))
-        rows.append(dict(time=when or "14:32", actor="Skeptic", action=f"Verdict: {r.skeptic_verdict}", finding=r.id,
-                         detail=r.skeptic_reason))
+        rows.append(dict(time=when or at.get(r.area, ""), actor=f"{r.area} agent", action="Proposed", finding=r.id,
+                         detail=r.title))
+        rows.append(dict(time=when or at.get("Skeptic", ""), actor="Skeptic", action=f"Verdict: {r.skeptic_verdict}",
+                         finding=r.id, detail=r.skeptic_reason))
     return pd.DataFrame(rows)
 
 

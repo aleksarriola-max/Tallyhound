@@ -172,4 +172,6 @@ def investigate(area: str, lines: list[str], policy: dict[str, str], model: str,
             messages.append(tool_msg)
         if finished:
             break
+    else:
+        log(f"stopped: used all {MAX_STEPS} steps without calling done, so some clauses may not have been checked")
     return found

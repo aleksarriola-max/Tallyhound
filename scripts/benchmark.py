@@ -61,7 +61,7 @@ def main() -> None:
                         continue
                     prop = [dict(source_file=r["source_file"], line_number=r["line_number"],
                                  related_lines=r.get("related_lines", []), verdict=r.get("verdict", ""),
-                                 reason=r.get("reason", "")) for r in job.records]
+                                 reason=r.get("reason", "")) for r in custom.unique(job.records)]
                     s = score.score(prop, key)
                     sk = s.get("skeptic") or {}
                     rows.append(dict(difficulty=diff, seed=seed, engine=engine, model=model, planted=s["planted"],

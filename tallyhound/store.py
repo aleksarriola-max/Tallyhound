@@ -23,7 +23,8 @@ KEYS = ["decisions", "audit_log", "cleared", "fail_pending", "recent_extra", "to
         "uploads", "custom", "by_dataset", "dataset", "extra_opts",
         "mappings", "answer_keys", "run_history", "limits", "notes", "suppressions", "presets",
         "po_exempt_words", "po_exempt_vendors", "rule_override", "shadow", "shadow_marks", "date_order", "trail_seals",
-        "_run_seen"]                    # the finished run was looked at: Home stops announcing it, after a reload too
+        "_run_seen",                    # the finished run was looked at: Home stops announcing it, after a reload too
+        "reset_id"]                     # changes on every reset, so an open tab can tell a reset from a teammate's save
 MAX_AGE_DAYS = 14
 TEAM = "team"            # the shared workspace when sign-in is on
 _SID = re.compile(r"^(?:[0-9a-f]{12}|[0-9a-f]{32})$")   # 12 = links made before the audit; new ones are 128-bit
@@ -220,6 +221,7 @@ SHAPES = {
     "sim": lambda v: isinstance(v, dict) and isinstance(v.get("queue"), list) and isinstance(v.get("log", []), list),
     "tour_off": lambda v: isinstance(v, bool), "_run_seen": lambda v: isinstance(v, str),
     "tour_downloaded": lambda v: isinstance(v, bool), "fail_pending": lambda v: isinstance(v, bool),
+    "reset_id": lambda v: isinstance(v, str),
 }
 
 
@@ -245,6 +247,8 @@ def load_into_session() -> None:
     """Run once per browser session, before the page draws."""
     S = st.session_state
     if S.get("_store_ready"):
+        if S.get("sid") and S["sid"] != TEAM and st.query_params.get("s") != S["sid"]:
+            st.query_params["s"] = S["sid"]   # the browser's Back button can drop it: the address must keep the work
         return
     from . import auth
     if auth.enabled() and not auth.current_user():
@@ -252,6 +256,7 @@ def load_into_session() -> None:
         return
     S["_store_ready"] = True
     S["sid"] = session_id()
+    seen_reset = S.pop("_seen_reset", None)      # set when a save was refused: what this tab knew before reloading
     _sweep()
     try:
         S["_ver"] = _version(S["sid"])
@@ -267,12 +272,16 @@ def load_into_session() -> None:
         S["_sim_saved"] = json.dumps(sim, sort_keys=True, default=str)
     if not data:
         S["_saved"] = ""
-        if S.pop("_replay", None):       # the conflict was a teammate's reset: say so instead of dropping the click
+        if "_reset_new" in S:
+            S["reset_id"] = S.pop("_reset_new")
+        ops, lost = S.pop("_replay", None), S.pop("_not_kept", None)
+        if ops or lost:                  # the conflict was a teammate's reset: say so instead of dropping the click
             S["_restore_note"] = ("A teammate reset the saved work since this page loaded, so your last change(s) "
                                   "were not kept. Make them again if they are still needed.")
         return
     data, bad = clean(data)
     data.pop("sim", None)                # older saves kept the run in the main row
+    was_reset = seen_reset is not None and seen_reset != data.get("reset_id", "")
     for k, v in data.items():
         S[k] = v
     try:
@@ -305,15 +314,16 @@ def load_into_session() -> None:
                               + ". Everything else was restored.")
     S["_restored"] = bool(data.get("decisions") or S.get("sim"))
     S["_saved"] = json.dumps(snapshot(), sort_keys=True, default=str)
-    _replay(S)                           # after _saved: the replayed changes differ from it, so they get saved
+    _replay(S, was_reset)                # after _saved: the replayed changes differ from it, so they get saved
 
 
-def _replay(S) -> None:
+def _replay(S, was_reset: bool = False) -> None:
     """After a conflict: re-apply this tab's own decisions and undos on top of the teammate's newer work. A decision
     a teammate already made on the same finding wins; the person is told what was and was not re-applied."""
-    ops = S.pop("_replay", None)
-    if not ops:
+    ops, lost = S.pop("_replay", None) or [], S.pop("_not_kept", None) or []
+    if not ops and not lost:
         return
+    redo = (f" Not kept, so do again: {', '.join(lost).lower()}." if lost else "")
     from . import common as C
     from . import custom
     done, skipped, stale = 0, 0, 0
@@ -338,13 +348,20 @@ def _replay(S) -> None:
             done += 1
         else:
             skipped += 1
+    if was_reset:                        # an admin wiped the work: say so, not "a teammate saved"
+        S["_restore_note"] = ("A teammate reset the saved work since this page loaded, so everything from before the "
+                              "reset is gone" + (f"; your last {done} change(s) were made again on the fresh start"
+                                                 if done else "") + (f"; {stale} could not be, as they were made on "
+                                                                     "findings of the earlier run" if stale else "")
+                              + "." + redo)
+        return
     S["_restore_note"] = ("A teammate saved at the same moment. Their changes are loaded"
                           + (f" and your {done} change(s) re-applied on top" if done else "")
                           + (f"; {skipped} of yours were already decided by them and were left as they decided"
                              if skipped else "")
                           + (f"; {stale} were made on findings of an earlier run - a teammate ran the checks again "
                              "since, so they were not applied" if stale else "")
-                          + ". Other edits (notes, cleared holds) may need redoing.")
+                          + "." + (redo or " Other edits (notes, cleared holds) may need redoing."))
 
 
 def save_uploads(removed: tuple[str, ...] = ()) -> None:
@@ -371,6 +388,19 @@ def save_uploads(removed: tuple[str, ...] = ()) -> None:
         pass
 
 
+def _unsaved_actions(S) -> list[str]:
+    """What this tab did since it last saved, other than decisions and undos (those are replayed), read off its trail:
+    a policy change, a cleared hold, shadow mode... They are lost in a save conflict, so the person must be told."""
+    try:
+        saved = json.loads(S.get("_saved") or "{}")
+    except ValueError:
+        saved = {}
+    logs = [saved.get("audit_log") or []] + [d.get("audit_log") or [] for d in (saved.get("by_dataset") or {}).values()]
+    seen = {e.get("hash") for log in logs for e in log}
+    return list(dict.fromkeys(e.get("action", "") for e in S.get("audit_log", []) if e.get("hash") not in seen
+                              and e.get("action") not in ("Approved", "Rejected", "Reset to pending")))
+
+
 def save_if_changed() -> None:
     """Run at the end of every script run. Writes only when something changed."""
     S = st.session_state
@@ -394,6 +424,8 @@ def save_if_changed() -> None:
     if ver is None:                  # a teammate saved since this page loaded: load their work, then redo ours on top
         S["_store_ready"] = False
         S["_replay"] = S.pop("_pending_ops", [])
+        S["_seen_reset"] = S.get("reset_id", "")
+        S["_not_kept"] = _unsaved_actions(S)
         st.rerun()
     S["_ver"], S["_saved"] = ver, text
     S.pop("_pending_ops", None)
@@ -416,3 +448,4 @@ def reset() -> None:
         if k not in keep:
             del S[k]
     S["nav"] = "Home"
+    S["_reset_new"] = secrets.token_hex(8)      # becomes reset_id once the emptied work is loaded and saved

@@ -236,13 +236,15 @@ def _tsv_to_csv(lines: list[str], sep: str = "\t", most: int = 5) -> list[str]:
     for row in rd:
         span, done = lines[done:rd.line_num], rd.line_num
         if len(span) > 1:
+            # a stray opening quote ran on over the rows after it: its value holds the separators of those rows, or
+            # runs on too far. A real value over two lines may sit on a short row or below a title line
+            swallowed = len(span) > most + 1 or any(sep in c for c in row)
             row = next(csv.reader([" ".join(span)], delimiter=sep), [])    # a value over several lines: joined
-            if len(span) > most + 1 or len(row) != width:
-                # a stray opening quote ran on over the rows after it: read each line alone, the quote as text
-                for ln in span:
+            if swallowed:
+                for ln in span:                        # read each line alone, the quote as text
                     w.writerow(next(csv.reader([ln], delimiter=sep, quoting=csv.QUOTE_NONE), []))
                 continue
-        elif width is not None and len(row) != width:
+        elif width is not None and len(row) != width and span[0].count('"') % 2:
             # a stray quote on the last line has no later rows to run on to, but still swallows the rest of its row
             alt = next(csv.reader(span, delimiter=sep, quoting=csv.QUOTE_NONE), [])
             row = alt if len(alt) == width else row

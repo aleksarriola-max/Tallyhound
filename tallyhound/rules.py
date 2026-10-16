@@ -61,7 +61,8 @@ NOT_DIRECTOR = re.compile(r"\b(?:to\s+(?:the\s+)?(?:\w+\s+)?(?:director|cfo|ceo|
 
 
 def is_director(role: str) -> bool:
-    return bool(DIRECTOR.search(role)) and not NOT_DIRECTOR.search(role)
+    # a director title left once those parts are taken out: "Finance Director (reports to CEO)" still is one
+    return bool(DIRECTOR.search(NOT_DIRECTOR.sub(" ", role)))
 
 
 def has_po(r) -> bool:
@@ -503,6 +504,7 @@ def approvals(lines: list[str], L: dict = LIMITS) -> list[Hit]:
     pos = _pos(R)
     director_hits: dict[int, Hit] = {}
     covered: list[tuple[int, int]] = []             # (PO line, invoice line) of invoices billed within their PO
+    billed: dict[int, float] = {}                   # PO line -> invoices counted within it so far
     for ln, r in R:
         amt = _f(r["amount"])
         label = r["doc_no"] or r["record_id"]
@@ -515,7 +517,11 @@ def approvals(lines: list[str], L: dict = LIMITS) -> list[Hit]:
             # an invoice within a PO that is itself over the limit is the same purchase: the director approval
             # belongs on the PO, which is checked (and flagged) on its own line
             po = _po_of(pos, r) if r["type"].strip().upper() in INVOICE_TYPES else None
-            if po and L["director_limit"] < _f(po[1]["amount"]) and amt <= _f(po[1]["amount"]) + L.get("tolerance", 1.0):
+            # only the invoice's own supplier's PO, and only up to what the PO approved: invoices that together go
+            # past it need their own director approval
+            if po and norm_name(po[1]["vendor"]) == norm_name(r["vendor"]) and L["director_limit"] < _f(po[1]["amount"]) \
+                    and billed.get(po[0], 0.0) + amt <= _f(po[1]["amount"]) + L.get("tolerance", 1.0):
+                billed[po[0]] = billed.get(po[0], 0.0) + amt
                 covered.append((po[0], ln))
                 continue
             director_hits[ln] = Hit("Approvals", "1.3", "Medium", amt,
@@ -582,18 +588,27 @@ def _split_orders(R: list[tuple[int, Row]], L: dict) -> list[Hit]:
             and _f(r["amount"]) <= L["director_limit"] and not po_exempt(r["vendor"], L)]
     # requesters per vendor. "K. Lowe" and "klowe" join the one full name they fit ("Kate Lowe"); when they fit two
     # ("Kate Lowe", "Kim Lowe") they stay apart, so two people are never merged through an initial
-    full: dict[str, dict[str, str]] = {}            # vendor -> {person key: one spelling of that full name}
+    spelt: dict[str, dict[str, str]] = {}           # vendor -> {person key: one spelling}
     for _, r in todo:
-        p = _person(r["requested_by"])
-        if len(p) >= 2 and len(p[0]) > 1:
-            full.setdefault(norm_name(r["vendor"]), {}).setdefault(person_key(r["requested_by"]), r["requested_by"])
+        spelt.setdefault(norm_name(r["vendor"]), {}).setdefault(person_key(r["requested_by"]), r["requested_by"])
+    one: dict[tuple[str, str], str] = {}            # (vendor, person key) -> the key of the person it is
+    for v, names in spelt.items():
+        full = [k for k, s in names.items() if len(p := _person(s)) >= 2 and len(p[0]) > 1]
+        for k in full:                              # "Kate A. Lowe" is "Kate Lowe"
+            one[(v, k)] = next((one[(v, f)] for f in full if (v, f) in one and same_person(names[f], names[k])), k)
+        loose: list[str] = []                       # short forms that fit no full name: "K. Lowe" and "klowe"
+        for k, s in names.items():
+            if k in full:
+                continue
+            fits = {one[(v, f)] for f in full if same_person(names[f], s)}
+            if not fits:
+                one[(v, k)] = next((one[(v, o)] for o in loose if same_person(names[o], s)), k)
+                loose.append(k)
+            else:
+                one[(v, k)] = fits.pop() if len(fits) == 1 else k
     for ln, r in todo:
-        v, name = norm_name(r["vendor"]), r["requested_by"]
-        who, names = person_key(name), full.get(norm_name(r["vendor"]), {})
-        if who not in names:
-            fits = {k for k, spelt in names.items() if same_person(spelt, name)}
-            who = fits.pop() if len(fits) == 1 else who
-        groups.setdefault((v, who), []).append((ln, r))
+        v = norm_name(r["vendor"])
+        groups.setdefault((v, one[(v, person_key(r["requested_by"]))]), []).append((ln, r))
     for items in groups.values():
         items.sort(key=lambda x: x[1].d("date"))
         days = [x[1].d("date") for x in items]
