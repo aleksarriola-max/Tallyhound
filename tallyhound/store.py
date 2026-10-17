@@ -23,6 +23,7 @@ KEYS = ["decisions", "audit_log", "cleared", "fail_pending", "recent_extra", "to
         "uploads", "custom", "by_dataset", "dataset", "extra_opts",
         "mappings", "answer_keys", "run_history", "limits", "notes", "suppressions", "presets",
         "po_exempt_words", "po_exempt_vendors", "rule_override", "shadow", "shadow_marks", "date_order", "trail_seals",
+        "skeptic_minutes",              # Settings > AI: the Skeptic stage's time limit for a whole run
         "_run_seen",                    # the finished run was looked at: Home stops announcing it, after a reload too
         "reset_id"]                     # changes on every reset, so an open tab can tell a reset from a teammate's save
 MAX_AGE_DAYS = 14
@@ -222,6 +223,7 @@ SHAPES = {
     "tour_off": lambda v: isinstance(v, bool), "_run_seen": lambda v: isinstance(v, str),
     "tour_downloaded": lambda v: isinstance(v, bool), "fail_pending": lambda v: isinstance(v, bool),
     "reset_id": lambda v: isinstance(v, str),
+    "skeptic_minutes": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 1 <= v <= 1440,
 }
 
 

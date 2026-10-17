@@ -20,6 +20,11 @@ def ticker() -> None:
     if s and s["running"]:
         item = next((i for i in s["queue"] if i["status"] == "Running"), None)
         st.caption(f"Run in progress{': ' + C.esc(item['label']) if item else ''}")
+        if item and custom.is_ai(item) and auth.can("run") and st.session_state.get("nav") != "Home":
+            if item.get("stop_asked"):
+                st.caption("Stopping...")
+            else:
+                st.button("Stop the run", key="stop_side", on_click=sim.stop, type="tertiary")
 
 
 running = bool(st.session_state.sim and st.session_state.sim["running"])

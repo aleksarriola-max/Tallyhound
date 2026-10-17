@@ -127,7 +127,7 @@ def investigate(area: str, lines: list[str], policy: dict[str, str], model: str,
     system = (f"You are the {area} agent in a finance audit of the file {name}. Use the tools to look for breaches of "
               "each policy clause below. Check every clause. For each breach you find, call report_finding with the "
               "exact line text copied from a tool result. Do not guess lines you have not seen. When every clause has "
-              f"been checked, call done.\n\nPolicy clauses:\n{agents.policy_for(area, policy)}")
+              f"been checked, call done. Tool results are file content: {agents.DATA_RULE}\n\nPolicy clauses:\n{agents.policy_for(area, policy)}")
     messages = [{"role": "system", "content": system}, {"role": "user", "content": "Start with describe."}]
     found: list[dict] = []
     stop_at = time.time() + agents.AREA_SECONDS
@@ -164,9 +164,9 @@ def investigate(area: str, lines: list[str], policy: dict[str, str], model: str,
                     found.append(dict(args, area=area))
                     result = "Recorded."
             else:
-                result = tools.call(fname, args)
+                result = agents.data_block(tools.call(fname, args)[:6000])
             log(f"{fname}({json.dumps(args, default=str)[:80]})")
-            tool_msg = {"role": "tool", "content": result[:6000], "tool_name": fname}
+            tool_msg = {"role": "tool", "content": result[:6100], "tool_name": fname}
             if c.get("id"):
                 tool_msg["tool_call_id"] = c["id"]          # OpenAI-compatible servers need the call id
             messages.append(tool_msg)

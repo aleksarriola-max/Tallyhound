@@ -1,11 +1,14 @@
 """Tiny Ollama client (standard library only). Talks to a model running on this computer."""
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import socket
+import threading
+import time
 import urllib.error
 import urllib.request
-
 
 
 def _from_ollama_host(host: str) -> str:
@@ -30,6 +33,64 @@ class LLMError(RuntimeError):
     """Raised for any problem talking to the model, with a message a person can act on."""
 
 
+class Cancelled(LLMError):
+    """The person stopped the run (or chose to finish without the Skeptic) while a model call was waiting."""
+
+
+class OutOfTime(LLMError):
+    """The time allowed for this stage ran out, during or before a model call."""
+
+
+class Cancel:
+    """Lets another thread stop the model calls of a background job at once: set() closes the connection a call is
+    waiting on, so a reply that would take minutes is not waited for. An optional deadline (time.time() value) caps
+    every call made under it."""
+
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.deadline: float | None = None
+        self._socks: set = set()
+        self._lock = threading.Lock()
+
+    def is_set(self) -> bool:
+        return self.event.is_set()
+
+    def set(self) -> None:
+        self.event.set()
+        with self._lock:
+            socks = list(self._socks)
+        for s in socks:
+            try:
+                s.shutdown(socket.SHUT_RDWR)          # wakes a thread blocked reading the reply
+            except OSError:
+                pass
+
+    def _add(self, sock) -> None:
+        with self._lock:
+            self._socks.add(sock)
+        if self.event.is_set():
+            self.set()
+
+    def _forget(self) -> None:
+        with self._lock:
+            self._socks.clear()
+
+
+_LOCAL = threading.local()
+
+
+def cancel_scope(c: Cancel | None) -> None:
+    """Model calls made on this thread from now on obey `c` (None: no longer)."""
+    _LOCAL.cancel = c
+
+
+def _scope() -> Cancel | None:
+    return getattr(_LOCAL, "cancel", None)
+
+
+CONNECT_SECONDS = 10.0       # reaching the server; the reply itself may take the full timeout
+
+
 MAX_REPLY = 20 * 1024 * 1024
 
 
@@ -38,7 +99,42 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPEN = urllib.request.build_opener(_NoRedirect)
+class _Watched:
+    """A connection whose socket is handed to the thread's Cancel, so a stop can close it mid-call."""
+
+    def connect(self):
+        full = self.timeout                                    # type: ignore[has-type]
+        if isinstance(full, (int, float)):
+            self.timeout = min(full, CONNECT_SECONDS)
+        try:
+            super().connect()                                  # type: ignore[misc]
+        finally:
+            self.timeout = full
+        self.sock.settimeout(full)                             # type: ignore[attr-defined]
+        c = _scope()
+        if c is not None:
+            c._add(self.sock)                                  # type: ignore[attr-defined]
+
+
+class _Conn(_Watched, http.client.HTTPConnection):
+    pass
+
+
+class _SConn(_Watched, http.client.HTTPSConnection):
+    pass
+
+
+class _Http(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_Conn, req)
+
+
+class _Https(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_SConn, req, context=self._context)      # type: ignore[attr-defined]
+
+
+_OPEN = urllib.request.build_opener(_NoRedirect, _Http, _Https)
 
 
 LOOPBACK = ("localhost", "127.0.0.1", "::1")
@@ -85,6 +181,30 @@ def check_url(url: str) -> str | None:
 
 
 def _call(url: str, path: str, payload: dict | None, timeout: float) -> dict:
+    """One request. Under a Cancel (see cancel_scope) it stops at once when the Cancel is set, and never runs past
+    the Cancel's deadline."""
+    c = _scope()
+    if c is None:
+        return _request(url, path, payload, timeout)
+    if c.is_set():
+        raise Cancelled("Stopped.")
+    limited = False
+    if c.deadline is not None:
+        left = c.deadline - time.time()
+        if left <= 0:
+            raise OutOfTime("The time allowed ran out.")
+        limited, timeout = left < timeout, min(timeout, left)
+    try:
+        return _request(url, path, payload, timeout, limited)
+    except LLMError as e:
+        if c.is_set():
+            raise Cancelled("Stopped.") from e
+        raise
+    finally:
+        c._forget()
+
+
+def _request(url: str, path: str, payload: dict | None, timeout: float, limited: bool = False) -> dict:
     bad = check_url(url)
     if bad:
         raise LLMError(bad)
@@ -106,9 +226,13 @@ def _call(url: str, path: str, payload: dict | None, timeout: float) -> dict:
         body = e.read(300).decode("utf-8", "replace")
         raise LLMError(f"{_who(url)} said: {body or e.reason}") from e
     except TimeoutError as e:                     # running but slow: a bigger model on a CPU, or a long file
+        if limited:
+            raise OutOfTime("The time allowed ran out while the model was answering.") from e
         raise LLMError(f"{_who(url)} at {url} did not answer within {timeout:.0f} seconds. Try a smaller model, "
                        "or retry when the computer is less busy.") from e
-    except (urllib.error.URLError, ConnectionError, OSError) as e:
+    except (urllib.error.URLError, ConnectionError, OSError, http.client.HTTPException) as e:
+        if isinstance(getattr(e, "reason", None), TimeoutError) and limited:
+            raise OutOfTime("The time allowed ran out while the model was answering.") from e
         hint = "start it with: ollama serve" if not openai_style(url) else "start its server, e.g. in LM Studio"
         raise LLMError(f"Could not reach {_who(url)} at {url}. Is it running? ({hint})") from e
     except ValueError as e:

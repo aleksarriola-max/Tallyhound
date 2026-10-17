@@ -17,7 +17,8 @@ from .uploads import MAX_LINE_CHARS, MAX_LINES, MAX_UNZIPPED_MB, MAX_ZIP_MB, STE
 
 SEV_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 COLS = ["id", "severity", "area", "clause", "amount", "title", "skeptic_verdict", "evidence", "related_evidence",
-        "source_file", "line_number", "innocent_explanations", "skeptic_reason", "proposed_fix"]
+        "source_file", "line_number", "innocent_explanations", "skeptic_reason", "proposed_fix", "warning"]
+NOT_CHECKED = "Not checked"          # the Skeptic's verdict when it never got to a finding: ranked like Doubtful
 
 
 def add_upload(label: str, files: dict[str, list[str]], key: list[dict] | None = None) -> None:
@@ -100,8 +101,17 @@ def uploaded(option: str) -> bool:
 class Job:
     """Runs the agents for one uploaded dataset on a background thread. Never touches Streamlit state."""
 
-    def __init__(self, label, files, engine, model, url, policy, skip, limits=None, started_by: str = ""):
+    def __init__(self, label, files, engine, model, url, policy, skip, limits=None, started_by: str = "",
+                 skeptic_seconds: float | None = None):
         self.started_by = started_by        # who pressed Run: segregation of duties is checked against this person
+        # the whole Skeptic stage of this run, over every retry; what it has not reached by then is "Not checked"
+        self.skeptic_seconds = float(agents.SKEPTIC_MINUTES * 60 if skeptic_seconds is None else skeptic_seconds)
+        self.skeptic_spent = 0.0
+        self.cancel = llm.Cancel()          # stops the model call in flight, from the page's thread
+        self.stopped_by: str | None = None  # set by Stop: the run ends, keeping only fully checked findings
+        self.skip_skeptic: str | None = None    # set by "Finish without the Skeptic": the rest are Not checked
+        self.progress: dict[str, str] = {}  # agent -> how far it got, for the note when a run is stopped
+        self.stop_at = 0.0
         self.limits = dict(limits or rules.LIMITS)
         self.label, self.files, self.engine, self.model, self.url = label, files, engine, model, url
         self.policy, self.skip = policy, set(skip)
@@ -117,7 +127,7 @@ class Job:
         self.start()
 
     def start(self) -> None:
-        if self.thread and self.thread.is_alive():
+        if (self.thread and self.thread.is_alive()) or self.stopped_by is not None:
             return
         for a in self.agents.values():
             if a["status"] == "Failed":
@@ -137,11 +147,36 @@ class Job:
         with self.lock:
             self.agents[name].update(kw)
 
+    def stop(self, who: str) -> None:
+        """End the run now: the model call in flight is cut off and nothing more is started."""
+        if self.stopped_by is None:
+            self.stopped_by, self.stop_at = who, time.time()
+        self.cancel.set()
+
+    def finish_without_skeptic(self, who: str) -> None:
+        """Leave the findings the Skeptic has not reached as Not checked, so a Skeptic that keeps failing (or is too
+        slow) does not hold back every result."""
+        self.skip_skeptic = who
+        status = self.agents["Skeptic"]["status"]
+        if status == "Running":
+            self.cancel.set()               # the Skeptic's call in flight; nothing else runs after it
+        elif status == "Failed":
+            self.start()
+
     def _run(self) -> None:
+        llm.cancel_scope(self.cancel)
+        try:
+            self._agents()
+        finally:
+            llm.cancel_scope(None)
+
+    def _agents(self) -> None:
         for name in self.agents:
             a = self.agents[name]
             if a["status"] in ("Done", "Skipped"):
                 continue
+            if self.stopped_by is not None:
+                return
             t = time.time()
             self._set(name, status="Running", pct=5)
             try:
@@ -151,6 +186,10 @@ class Job:
                     self._skeptic(t)
                 else:
                     self._area(name, t)
+            except llm.Cancelled:
+                self._set(name, status="Stopped" if self.stopped_by is not None else "Failed",
+                          msg="Stopped." if self.stopped_by is not None else "Cancelled.", secs=int(time.time() - t))
+                return
             except llm.LLMError as e:
                 self._set(name, status="Failed", msg=str(e), secs=int(time.time() - t))
                 return
@@ -180,6 +219,7 @@ class Job:
                 r = recs[-1]
                 src = self.files.get(r["source_file"], [])          # cross-file checks quote other files
                 r["evidence"] = src[r["line_number"] - 1] if 0 < r["line_number"] <= len(src) else ""
+                self._screen(r, src)
             self.records.extend(recs)
             return
         if any(r["area"] == area for r in self.records):
@@ -187,6 +227,8 @@ class Job:
         def note(msg: str) -> None:
             if msg.startswith("stopped"):
                 self.notes[area] = msg
+            elif msg.startswith("read lines"):
+                self.progress[area] = msg
         if self.engine == "ollama-tools":
             from . import agents_tools
             raw = agents_tools.investigate(area, lines, self.policy, self.model, self.url, log=note)
@@ -200,22 +242,89 @@ class Job:
             k = (v["line_number"], v["clause"])
             if k not in keep or SEV_ORDER[v["severity"]] < SEV_ORDER[keep[k]["severity"]]:
                 keep[k] = v
+        for v in keep.values():
+            self._screen(v, lines)
         self.records.extend(keep.values())            # all at once, so a failed or retried agent never leaves half a list
+
+    @staticmethod
+    def _screen(r: dict, lines: list[str]) -> None:
+        """Mark a finding whose cited lines (or the lines next to them) talk to an AI reviewer."""
+        if agents.ai_text_near(lines, [r["line_number"], *r.get("related_lines", [])]):
+            r["warning"] = agents.WARN_AI_TEXT
+
+    def _guarded(self, r: dict, verdict: str, reason: str) -> tuple[str, str]:
+        """Text addressed to an AI in the evidence: the Skeptic may not dismiss a rule finding, nor confirm an AI one."""
+        if not r.get("warning"):
+            return verdict, reason
+        if self.engine in ("rules", "rules+skeptic") and verdict == "Doubtful":
+            own = "Doubtful" if r["clause"] in rules.PATTERN_CLAUSES else "Confirmed"
+            return own, ("The Skeptic's doubt was not used, because the line contains text addressed to an AI reviewer; "
+                         "the rule's finding stands. The Skeptic said: " + reason)
+        if self.engine not in ("rules", "rules+skeptic") and verdict == "Confirmed":
+            return "Doubtful", ("Not confirmed, because the line contains text addressed to an AI reviewer. The Skeptic "
+                                "said: " + reason)
+        return verdict, reason
+
+    def _not_checked(self, recs: list[dict], why: str) -> None:
+        for r in recs:
+            r["verdict"], r["reason"] = NOT_CHECKED, why
+        if recs:
+            self.notes["Skeptic"] = why.replace("Not checked by the Skeptic", "stopped", 1).rstrip(".") \
+                + f"; {len(recs)} finding(s) not checked by the Skeptic"
 
     def _skeptic(self, t: float) -> None:
         todo = [r for r in self.records if "verdict" not in r]
-        for i, r in enumerate(todo, start=1):
-            lines = self.files[r["source_file"]]
-            header = lines[0] if r["source_file"].endswith(".csv") else ""
-            r["evidence"] = lines[r["line_number"] - 1]
-            related = [lines[n - 1] for n in r.get("related_lines", []) if 1 <= n <= len(lines)]
-            clause = rules.clause_text(self.policy, r["clause"], r["area"])
-            r["verdict"], r["reason"] = agents.skeptic(r, clause, self.model, self.url, header, related)
-            self._set("Skeptic", pct=5 + int(90 * i / max(len(todo), 1)), secs=int(time.time() - t))
+        if self.skip_skeptic is not None:
+            self._not_checked(todo, f"Not checked by the Skeptic (finished without it by {self.skip_skeptic or 'a person'}).")
+            return
+        began = time.time()
+        self.cancel.deadline = began + max(self.skeptic_seconds - self.skeptic_spent, 0.0)
+        try:
+            for i, r in enumerate(todo, start=1):
+                if time.time() >= self.cancel.deadline:
+                    raise llm.OutOfTime("The time allowed ran out.")
+                lines = self.files[r["source_file"]]
+                header = lines[0] if r["source_file"].endswith(".csv") else ""
+                r["evidence"] = lines[r["line_number"] - 1]
+                related = [lines[n - 1] for n in r.get("related_lines", []) if 1 <= n <= len(lines)]
+                clause = rules.clause_text(self.policy, r["clause"], r["area"])
+                verdict, reason = agents.skeptic(r, clause, self.model, self.url, header, related)
+                r["verdict"], r["reason"] = self._guarded(r, verdict, reason)
+                self._set("Skeptic", pct=5 + int(90 * i / max(len(todo), 1)), secs=int(time.time() - t))
+        except llm.OutOfTime:
+            self._not_checked([r for r in todo if "verdict" not in r],
+                              f"Not checked by the Skeptic (time limit: {_duration(self.skeptic_seconds)} for the "
+                              "whole Skeptic stage).")
+        except llm.Cancelled:
+            if self.skip_skeptic is None or self.stopped_by is not None:
+                raise
+            self._not_checked([r for r in todo if "verdict" not in r],
+                              f"Not checked by the Skeptic (finished without it by {self.skip_skeptic or 'a person'}).")
+        finally:
+            self.skeptic_spent += time.time() - began
+            self.cancel.deadline = None
+
+
+def _duration(secs: float) -> str:
+    if secs >= 60:
+        m = secs / 60
+        return f"{m:g} minute{'s' if m != 1 else ''}"
+    return f"{secs:g} second{'s' if secs != 1 else ''}"
+
+
+def skeptic_seconds() -> float:
+    """The Skeptic's time for a whole run, as set under Settings > AI."""
+    try:
+        m = float(st.session_state.get("skeptic_minutes") or agents.SKEPTIC_MINUTES)
+    except (TypeError, ValueError):
+        m = agents.SKEPTIC_MINUTES
+    return max(m, 0.0) * 60
 
 
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
+STOPS: dict[str, str] = {}      # job key -> who pressed Stop; any tab of the same workspace may press it
+STOP_WAIT_SECONDS = 5.0         # how long a stopped job's thread is waited for before its results are taken as they are
 MAX_RUNNING = 1 if llm.public() else 4   # analyses running at once on this server; more wait for a free slot
 IDLE_DONE_SECONDS = 30 * 60     # a finished or failed job nobody has looked at for this long is let go
 IDLE_ANY_SECONDS = 2 * 3600     # any job nobody has looked at for this long (its tab was closed) is let go
@@ -236,12 +345,101 @@ def running_jobs() -> int:
     return sum(bool(j.thread and j.thread.is_alive()) for j in list(JOBS.values()))
 
 
+def job_key(item: dict) -> str:
+    return f"{st.session_state.get('sid', '')}|{item['label']}|{item.get('run_id', '')}"   # a run id: never a stale job
+
+
+def is_ai(item: dict) -> bool:
+    return bool(item.get("custom")) and item.get("engine", "rules") != "rules"
+
+
+def request_stop(item: dict, who: str) -> None:
+    """Stop an AI run. The tab that drives the run ends it on its next tick; the call in flight is cut off now."""
+    key = job_key(item)
+    with JOBS_LOCK:
+        STOPS.setdefault(key, who)
+        job = JOBS.get(key)
+    if job is not None:
+        job.stop(who)
+
+
+def finish_without_skeptic(item: dict, who: str) -> bool:
+    """Leave the findings the Skeptic has not checked as Not checked and finish the run. False if there is no job."""
+    job = JOBS.get(job_key(item))
+    if job is None:
+        return False
+    job.finish_without_skeptic(who)
+    return True
+
+
+def _unfinished(job: Job) -> list[str]:
+    out = []
+    for name, a in job.agents.items():
+        if name == "Orchestrator" or a["status"] in ("Done", "Skipped") or \
+                (name in rules.FILES and not job.files.get(rules.FILES[name])):
+            continue                             # finished, switched off, or no file for it to read
+        if a["status"] == "Waiting":
+            out.append(f"{name} (not started)")
+        elif name in job.progress:
+            out.append(f"{name} (stopped after it {job.progress[name]})")
+        else:
+            out.append(f"{name} (stopped part-way)")
+    return out
+
+
+def _stopped(sim: dict, item: dict, job: Job | None, who: str, key: str) -> bool:
+    """End a stopped run: keep the findings that were fully checked, and say plainly what was not finished."""
+    S = st.session_state
+    with JOBS_LOCK:
+        STOPS.pop(key, None)
+        JOBS.pop(key, None)
+    by = who or "a person"
+    item["status"], item["stopped_by"] = "Stopped", who
+    for a in item["agents"]:
+        if a["status"] in ("Waiting", "Running"):
+            a["status"] = "Stopped"
+    if job is None:                              # still waiting for a free slot: nothing was read
+        item["result"], item["elapsed"] = 0, 0
+        item["incomplete"] = f"stopped by {by} before it started; nothing was checked"
+        sim_log(sim, "Orchestrator", f"Incomplete: {item['incomplete']}")
+        from . import sim as simmod
+        return simmod._finish_item(sim, item)
+    kept = [r for r in job.records if r.get("verdict")]
+    dropped = len(job.records) - len(kept)
+    job.records = kept
+    left = _unfinished(job)
+    note = f"stopped by {by} before the end" + (f"; not finished: {', '.join(left)}" if left else "") \
+        + (f"; {dropped} finding(s) not yet checked by the Skeptic were not kept" if dropped else "")
+    job.notes["Run"] = note
+    item["elapsed"] = int(time.time() - job.t0)
+    for name, msg in job.notes.items():
+        sim_log(sim, "Orchestrator" if name == "Run" else name, f"Incomplete: {msg}")
+    item["incomplete"] = note
+    finalize(item["custom"], job)
+    C.log_action(f"Person ({who})" if who else "Person", "Run stopped", "-",
+                 f"{len(kept)} fully checked finding(s) kept; {note}")
+    item["result"] = len(S.custom[item["custom"]])
+    from . import sim as simmod
+    return simmod._finish_item(sim, item)
+
+
 def tick_item(sim: dict, item: dict) -> bool:
     """Called once a second for a running uploaded-data item. Returns True when the page must rerun."""
     S = st.session_state
-    key = f"{S.get('sid', '')}|{item['label']}|{item.get('run_id', '')}"     # a run id: a stale job is never reused
+    key = job_key(item)
     prune_jobs()
     job = JOBS.get(key)
+    who = STOPS.get(key)
+    if who is not None and (job is None or not job.done):
+        if job is not None:
+            job.stop(who)
+            if job.thread and job.thread.is_alive():
+                job.thread.join(min(2.0, STOP_WAIT_SECONDS))
+            if job.thread and job.thread.is_alive() and time.time() - job.stop_at < STOP_WAIT_SECONDS:
+                return False                     # the call in flight is being cut off: look again next second
+        return _stopped(sim, item, job, who, key)
+    if who is not None:                          # it had already finished: the full results stand
+        STOPS.pop(key, None)
     if job is None:
         if running_jobs() >= MAX_RUNNING:
             if not item.get("_waiting"):
@@ -252,7 +450,7 @@ def tick_item(sim: dict, item: dict) -> bool:
         job = JOBS[key] = Job(item["custom"], view(item["custom"]), item.get("engine", "rules"),
                               item.get("model", llm.DEFAULT_MODEL), item.get("url", llm.DEFAULT_URL), C.policy(),
                               [a["name"] for a in item["agents"] if a["status"] == "Skipped"], C.limits(),
-                              started_by=item.get("started_by", ""))
+                              started_by=item.get("started_by", ""), skeptic_seconds=skeptic_seconds())
         job.run_id = item.get("run_id", "")
         sim_log(sim, "Orchestrator", f"Reading {len(job.files)} uploaded file(s) with "
                 + ({"rules": "the built-in rules", "rules+skeptic": f"the built-in rules and an Ollama Skeptic ({job.model})",
@@ -279,6 +477,8 @@ def tick_item(sim: dict, item: dict) -> bool:
         item["elapsed"] = int(time.time() - job.t0)
         for name, msg in job.notes.items():
             sim_log(sim, name, f"Incomplete: {msg}")
+        if job.notes:
+            item["incomplete"] = "; ".join(f"{n} {m}" for n, m in job.notes.items())
         finalize(item["custom"], job)
         item["result"] = len(S.custom[item["custom"]])
         JOBS.pop(key, None)
@@ -292,7 +492,7 @@ def sim_log(sim: dict, agent: str, msg: str) -> None:
 
 
 def retry_job(item: dict) -> None:
-    job = JOBS.get(f"{st.session_state.get('sid', '')}|{item['label']}|{item.get('run_id', '')}")
+    job = JOBS.get(job_key(item))
     if job:
         job.start()
 
@@ -317,7 +517,9 @@ def finalize(label: str, job: Job) -> None:
         r["id"] = f"F-{i:02d}"
     S.setdefault("custom", {})[label] = recs
     S["_fver"] = S.get("_fver", 0) + 1
+    notes = getattr(job, "notes", {})
     S.setdefault("run_history", []).append(dict(
+        incomplete="; ".join(f"{n} {m}" for n, m in notes.items()),
         label=label, run_id=getattr(job, "run_id", ""), engine=job.engine, model=job.model if job.engine != "rules" else "",
         user=getattr(job, "started_by", "") or S.get("user") or "",
         time=datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -332,7 +534,6 @@ def finalize(label: str, job: Job) -> None:
     starter = getattr(job, "started_by", "") or ""
     who = f"Person ({starter})" if starter else "Person"
     engine = job.engine + (f" {job.model}" if job.engine != "rules" and job.model else "")
-    notes = getattr(job, "notes", {})
     if notes:                                    # an agent that stopped early: the result is not a full check
         engine += "; incomplete: " + "; ".join(f"{n} {m}" for n, m in notes.items())
     if S.audit_log:                              # a re-run: sealed in the trail where it happened
@@ -357,6 +558,14 @@ def activate(label: str | None, force_load: bool = False) -> None:
     S.decisions, S.audit_log, S.cleared = pick["decisions"], pick["audit_log"], pick["cleared"]
     S.notes = pick.get("notes", {})
     S.dataset = label
+
+
+def incomplete_note(label: str | None) -> str:
+    """Why the run whose findings are in review did not check everything ("" when it did, or for the sample)."""
+    if not label:
+        return ""
+    return next((str(h.get("incomplete") or "") for h in reversed(st.session_state.get("run_history", []))
+                 if h.get("label") == label), "")
 
 
 def active_label() -> str | None:
@@ -388,7 +597,7 @@ def frame(label: str) -> tuple[pd.DataFrame, pd.DataFrame]:
             evidence=lines[r["line_number"] - 1] if ok else "",
             related_evidence=" || ".join(lines[n - 1] for n in r.get("related_lines", []) if 1 <= n <= len(lines)),
             source_file=r["source_file"], line_number=r["line_number"], innocent_explanations=r.get("innocent", ""),
-            skeptic_reason=r.get("reason", ""), proposed_fix=r.get("fix", "")))
+            skeptic_reason=r.get("reason", ""), proposed_fix=r.get("fix", ""), warning=r.get("warning", "")))
     df = pd.DataFrame(rows, columns=COLS)
     out = C.check_findings(df, lambda n: files.get(n, []))
     S.setdefault("_frame_cache", {})[label] = (key, out)

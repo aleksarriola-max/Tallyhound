@@ -32,6 +32,9 @@ def decisions_frame(draft: bool = False) -> pd.DataFrame:
         out["decision"] = ["Shadow (not in review)" if str(c) in shadow else d.get(i, {}).get("status", "Pending")
                            for i, c in zip(f.id, f.clause)]
         out["reviewer_reason"] = [d.get(i, {}).get("reason", "") for i in f.id]
+    if "warning" in f.columns and f["warning"].fillna("").astype(str).str.len().gt(0).any():
+        # text in the cited lines (or next to them) that talks to an AI reviewer
+        out["warning"] = f["warning"].fillna("").astype(str)
     notes = st.session_state.get("notes", {})
     out["owner"] = [notes.get(i, {}).get("owner", "") for i in f.id]
     out["note"] = [notes.get(i, {}).get("note", "") for i in f.id]
@@ -74,6 +77,7 @@ def build_workbook(draft: bool = False) -> bytes:
          ("Reviewed by a person" if dc["pending"] == 0 else
           f"PARTLY REVIEWED - {dc['pending']} of {len(f) - dc['shadow']} findings still pending")],
         ["Company", f"Uploaded files: {C.custom_label()}" if C.custom_label() else "Bramblecourt Instruments Ltd (fictional)"],
+        *([["Run", f"INCOMPLETE - not everything was checked: {short}"]] if (short := _incomplete()) else []),
         ["Notice", "Findings proposed by agents or rules and decided by a person" if C.custom_label()
          else "FICTIONAL TEST DATA - not a real company"],
         ["Generated", now],
@@ -101,6 +105,11 @@ def build_workbook(draft: bool = False) -> bytes:
             defuse_formulas(ws)
             _style(ws)
     return buf.getvalue()
+
+
+def _incomplete() -> str:
+    from . import custom
+    return custom.incomplete_note(C.custom_label())
 
 
 def _printable(df: pd.DataFrame) -> pd.DataFrame:
@@ -147,6 +156,8 @@ def build_memo() -> bytes:
         Paragraph("Tallyhound audit memo", ss["Title"]),
         Paragraph(("Uploaded data - " if C.custom_label() else "Bramblecourt Instruments Ltd (fictional) - ") + datetime.now().strftime("%Y-%m-%d"), ss["Normal"]),
         Spacer(1, 8),
+        *([Paragraph(f"<b>INCOMPLETE RUN</b> - not everything was checked: {html.escape(_incomplete())}.", ss["Normal"]),
+           Spacer(1, 8)] if _incomplete() else []),
         # shadow-mode findings are not in review: they are counted apart, never as decided
         Paragraph((f"Findings: {len(f) - dc['shadow']}, all decided by a person. " if dc["pending"] == 0 else
                    f"Findings: {len(f) - dc['shadow']}. NOT FINISHED: {dc['pending']} are still pending review. ")
@@ -173,7 +184,9 @@ def build_memo() -> bytes:
         rows = [["ID", "Severity", "Area", "Amount", "Finding"]]
         shown = part.sort_values("amount", ascending=False).head(MEMO_ROWS)
         for r in shown.itertuples():
-            rows.append([r.id, r.severity, r.area, C.money(r.amount), Paragraph(html.escape(str(r.title)), small)])
+            warn = str(getattr(r, "warning", "") or "")
+            rows.append([r.id, r.severity, r.area, C.money(r.amount),
+                         Paragraph(html.escape(str(r.title)) + (f" <b>[{html.escape(warn)}]</b>" if warn else ""), small)])
         t = Table(rows, colWidths=[14 * mm, 18 * mm, 22 * mm, 24 * mm, 98 * mm], repeatRows=1)
         t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0a3a4f")),
                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTSIZE", (0, 0), (-1, -1), 8.5),

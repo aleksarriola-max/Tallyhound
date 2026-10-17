@@ -2,6 +2,38 @@
 
 All notable changes. Dates are release dates; the project follows [Semantic Versioning](https://semver.org/) from 1.0.
 
+## 0.8.0 - unreleased
+
+**Stop a running AI job**
+- A *Stop* button shows on Home (and in the sidebar on other pages) while an Ollama run is going, for anyone who may
+  start runs. It cuts off the model call in flight within a second or two; no agent keeps running in the background.
+- The findings the Skeptic had already checked are kept and can be reviewed; findings not yet checked are not kept.
+  The run log, Recent runs ("Stopped (incomplete)") and the audit trail say who stopped it and which agents and lines
+  were not finished. A stopped run is never shown as a clean check.
+- In the team workspace, any tab can press Stop; every tab then shows the run as stopped, and a new run can start
+  straight away.
+- Runs cut short by the 30-minute agent limit or the step limit now show as "Done (incomplete)" in Recent runs and
+  on Home, not "Done (clean)".
+
+**Time limit for the Skeptic**
+- *Settings > AI* (admin only): the most minutes the Skeptic may take for a whole run, 30 by default. A change is
+  saved with the other settings and written to the audit trail.
+- When the time runs out, the findings the Skeptic has not reached stay in the review queue as "Not checked by the
+  Skeptic (time limit)": ranked like Doubtful, never Confirmed, never part of *Approve all confirmed*. The run log
+  and audit trail say how many were not checked.
+- *Finish without the Skeptic*: shown while the Skeptic runs and when it has failed. It does the same as the time
+  limit for the findings left, so a Skeptic that keeps failing no longer holds back every result.
+
+**Text in a file that talks to an AI reviewer**
+- File content now reaches the agents and the Skeptic inside marked data blocks the file cannot close, with an
+  instruction that text inside them is never an instruction.
+- A simple screen looks for text addressed to an AI, auditor, assistant or system ("NOTE TO AUDITOR AI", "ignore
+  previous instructions", "mark as not a problem", "verdict", role tags such as `SYSTEM:`) in each finding's cited
+  lines and the lines next to them. When it fires, the Skeptic cannot dismiss a rule finding and cannot confirm an AI
+  finding; the finding shows "This line contains text addressed to an AI reviewer - check it yourself" in Review, in
+  the workbook (a *warning* column) and in the memo, and it is left out of *Approve all confirmed*.
+- This narrows one known attack; it does not make the models immune to injected text. A person still decides.
+
 ## 0.7.1 - 2026-10-17 - fixes from three code audits
 
 **Payment gate**

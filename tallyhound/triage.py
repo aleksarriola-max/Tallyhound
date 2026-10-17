@@ -55,7 +55,8 @@ CLEARS = {
 
 
 def priority(r) -> float:
-    conf = {"Confirmed": 1.0, "Doubtful": 0.5}.get(str(r.skeptic_verdict), 0.8)
+    # "Not checked" (the Skeptic ran out of time or was skipped) ranks with Doubtful: it was never confirmed
+    conf = {"Confirmed": 1.0, "Doubtful": 0.5, "Not checked": 0.5}.get(str(r.skeptic_verdict), 0.8)
     try:
         amt = float(r.amount)
     except (TypeError, ValueError):

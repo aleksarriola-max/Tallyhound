@@ -245,7 +245,8 @@ def live_activity() -> None:
             st.markdown("**Agents**")
             item = sim.current(st.session_state.sim)
             status = {a["name"]: a["status"] for a in item["agents"]} if item else {}
-            colors = {"Waiting": C.MUTED, "Running": C.TEAL_DARK, "Done": C.RELEASE, "Failed": C.HOLD, "Skipped": C.MUTED}
+            colors = {"Waiting": C.MUTED, "Running": C.TEAL_DARK, "Done": C.RELEASE, "Failed": C.HOLD, "Skipped": C.MUTED,
+                      "Stopped": C.HOLD}
             for n in sim.agent_names():
                 s = status.get(n, "Idle")
                 st.markdown(f"{n} &nbsp; {C.chip(s, colors.get(s, C.MUTED))}", unsafe_allow_html=True)

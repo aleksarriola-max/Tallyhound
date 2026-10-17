@@ -82,6 +82,9 @@ def run_dialog() -> None:
         st.caption("Your role cannot start runs.")
 
 
+NO_SKEPTIC_HELP = ("Keep every finding the checks found. Those the Skeptic has not checked are marked \"Not checked by "
+                   "the Skeptic\", ranked like Doubtful and never approved in bulk, so a person looks at each one.")
+
 APPROVE_HELP = ("Approve = this is a real problem to follow up; it goes into the workbook and memo. It does not pay or "
                 "approve any invoice. If it is not a problem, open Details and reject it with a reason.")
 
@@ -122,10 +125,11 @@ def home() -> None:
 
     failed = bool(run and any(i["status"] == "Failed" for i in run["queue"]))
     unseen = bool(run and run["queue"] and not running and not failed and S.get("_run_seen") != _run_key(run))
+    stopped = bool(run and not running and any(i["status"] == "Stopped" for i in run["queue"]))
     if run and (running or failed or unseen):
         with st.container(border=True):
             st.markdown("**Run in progress**" if running else "**Run stopped - an agent failed**" if failed
-                        else "**Run finished**")
+                        else "**Run stopped - the results are incomplete**" if stopped else "**Run finished**")
             st.fragment(run_every=1 if running else None)(_run_status)()
 
     cases, n = _queue_counts()
@@ -185,15 +189,45 @@ def _run_status() -> None:
         c1, c2 = st.columns([3, 2], vertical_alignment="center")
         c1.markdown(f"**{C.esc(it['label'])}** &nbsp; <span class='th-muted'>{C.esc(it['status'])}</span>", unsafe_allow_html=True)
         c2.progress(done / max(len(agents), 1))
+        may_run = auth.can("run")
+        if it["status"] == "Running" and custom.is_ai(it) and may_run:
+            if it.get("stop_asked"):
+                st.caption(f"Stopping (asked by {C.esc(it['stop_asked'])})...")
+            else:
+                b1, b2, _ = st.columns([1, 2.2, 3])
+                b1.button("Stop", key=f"stop_{it.get('run_id', it['label'])}", on_click=sim.stop,
+                          help="End the run now. Findings the Skeptic has already checked are kept; the run is "
+                               "marked incomplete.", **C.bw())
+                if sim.skeptic_state(it) == "Running":
+                    b2.button("Finish without the Skeptic", key=f"noskep_{it.get('run_id', it['label'])}",
+                              on_click=sim.finish_without_skeptic, help=NO_SKEPTIC_HELP, **C.bw())
         bad = next((a for a in it["agents"] if a["status"] == "Failed"), None)
         if bad:
             st.error(f"The {bad['name']} agent failed.")
-            if st.button("Retry", key=f"home_retry_{it['label']}", type="primary"):
+            b1, b2, _ = st.columns([1, 2.2, 3])
+            if b1.button("Retry", key=f"home_retry_{it['label']}", type="primary"):
                 sim.retry()
                 st.rerun(scope="app")            # this box only refreshes itself while a run is going: restart it
-    if not sm["running"] and all(i["status"] == "Done" for i in sm["queue"]):
-        st.success("Run finished.")
-        if st.button("Review the results", key="home_done_review", type="primary"):
+            if bad["name"] == "Skeptic" and custom.is_ai(it) and may_run and \
+                    b2.button("Finish without the Skeptic", key=f"noskep_{it.get('run_id', it['label'])}",
+                              help=NO_SKEPTIC_HELP, **C.bw()):
+                sim.finish_without_skeptic()
+                st.rerun(scope="app")
+    if not sm["running"] and all(i["status"] in ("Done", "Stopped") for i in sm["queue"]):
+        stop = next((i for i in sm["queue"] if i["status"] == "Stopped"), None)
+        short = next((i for i in sm["queue"] if i.get("incomplete")), None)
+        if stop is not None:
+            st.warning(f"Stopped by {C.esc(stop.get('stopped_by') or stop.get('stop_asked') or 'a person')}. "
+                       f"{stop.get('result', 0)} fully checked finding(s) kept. This is not a complete check: "
+                       f"{C.esc(stop.get('incomplete', ''))}. Review what was kept, or press Check new files to run "
+                       "it again.")
+        elif short is not None:
+            st.warning(f"Run finished, but it is not a complete check: {C.esc(short['incomplete'])}.")
+        else:
+            st.success("Run finished.")
+        if not (stop is not None and stop.get("result", 0) == 0 and "nothing was checked" in stop.get("incomplete", "")) \
+                and st.button("Review the partial results" if stop or short else "Review the results",
+                              key="home_done_review", type="primary"):
             _review_results()
             st.rerun(scope="app")                # this box redraws on its own; changing page needs the whole page
     with st.expander("Agents and log", expanded=False):
@@ -217,7 +251,11 @@ def case_row(g: list) -> None:
     blocked = auth.review_block_reason()
     c1, c2, c3, c4 = st.columns([6.2, 1.4, 1.3, 1.1], vertical_alignment="center")
     extra = f" <span class='th-muted'>+{len(others)} related</span>" if others else ""
-    c1.markdown(f"{C.sev_badge(r.severity)} &nbsp; {C.esc(r.title)}{extra}", unsafe_allow_html=True)
+    flag = " <span class='th-muted'>· check: text addressed to an AI</span>" if any(
+        getattr(x, "warning", "") for x in g) else ""
+    unchecked = " <span class='th-muted'>· not checked by the Skeptic</span>" if any(
+        x.skeptic_verdict == custom.NOT_CHECKED for x in g) else ""
+    c1.markdown(f"{C.sev_badge(r.severity)} &nbsp; {C.esc(r.title)}{extra}{flag}{unchecked}", unsafe_allow_html=True)
     c2.markdown(f"<div style='text-align:right;font-weight:600'>{C.money(triage.case_amount(g))}</div>",
                 unsafe_allow_html=True)
     if left == 0 and len(set(statuses)) == 1:
@@ -258,7 +296,13 @@ def case_details(r, others, ids, d, blocked) -> None:
             lo, hi = max(1, n - 3), min(len(lines), n + 3)
             st.markdown(C.source_html(lines[lo - 1:hi], list(r.matched_lines), n, start=lo), unsafe_allow_html=True)
             st.caption(f"Lines {lo}-{hi} of {len(lines)}.")
-    st.markdown(f"**Skeptic:** {r.skeptic_verdict} - {C.esc(r.skeptic_reason)}")
+    warn = str(getattr(r, "warning", "") or "")
+    if warn:
+        st.warning(warn)
+    if r.skeptic_verdict == custom.NOT_CHECKED:
+        st.markdown(f"**Skeptic:** {C.esc(r.skeptic_reason or 'Not checked by the Skeptic.')}")
+    else:
+        st.markdown(f"**Skeptic:** {r.skeptic_verdict} - {C.esc(r.skeptic_reason)}")
     st.markdown(f"**Proposed fix:** {C.esc(r.proposed_fix)}")
     clears = triage.CLEARS.get(str(r.clause))
     if clears:
@@ -303,6 +347,10 @@ def findings_tab() -> None:
     why = auth.review_block_reason()
     if why:
         st.warning(why)
+    short = custom.incomplete_note(custom.active_label())
+    if short:
+        st.warning(f"These findings come from a run that did not check everything: {C.esc(short)}. Run the checks "
+                   "again (Check new files on Home) for a complete check.")
     f = C.findings()
     triage.refresh_health()
     L = C.limits()
@@ -317,7 +365,8 @@ def findings_tab() -> None:
     groups = all_groups if sev in (None, "All") else [g for g in all_groups if any(x.severity == sev for x in g)]
     # bulk approval takes whole cases only: every undecided member Confirmed by the Skeptic
     conf_ids = [x.id for g in groups
-                if (todo := [x for x in g if x.id not in S.decisions]) and all(x.skeptic_verdict == "Confirmed" for x in todo)
+                if (todo := [x for x in g if x.id not in S.decisions])
+                and all(x.skeptic_verdict == "Confirmed" and not getattr(x, "warning", "") for x in todo)
                 for x in todo]
     if S.get("_bulk_ask") and conf_ids:          # two steps: approving many findings at once is a deliberate act
         y, n = t2.columns(2)
@@ -436,8 +485,37 @@ def users_settings() -> None:
         st.caption("Whoever started a run cannot approve its findings. Manage users with scripts/add_user.py.")
 
 
+def _save_ai_settings() -> None:
+    from . import agents
+    S = st.session_state
+    if not auth.can("policy"):                # checked here too, not only by disabling the button
+        return
+    old = int(S.get("skeptic_minutes") or agents.SKEPTIC_MINUTES)
+    new = int(S.get("set_skeptic_minutes") or agents.SKEPTIC_MINUTES)
+    S["skeptic_minutes"] = new
+    if new != old:
+        C.log_action("Reviewer", "AI settings changed", "", f"Skeptic time limit for a whole run: {old} -> {new} minutes")
+
+
+def ai_settings() -> None:
+    from . import agents
+    S = st.session_state
+    st.caption("Applies to runs on uploaded files with an Ollama engine. Changes apply to the next run.")
+    locked = not auth.can("policy")
+    S.setdefault("set_skeptic_minutes", int(S.get("skeptic_minutes") or agents.SKEPTIC_MINUTES))
+    st.number_input("Time limit for the Skeptic, for a whole run (minutes)", min_value=1, max_value=1440, step=5,
+                    key="set_skeptic_minutes", disabled=locked,
+                    help="When it runs out, the findings the Skeptic has not reached stay in the review queue as "
+                         "\"Not checked by the Skeptic (time limit)\": ranked like Doubtful, never approved in bulk.")
+    st.caption(f"Each AI agent also stops after {agents.AREA_SECONDS // 60} minutes of reading. A run cut short by "
+               "either limit is marked incomplete in the run log and the audit trail.")
+    st.button("Save", key="save_ai", type="primary", on_click=_save_ai_settings, disabled=locked)
+    if locked:
+        st.caption("Only an admin can change these settings.")
+
+
 def settings() -> None:
-    tabs = st.tabs(["Policy", "Rules", "Data", "Users"])
+    tabs = st.tabs(["Policy", "Rules", "Data", "Users", "AI"])
     with tabs[0]:
         pages_extra.policy_limits()
     with tabs[1]:
@@ -447,6 +525,8 @@ def settings() -> None:
         data_settings()
     with tabs[3]:
         users_settings()
+    with tabs[4]:
+        ai_settings()
 
 
 def trust() -> None:

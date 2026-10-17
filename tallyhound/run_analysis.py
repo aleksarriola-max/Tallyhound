@@ -210,11 +210,12 @@ def agents_body() -> None:
     else:
         agents, title = item["agents"], f"{item['label']} - {item['status']}"
     st.markdown(f"**{title}**")
-    colors = {"Waiting": C.MUTED, "Running": C.TEAL_DARK, "Done": C.RELEASE, "Failed": C.HOLD, "Skipped": C.MUTED}
+    colors = {"Waiting": C.MUTED, "Running": C.TEAL_DARK, "Done": C.RELEASE, "Failed": C.HOLD, "Skipped": C.MUTED,
+              "Stopped": C.HOLD}
     for a in agents:
         c1, c2, c3, c4 = st.columns([3, 1.2, 4, 0.8], vertical_alignment="center")
         c1.markdown(f"**{a['name']}**<br><span class='th-muted'>{roles.get(a['name'], '')}</span>", unsafe_allow_html=True)
-        c2.markdown(C.chip(a["status"], colors[a["status"]]), unsafe_allow_html=True)
+        c2.markdown(C.chip(a["status"], colors.get(a["status"], C.MUTED)), unsafe_allow_html=True)
         c3.progress(a["pct"] / 100 if a["status"] != "Skipped" else 0.0)
         c4.markdown(f"{a['secs'] // 60}:{a['secs'] % 60:02d}")
         if a["status"] == "Failed":

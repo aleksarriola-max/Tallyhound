@@ -78,7 +78,7 @@ def current(sim: dict | None):
         if it["status"] in ("Running", "Failed"):
             return it
     for it in reversed(sim["queue"]):
-        if it["status"] == "Done":
+        if it["status"] in ("Done", "Stopped"):
             return it
     return sim["queue"][0] if sim["queue"] else None
 
@@ -185,18 +185,67 @@ def tick() -> bool:
 
 def _finish_item(sim: dict, item: dict) -> bool:
     S = st.session_state
-    item["status"] = "Done"
+    stopped = item.get("status") == "Stopped"
+    item["status"] = "Stopped" if stopped else "Done"
     item["findings"] = item["result"]
     secs = item["elapsed"] if "elapsed" in item else int(
         item["ticks"] * item["est"] * 60 / (len(item["agents"]) * TICKS_PER_AGENT))
+    # a run that did not check everything is never shown as clean
+    status = "Stopped (incomplete)" if stopped else "Done (incomplete)" if item.get("incomplete") else \
+        "Done" if item["result"] else "Done (clean)"
     S.recent_extra.insert(0, dict(Run=item["label"], Data=item["option"], Started=item["started"],
-                                  Duration=f"{secs // 60}m {secs % 60:02d}s", Findings=item["result"],
-                                  Status="Done" if item["result"] else "Done (clean)"))
-    log("Skeptic", f"{item['label']} finished with {item['result']} finding(s)")
+                                  Duration=f"{secs // 60}m {secs % 60:02d}s", Findings=item["result"], Status=status))
+    if stopped:
+        log("Orchestrator", f"{item['label']} stopped: {item['result']} fully checked finding(s) kept; incomplete")
+    else:
+        log("Skeptic", f"{item['label']} finished with {item['result']} finding(s)"
+            + ("; incomplete" if item.get("incomplete") else ""))
+    if stopped:
+        for i in sim["queue"]:
+            if i["status"] == "Queued":          # Stop ends the whole run, not only the item in progress
+                i["status"] = "Stopped"
     nxt = any(i["status"] == "Queued" for i in sim["queue"])
     if not nxt:
         sim["running"] = False
     return True
+
+
+def stop() -> None:
+    """The Stop button: stop the AI run in progress. Only someone who may start runs may stop one."""
+    from . import auth, custom
+    if not auth.can("run"):
+        return
+    sim = st.session_state.sim
+    for it in (sim or {}).get("queue", []):
+        if it["status"] == "Running" and custom.is_ai(it) and not it.get("stop_asked"):
+            who = auth.current_user() or ""
+            custom.request_stop(it, who)
+            it["stop_asked"] = who or "a person"
+            log("Orchestrator", f"Stop requested by {who or 'a person'}")
+
+
+def finish_without_skeptic() -> None:
+    """Finish the run, leaving the findings the Skeptic has not checked as Not checked."""
+    from . import auth, custom
+    if not auth.can("run"):
+        return
+    sim = st.session_state.sim
+    for it in (sim or {}).get("queue", []):
+        if it["status"] in ("Running", "Failed") and custom.is_ai(it):
+            who = auth.current_user() or ""
+            if not custom.finish_without_skeptic(it, who):
+                continue
+            log("Orchestrator", f"Finishing without the Skeptic, as {who or 'a person'} chose")
+            if it["status"] == "Failed":
+                it["status"] = "Running"
+                for a in it["agents"]:
+                    if a["status"] == "Failed":
+                        a.update(status="Waiting", pct=0)
+                sim["running"] = True
+
+
+def skeptic_state(item: dict) -> str:
+    return next((a["status"] for a in item["agents"] if a["name"] == "Skeptic"), "")
 
 
 def retry(item: dict | None = None) -> None:
