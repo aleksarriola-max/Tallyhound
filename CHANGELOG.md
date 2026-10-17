@@ -2,7 +2,7 @@
 
 All notable changes. Dates are release dates; the project follows [Semantic Versioning](https://semver.org/) from 1.0.
 
-## 0.7.1 - unreleased - fixes from a full code audit
+## 0.7.1 - 2026-10-17 - fixes from three code audits
 
 **Payment gate**
 - An invoice already paid under another spelling of its number (`INV42` / `INV-0042`) was released; it is now held,
